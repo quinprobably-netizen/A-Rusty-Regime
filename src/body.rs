@@ -97,7 +97,7 @@ impl Plugin for BodyPlugin {
 }
 
 #[derive(Component)]
-struct Body {
+pub struct Body {
     pose: Option<Pose>,
     nodes: [AnimationNodeIndex; 6],
     graph: Handle<AnimationGraph>,

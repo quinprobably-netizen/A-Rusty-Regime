@@ -26,6 +26,8 @@ pub struct PlayerInput {
     pub weapon_step: i32,
     /// Swap to the previous weapon (Q / Y).
     pub weapon_last: bool,
+    /// Enter or leave a vehicle (E / X), latched like `jump_pressed`.
+    pub interact_pressed: bool,
 }
 
 /// Where the player is looking, in radians.
@@ -109,6 +111,7 @@ fn gather(
     }
     let mut weapon_step = 0;
     let mut weapon_last = keys.just_pressed(KeyCode::KeyQ);
+    let mut interact = keys.just_pressed(KeyCode::KeyE);
 
     let mut look = Vec2::ZERO;
     if cursor.grab_mode != CursorGrabMode::None {
@@ -152,6 +155,7 @@ fn gather(
             weapon_step -= 1;
         }
         weapon_last |= pad.just_pressed(GamepadButton::North);
+        interact |= pad.just_pressed(GamepadButton::West);
         for (i, button) in [GamepadButton::DPadUp, GamepadButton::DPadRight, GamepadButton::DPadDown, GamepadButton::DPadLeft].into_iter().enumerate() {
             if pad.just_pressed(button) {
                 weapon_select = Some(i);
@@ -175,6 +179,7 @@ fn gather(
     }
     input.weapon_step += weapon_step;
     input.weapon_last |= weapon_last;
+    input.interact_pressed |= interact;
 }
 
 fn grab_cursor(

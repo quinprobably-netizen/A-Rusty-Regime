@@ -22,6 +22,9 @@ First build takes a while. Linux needs `libasound2-dev libudev-dev libwayland-de
 | Weapon 1-4 | 1 2 3 4 | D-pad up / right / down / left |
 | Next / previous weapon | Wheel down / up | RB / LB |
 | Last weapon | Q | Y / Triangle |
+| Enter / leave a vehicle | E | X / Square |
+| Drive (throttle, brake, reverse, steer) | WASD | Left stick |
+| Handbrake | Space | A / Cross |
 | Respawn | R | Select / Back |
 | Reload `tuning.toml` | F5 | |
 
@@ -69,6 +72,19 @@ Soldiers patrol a route and shoot when they have a clear line to you within
 `soldier.sight` meters; they lose interest after `soldier.forget` seconds. You
 have `player.health` hit points that regenerate after `player.regen_delay`
 seconds; dying puts you back at base camp. Everything is in `tuning.toml`.
+
+### Vehicles
+Three vehicles sit in a row south of base camp, with a Humvee outside the fort
+gate, a jeep on the quarry rim and a bike at the lighthouse: a Humvee (2.6 t,
+4WD, 4-speed auto), a Willys-style jeep (1.1 t, 4WD, 3-speed) and a military
+dirt bike (150 kg, 5-speed, leans into its turns). Walk up and press E; the
+camera swings behind, the mouse orbits it, W/S accelerate and brake (S from a
+standstill reverses), Space is the handbrake, E steps out. Fall off the island
+and the vehicle respawns where it started. The physics is a raycast-wheel port
+of the tyre, suspension and engine models from Q's Regolith Rally, stepped at
+66 Hz on an Avian body (`src/vehicle/`); the bodies are built from scaled cubes
+and cylinders in code. `[vehicle]` in `tuning.toml` sets grip and the enter
+radius.
 
 ## Arena
 - Spawn area: dominoes, crate pyramid, barrels, balls, heavy crates

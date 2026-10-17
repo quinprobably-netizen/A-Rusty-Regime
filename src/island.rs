@@ -197,6 +197,8 @@ pub fn spawn_sites(
     targets: Option<Res<TargetAssets>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    vehicles: Option<Res<crate::vehicle::VehicleAssets>>,
+    heightmap: Res<Heightmap>,
 ) {
     let mats = [
         Color::srgb(0.55, 0.52, 0.48),
@@ -216,6 +218,23 @@ pub fn spawn_sites(
     quarry(&mut kit, &s[QUARRY]);
     ruins(&mut kit, &s[RUINS]);
     lighthouse(&mut kit, &s[LIGHTHOUSE]);
+    spawn_vehicles(&mut commands, vehicles.as_deref(), &tuning, s, &heightmap);
+}
+
+/// The motor pool: a row south of base camp, a Humvee outside the fort gate, a jeep on the quarry rim and a bike at the lighthouse.
+fn spawn_vehicles(commands: &mut Commands, assets: Option<&crate::vehicle::VehicleAssets>, tuning: &Tuning, s: &[Placed], hm: &Heightmap) {
+    use crate::vehicle::{spawn, Kind};
+    let at = |site: usize, dx: f32, dz: f32| {
+        let c = s[site].center + Vec2::new(dx, dz);
+        Vec3::new(c.x, hm.height_at(c.x, c.y), c.y)
+    };
+    spawn(commands, assets, tuning, Kind::Humvee, at(BASE_CAMP, -14.0, 30.0), 0.0);
+    spawn(commands, assets, tuning, Kind::Jeep, at(BASE_CAMP, -6.0, 30.0), 0.0);
+    spawn(commands, assets, tuning, Kind::DirtBike, at(BASE_CAMP, 1.0, 30.0), 0.0);
+    spawn(commands, assets, tuning, Kind::DirtBike, at(BASE_CAMP, 4.0, 30.0), 0.0);
+    spawn(commands, assets, tuning, Kind::Humvee, at(FORT, -48.0, 12.0), FRAC_PI_2);
+    spawn(commands, assets, tuning, Kind::Jeep, at(QUARRY, 0.0, -66.0), -FRAC_PI_2);
+    spawn(commands, assets, tuning, Kind::DirtBike, at(LIGHTHOUSE, 8.0, 4.0), 0.0);
 }
 
 /// Spawn: colonnade, racks, the physics playground from the arena, two

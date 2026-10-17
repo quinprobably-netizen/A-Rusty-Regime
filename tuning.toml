@@ -128,3 +128,9 @@ health = 100
 regen_delay = 5.0           # seconds without damage before regen
 regen_rate = 20             # hp per second
 respawn_delay = 2.0
+
+[vehicle]                   # Humvee, jeep and dirt bike (E to enter, WASD drive, Space handbrake)
+enter_radius = 4.0          # meters from a vehicle to press E
+mu = 1.0                    # peak tyre grip as a fraction of wheel load
+rolling = 0.02              # rolling resistance
+bike_upright = 6.0          # how fast a bike rolls toward its balanced lean

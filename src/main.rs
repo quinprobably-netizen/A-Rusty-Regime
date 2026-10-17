@@ -13,6 +13,7 @@ mod viewmodel;
 mod weapon;
 #[cfg(test)]
 mod tests;
+mod vehicle;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -44,6 +45,7 @@ fn main() {
             viewmodel::ViewModelPlugin,
             targets::TargetsPlugin,
             hud::HudPlugin,
+            vehicle::VehiclePlugin,
         ))
         .add_plugins(level_plugin())
         .add_systems(Update, dev_screenshot.run_if(|| std::env::var_os("RUST_REGIME_SCREENSHOT").is_some()))
@@ -73,9 +75,15 @@ fn dev_screenshot(
     mut view: ResMut<input::ViewAngles>,
     mut player: Single<(&mut controller::Player, &mut Transform)>,
     heightmap: Option<Res<terrain::Heightmap>>,
+    vehicles: Query<(&Transform, &vehicle::Vehicle, Option<&Children>), Without<controller::Player>>,
 ) {
     use bevy::render::view::screenshot::{Screenshot, save_to_disk};
     *frames += 1;
+    if *frames == 150 {
+        for (tf, v, children) in &vehicles {
+            info!("{} at {} up {} grounded {} parts {}", v.spec.name, tf.translation, tf.rotation * Vec3::Y, v.grounded_wheels(), children.map_or(0, |c| c.len()));
+        }
+    }
     // Optional "slot,yaw_degrees,x,z,pitch_degrees" to pick a weapon, spot and look direction.
     if *frames == 1 && let Ok(spec) = std::env::var("RUST_REGIME_SCREENSHOT_VIEW") {
         let mut parts = spec.split(',').filter_map(|v| v.trim().parse::<f32>().ok());

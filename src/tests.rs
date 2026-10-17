@@ -13,6 +13,7 @@ use crate::targets::Soldier;
 use crate::terrain;
 use crate::tuning::{Island, Tuning};
 use crate::targets::{self, Target, TargetsPlugin};
+use crate::vehicle::{self, Driving, Kind, Vehicle, VehiclePlugin};
 use crate::weapon::{Arsenal, WeaponKind, WeaponPlugin};
 
 const DT: f32 = 1.0 / 66.0;
@@ -25,7 +26,7 @@ fn make_app(tuning: Tuning) -> App {
         .insert_resource(tuning)
         .init_resource::<PlayerInput>()
         .init_resource::<ViewAngles>()
-        .add_plugins((ControllerPlugin, WeaponPlugin, TargetsPlugin, HealthPlugin));
+        .add_plugins((ControllerPlugin, WeaponPlugin, TargetsPlugin, HealthPlugin, VehiclePlugin));
     app.world_mut().spawn((RigidBody::Static, Collider::cuboid(200.0, 1.0, 200.0), Transform::from_xyz(0.0, -0.5, 0.0)));
     app.finish();
     app.update(); // run Startup so the player exists
@@ -260,6 +261,7 @@ fn full_game_boots_headless() {
         TargetsPlugin,
         HealthPlugin,
         crate::hud::HudPlugin,
+        VehiclePlugin,
         crate::level::LevelPlugin,
     ));
     app.finish();
@@ -586,4 +588,199 @@ fn soldier_forgets_hidden_player() {
     assert!(soldier_state(&mut app).1.is_some(), "still alert before forget");
     run(&mut app, 2.5);
     assert!(soldier_state(&mut app).1.is_none(), "forgot the player");
+}
+
+// ---------------------------------------------------------------------------
+// Vehicles
+
+/// An app whose world gravity matches the controller's, as in the game.
+fn vehicle_app() -> App {
+    let mut app = make_app(Tuning::default());
+    let g = app.world().resource::<Tuning>().gravity;
+    app.insert_resource(Gravity(Vec3::NEG_Y * g));
+    app
+}
+
+fn spawn_vehicle(app: &mut App, kind: Kind, ground: Vec3, yaw: f32) -> Entity {
+    let tuning = app.world().resource::<Tuning>().clone();
+    app.world_mut().run_system_once(move |mut commands: Commands| vehicle::spawn(&mut commands, None, &tuning, kind, ground, yaw)).unwrap()
+}
+
+fn vehicle_state(app: &mut App, e: Entity) -> (Vec3, Quat, Vec3, usize) {
+    let mut q = app.world_mut().query::<(&Transform, &LinearVelocity, &Vehicle)>();
+    let (tf, vel, v) = q.get(app.world(), e).unwrap();
+    (tf.translation, tf.rotation, vel.0, v.grounded_wheels())
+}
+
+fn driving(app: &mut App) -> Option<Entity> {
+    let mut q = app.world_mut().query_filtered::<&Driving, With<Player>>();
+    q.single(app.world()).ok().map(|d| d.0)
+}
+
+#[test]
+fn vehicle_physics_curves() {
+    use crate::vehicle::physics::*;
+    let c = TyreCurve::GRAVEL;
+    // The tyre's force rises to a peak near the curve's peak slip and falls past it.
+    let f = |kappa: f32| tyre_force(&c, 1000.0, kappa, 0.0).fx;
+    assert!(f(0.03) < f(0.1) && f(0.1) < f(0.16), "rising to the peak: {} {} {}", f(0.03), f(0.1), f(0.16));
+    assert!(f(0.16) > f(1.0), "falling past it: {} {}", f(0.16), f(1.0));
+    assert!(f(0.16) > 900.0 && f(0.16) <= 1000.0);
+    // Sliding left pushes right; the combined slip shares the peak.
+    let side = tyre_force(&c, 1000.0, 0.0, 0.1);
+    assert!(side.fy < -500.0 && side.fx == 0.0, "{side:?}");
+    let both = tyre_force(&c, 1000.0, 0.16, 0.19);
+    assert!(both.fx.hypot(both.fy) <= 1000.0 + 1e-3);
+    // The coil-over: stiffer in bump than rebound, and a wall at the end of the stroke.
+    let k = |x, v| coilover(&SUSP, x, v, 40_000.0, 3000.0, 4000.0, 3500.0, 500.0, 0.1, 0.25);
+    assert!(k(0.1, 0.0) > 3900.0 && k(0.1, 0.0) < 4100.0);
+    assert!(k(0.1, 0.5) > k(0.1, 0.0) && k(0.1, -0.5) < k(0.1, 0.0));
+    assert!(k(0.27, 0.0) > 10.0 * k(0.1, 0.0), "hard stop: {}", k(0.27, 0.0));
+    // Engine: interpolated torque, and braking off the throttle.
+    let curve = [(1000.0, 100.0), (2000.0, 200.0), (3000.0, 150.0)];
+    assert_eq!(engine_torque(&curve, 1500.0), 150.0);
+    assert_eq!(engine_torque(&curve, 500.0), 100.0);
+    assert_eq!(engine_torque(&curve, 9000.0), 150.0);
+    assert!(engine_net(&curve, 2000.0, 1.0, 2.0, 3000.0, 0.9) > 150.0);
+    assert!(engine_net(&curve, 2000.0, 0.0, 2.0, 3000.0, 0.9) < 0.0);
+}
+
+#[test]
+fn humvee_settles_at_ride_height() {
+    let mut app = vehicle_app();
+    let e = spawn_vehicle(&mut app, Kind::Humvee, Vec3::new(30.0, 0.0, 30.0), 0.0);
+    run(&mut app, 3.0);
+    let (pos, rot, vel, grounded) = vehicle_state(&mut app, e);
+    assert_eq!(grounded, 4);
+    assert!(vel.length() < 0.2, "at rest, got {vel}");
+    assert!((pos.y - 0.95).abs() < 0.15, "centre of mass at ride height, got {}", pos.y);
+    assert!((rot * Vec3::Y).y > 0.995, "level, got {rot:?}");
+    assert!((pos.xz() - Vec2::new(30.0, 30.0)).length() < 0.2, "stayed put, got {pos}");
+}
+
+#[test]
+fn humvee_drives_steers_and_the_player_gets_out() {
+    let mut app = vehicle_app();
+    let e = spawn_vehicle(&mut app, Kind::Humvee, Vec3::new(40.0, 0.0, 40.0), 0.0);
+    run(&mut app, 1.0);
+    set_player(&mut app, Vec3::new(43.0, 1.0, 40.0), Vec3::ZERO);
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 0.1);
+    assert_eq!(driving(&mut app), Some(e), "pressed E next to it");
+
+    input(&mut app).movement = Vec2::new(0.0, 1.0);
+    run(&mut app, 4.0);
+    let (pos, rot, vel, _) = vehicle_state(&mut app, e);
+    let heading = rot * Vec3::NEG_Z;
+    assert!(vel.dot(heading) > 8.0, "accelerated forward, got {vel} heading {heading}");
+    assert!(pos.z < 30.0, "moved along -Z, got {pos}");
+    let (ppos, _, _) = player(&mut app);
+    assert!(ppos.distance(pos) < 3.0, "the driver rides along, player at {ppos}, vehicle at {pos}");
+
+    input(&mut app).movement = Vec2::new(-1.0, 1.0);
+    run(&mut app, 2.0);
+    let (_, rot, vel, _) = vehicle_state(&mut app, e);
+    let heading = rot * Vec3::NEG_Z;
+    assert!(heading.x < -0.3, "turned left, heading {heading}");
+    assert!((rot * Vec3::Y).y > 0.9, "and stayed on its wheels");
+    assert!(vel.length() > 3.0);
+
+    input(&mut app).movement = Vec2::new(0.0, -1.0);
+    run(&mut app, 2.5);
+    let (_, _, vel, _) = vehicle_state(&mut app, e);
+    assert!(vel.length() < 2.0, "braked, got {}", vel.length());
+
+    input(&mut app).movement = Vec2::ZERO;
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 0.5);
+    assert_eq!(driving(&mut app), None, "got out");
+    let (vpos, _, _, _) = vehicle_state(&mut app, e);
+    let (ppos, _, state) = player(&mut app);
+    assert!(ppos.distance(vpos) > 1.0 && ppos.distance(vpos) < 5.0, "standing beside it: {ppos} vs {vpos}");
+    assert_eq!(state, MoveState::Ground);
+}
+
+#[test]
+fn bike_stays_upright_and_rides() {
+    let mut app = vehicle_app();
+    let e = spawn_vehicle(&mut app, Kind::DirtBike, Vec3::new(-40.0, 0.0, 40.0), 0.0);
+    run(&mut app, 3.0);
+    let (pos, rot, vel, grounded) = vehicle_state(&mut app, e);
+    assert_eq!(grounded, 2);
+    assert!((rot * Vec3::Y).y > 0.98 && vel.length() < 0.2, "parked upright: {rot:?} {vel}");
+    assert!((pos.y - 0.62).abs() < 0.15, "at ride height, got {}", pos.y);
+    set_player(&mut app, Vec3::new(-38.0, 1.0, 40.0), Vec3::ZERO);
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 0.1);
+    assert_eq!(driving(&mut app), Some(e));
+    input(&mut app).movement = Vec2::new(0.0, 1.0);
+    run(&mut app, 3.0);
+    let (_, rot, vel, _) = vehicle_state(&mut app, e);
+    assert!(vel.dot(rot * Vec3::NEG_Z) > 5.0, "rode off, got {vel}");
+    input(&mut app).movement = Vec2::new(-0.6, 1.0);
+    run(&mut app, 1.5);
+    let (_, rot, _, _) = vehicle_state(&mut app, e);
+    let up = rot * Vec3::Y;
+    let heading = rot * Vec3::NEG_Z;
+    let right = Vec3::new(heading.x, 0.0, heading.z).normalize().cross(Vec3::Y);
+    assert!(up.y > 0.7, "leaning but up, got {up}");
+    assert!(up.dot(right) < -0.2, "leaning into the left turn, got {up} with right {right}");
+    assert!(heading.x < -0.2, "turning left, heading {heading}");
+}
+
+#[test]
+fn vehicle_respawns_after_falling_off_the_world() {
+    let mut app = vehicle_app();
+    let e = spawn_vehicle(&mut app, Kind::Jeep, Vec3::new(300.0, 0.0, 300.0), 0.0);
+    run(&mut app, 1.6);
+    let (pos, _, _, _) = vehicle_state(&mut app, e);
+    assert!(pos.y < -15.0, "fell off the floor, got {pos}");
+    run(&mut app, 0.8);
+    let (pos, _, _, _) = vehicle_state(&mut app, e);
+    assert!(pos.y > -15.0 && (pos.xz() - Vec2::new(300.0, 300.0)).length() < 0.5, "back home, got {pos}");
+}
+
+#[test]
+fn vehicles_park_on_the_island() {
+    use bevy::render::{RenderPlugin, settings::WgpuSettings};
+    let mut app = App::new();
+    app.add_plugins((
+        DefaultPlugins
+            .build()
+            .disable::<bevy::winit::WinitPlugin>()
+            .set(RenderPlugin { render_creation: WgpuSettings { backends: None, ..default() }.into(), ..default() }),
+        PhysicsPlugins::default(),
+    ))
+    .insert_resource(Time::<Fixed>::from_hz(66.0))
+    .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(DT)))
+    .insert_resource(Gravity(Vec3::NEG_Y * Tuning::default().gravity))
+    .add_plugins((
+        crate::tuning::TuningPlugin,
+        crate::input::InputPlugin,
+        ControllerPlugin,
+        crate::camera::CameraPlugin,
+        WeaponPlugin,
+        crate::viewmodel::ViewModelPlugin,
+        TargetsPlugin,
+        HealthPlugin,
+        crate::hud::HudPlugin,
+        VehiclePlugin,
+        terrain::TerrainPlugin,
+    ));
+    app.finish();
+    app.cleanup();
+    run(&mut app, 10.0);
+    let mut q = app.world_mut().query::<(&Transform, &Vehicle)>();
+    let mut n = 0;
+    let mut bad = Vec::new();
+    for (tf, v) in q.iter(app.world()) {
+        n += 1;
+        let home = v.home.translation;
+        let up = tf.rotation * Vec3::Y;
+        if tf.translation.distance(home) > 1.0 || up.y < 0.95 {
+            bad.push(format!("{} from {home} to {} up {up} grounded {}", v.spec.name, tf.translation, v.grounded_wheels()));
+        }
+    }
+    assert_eq!(n, 7);
+    assert!(bad.is_empty(), "every vehicle stays parked and upright:\n{}", bad.join("\n"));
 }

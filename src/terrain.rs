@@ -234,7 +234,7 @@ impl Plugin for TerrainPlugin {
             .insert_resource(hm)
             .insert_resource(ClearColor(SKY))
             .insert_resource(bevy::light::GlobalAmbientLight { color: Color::srgb(0.75, 0.85, 1.0), brightness: 450.0, ..default() })
-            .add_systems(Startup, (spawn_terrain, crate::island::spawn_sites.after(crate::targets::load_assets)))
+            .add_systems(Startup, (spawn_terrain, crate::island::spawn_sites.after(crate::targets::load_assets).after(crate::vehicle::load_assets)))
         .add_systems(PostStartup, add_fog);
     }
 }

@@ -81,6 +81,7 @@ pub struct Tuning {
     pub island: Island,
     pub soldier: Soldier,
     pub player: PlayerTuning,
+    pub vehicle: VehicleTuning,
 
     // Look
     pub mouse_sensitivity: f32,
@@ -186,6 +187,7 @@ impl Default for Tuning {
             island: Island::default(),
             soldier: Soldier::default(),
             player: PlayerTuning::default(),
+            vehicle: VehicleTuning::default(),
 
             mouse_sensitivity: 0.002,
             stick_yaw_speed: 4.5,
@@ -275,6 +277,25 @@ pub struct PlayerTuning {
 impl Default for PlayerTuning {
     fn default() -> Self {
         Self { health: 100.0, regen_delay: 5.0, regen_rate: 20.0, respawn_delay: 2.0 }
+    }
+}
+
+/// Vehicles (table `[vehicle]`).
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct VehicleTuning {
+    /// How close you must stand to press E.
+    pub enter_radius: f32,
+    /// Peak tyre grip as a fraction of the wheel load.
+    pub mu: f32,
+    pub rolling: f32,
+    /// How fast a bike rolls toward its balanced lean (1/s).
+    pub bike_upright: f32,
+}
+
+impl Default for VehicleTuning {
+    fn default() -> Self {
+        Self { enter_radius: 4.0, mu: 1.0, rolling: 0.02, bike_upright: 6.0 }
     }
 }
 

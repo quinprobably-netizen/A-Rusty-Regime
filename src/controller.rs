@@ -295,7 +295,7 @@ fn player_tick(
     mut input: ResMut<PlayerInput>,
     view: Res<ViewAngles>,
     spatial: SpatialQuery,
-    mut players: Query<(Entity, &mut Player, &mut Transform)>,
+    mut players: Query<(Entity, &mut Player, &mut Transform, Has<crate::vehicle::Driving>)>,
     mut bodies: Query<(&RigidBody, &mut LinearVelocity, &ComputedMass), Without<Player>>,
 ) {
     let t = &*tuning;
@@ -306,7 +306,10 @@ fn player_tick(
     let jump_pressed = std::mem::take(&mut input.jump_pressed);
     let reset = std::mem::take(&mut input.reset_pressed);
 
-    for (entity, mut p, mut tf) in &mut players {
+    for (entity, mut p, mut tf, driving) in &mut players {
+        if driving {
+            continue;
+        }
         let space = Space { query: &spatial, filter: SpatialQueryFilter::from_excluded_entities([entity]) };
         let mut pos = tf.translation;
         p.prev_pos = pos;

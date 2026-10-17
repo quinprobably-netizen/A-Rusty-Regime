@@ -20,7 +20,7 @@ impl Plugin for ViewModelPlugin {
 }
 
 #[derive(Component, Default)]
-struct ViewModel {
+pub struct ViewModel {
     kick: f32,
     kick_vel: f32,
     bob: f32,
