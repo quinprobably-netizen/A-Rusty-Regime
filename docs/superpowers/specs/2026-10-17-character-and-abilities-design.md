@@ -16,6 +16,10 @@ abilities; the hyper-realism thread's stage R3 consumes this rig instead of fetc
 
 Out of scope for now: first-person arms rig (viewmodel stays), ragdolls, facial animation, netcode.
 
+6. In-game wardrobe (asked 2026-10-17): a locker at the base camp opens a screen where Tab picks the slot,
+   arrows cycle the style and the three colours, and the result is saved with extraction progress in
+   `save.toml` as `[outfit]` overrides on top of the class default.
+
 ## The look
 
 Default outfit "runner": charcoal softshell jacket with the hood up, slim plate carrier over it, cargo
@@ -142,6 +146,7 @@ game (existing xvfb path).
 2. `character.rs` with outfit data and tinting; player and soldiers switched over; tests.
 3. Double jump, then grapple with HUD arc and rope; tests and a screenshot.
 4. Remaining clips (slide, wallrun, mantle, grapple, drive, ride, aim, die) and the soldier outfit.
+5. Wardrobe locker at the camp, saved outfit overrides, tests for save round-trip.
 
 Shared files touched: `body.rs`, `controller.rs`, `input.rs`, `hud.rs`, `tuning.rs`, `tuning.toml`,
 `targets.rs`, `bots.rs`. The hyper-realism thread is told before each step that edits them.
