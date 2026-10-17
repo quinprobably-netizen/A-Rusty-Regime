@@ -13,6 +13,20 @@ use crate::tuning::Tuning;
 
 pub const SKIN: f32 = 0.015;
 pub const SPAWN: Vec3 = Vec3::new(0.0, 1.0, 10.0);
+
+/// Where the player starts and the height below which they are sent back
+/// there. The arena uses the defaults; the island inserts its own.
+#[derive(Resource, Clone, Copy, Debug)]
+pub struct WorldBounds {
+    pub spawn: Vec3,
+    pub kill_y: f32,
+}
+
+impl Default for WorldBounds {
+    fn default() -> Self {
+        Self { spawn: SPAWN, kill_y: -30.0 }
+    }
+}
 const GROUND_PROBE: f32 = 0.06;
 const MAX_WALL_NORMAL_Y: f32 = 0.3;
 
@@ -83,19 +97,19 @@ pub struct ControllerPlugin;
 
 impl Plugin for ControllerPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_player).add_systems(
+        app.init_resource::<WorldBounds>().add_systems(Startup, spawn_player).add_systems(
             FixedUpdate,
             (player_tick, sync_hull).chain().in_set(ControllerSet),
         );
     }
 }
 
-fn spawn_player(mut commands: Commands, tuning: Res<Tuning>) {
+fn spawn_player(mut commands: Commands, tuning: Res<Tuning>, bounds: Res<WorldBounds>) {
     commands.spawn((
         Name::new("Player"),
-        Player { prev_pos: SPAWN, ..default() },
+        Player { prev_pos: bounds.spawn, ..default() },
         HullCrouched(false),
-        Transform::from_translation(SPAWN),
+        Transform::from_translation(bounds.spawn),
         RigidBody::Kinematic,
         hull(&tuning, false),
     ));
@@ -275,6 +289,7 @@ impl Space<'_, '_, '_> {
 // The tick
 
 fn player_tick(
+    bounds: Res<WorldBounds>,
     time: Res<Time>,
     tuning: Res<Tuning>,
     mut input: ResMut<PlayerInput>,
@@ -296,9 +311,9 @@ fn player_tick(
         let mut pos = tf.translation;
         p.prev_pos = pos;
 
-        if reset || pos.y < -30.0 {
-            *p = Player { prev_pos: SPAWN, crouched: p.crouched, ..default() };
-            tf.translation = SPAWN;
+        if reset || pos.y < bounds.kill_y {
+            *p = Player { prev_pos: bounds.spawn, crouched: p.crouched, ..default() };
+            tf.translation = bounds.spawn;
             continue;
         }
 

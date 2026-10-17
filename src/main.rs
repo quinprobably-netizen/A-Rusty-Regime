@@ -5,6 +5,7 @@ mod hud;
 mod input;
 mod level;
 mod targets;
+mod terrain;
 mod tuning;
 mod viewmodel;
 mod weapon;
@@ -40,10 +41,23 @@ fn main() {
             viewmodel::ViewModelPlugin,
             targets::TargetsPlugin,
             hud::HudPlugin,
-            level::LevelPlugin,
         ))
+        .add_plugins(level_plugin())
         .add_systems(Update, dev_screenshot.run_if(|| std::env::var_os("RUST_REGIME_SCREENSHOT").is_some()))
         .run();
+}
+
+/// `RUST_REGIME_LEVEL=arena` runs the old walled arena; anything else is the island.
+fn level_plugin() -> bevy::app::PluginGroupBuilder {
+    use bevy::app::PluginGroup;
+    struct Level(bool);
+    impl PluginGroup for Level {
+        fn build(self) -> bevy::app::PluginGroupBuilder {
+            let group = bevy::app::PluginGroupBuilder::start::<Self>();
+            if self.0 { group.add(level::LevelPlugin) } else { group.add(terrain::TerrainPlugin) }
+        }
+    }
+    Level(std::env::var("RUST_REGIME_LEVEL").is_ok_and(|v| v == "arena")).build()
 }
 
 /// Dev aid: `RUST_REGIME_SCREENSHOT=shot.png` saves a frame after a few
@@ -55,6 +69,7 @@ fn dev_screenshot(
     mut arsenal: ResMut<weapon::Arsenal>,
     mut view: ResMut<input::ViewAngles>,
     mut player: Single<(&mut controller::Player, &mut Transform)>,
+    heightmap: Option<Res<terrain::Heightmap>>,
 ) {
     use bevy::render::view::screenshot::{Screenshot, save_to_disk};
     *frames += 1;
@@ -70,7 +85,8 @@ fn dev_screenshot(
         }
         if let (Some(x), Some(z)) = (parts.next(), parts.next()) {
             let (p, tf) = &mut *player;
-            tf.translation = Vec3::new(x, 1.0, z);
+            let y = heightmap.as_ref().map_or(0.0, |hm| hm.height_at(x, z)) + 1.0;
+            tf.translation = Vec3::new(x, y, z);
             p.prev_pos = tf.translation;
         }
         if let Some(pitch) = parts.next() {

@@ -77,6 +77,9 @@ pub struct Tuning {
     pub target_respawn: f32,
     pub drone_speed: f32,
 
+    // Island level (table `[island]`)
+    pub island: Island,
+
     // Look
     pub mouse_sensitivity: f32,
     pub stick_yaw_speed: f32,
@@ -178,6 +181,8 @@ impl Default for Tuning {
             target_respawn: 3.0,
             drone_speed: 2.5,
 
+            island: Island::default(),
+
             mouse_sensitivity: 0.002,
             stick_yaw_speed: 4.5,
             stick_pitch_speed: 3.0,
@@ -210,6 +215,26 @@ pub struct Gun {
 impl Default for Gun {
     fn default() -> Self {
         Tuning::default().rifle
+    }
+}
+
+/// The island level: a seeded heightmap `size` meters square sampled every
+/// `cell` meters, peaks up to `height`, water at `water_level`. The stage 1
+/// sites stay inside `core` meters of the center.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct Island {
+    pub seed: u32,
+    pub size: f32,
+    pub cell: f32,
+    pub core: f32,
+    pub height: f32,
+    pub water_level: f32,
+}
+
+impl Default for Island {
+    fn default() -> Self {
+        Self { seed: 7, size: 4096.0, cell: 4.0, core: 1500.0, height: 260.0, water_level: 0.0 }
     }
 }
 

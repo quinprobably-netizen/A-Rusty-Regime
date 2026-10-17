@@ -2,12 +2,14 @@
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
+use bevy::ecs::system::RunSystemOnce;
 use bevy::time::TimeUpdateStrategy;
 use std::time::Duration;
 
 use crate::controller::{self, ControllerPlugin, MoveState, Player};
 use crate::input::{PlayerInput, ViewAngles};
-use crate::tuning::Tuning;
+use crate::terrain;
+use crate::tuning::{Island, Tuning};
 use crate::targets::{self, Target, TargetsPlugin};
 use crate::weapon::{Arsenal, WeaponKind, WeaponPlugin};
 
@@ -394,4 +396,84 @@ fn body_pose_follows_movement() {
     assert!(playback_rate(Pose::Sprint, 7.5, max) > playback_rate(Pose::Sprint, 5.5, max));
     assert!(playback_rate(Pose::Walk, 0.3, max) >= 0.7);
     assert_eq!(playback_rate(Pose::Idle, 3.0, max), 1.0);
+}
+
+// --- Island terrain ---
+
+#[test]
+fn heightmap_is_deterministic_and_island_shaped() {
+    let island = Island::default();
+    let a = terrain::generate(&island);
+    let b = terrain::generate(&island);
+    assert_eq!(a.heights, b.heights);
+    let other = terrain::generate(&Island { seed: 8, ..island.clone() });
+    assert_ne!(a.heights, other.heights);
+    assert_eq!(a.n, 1025);
+    assert!(a.height_at(0.0, 0.0) > island.water_level + 5.0, "center is land");
+    let half = island.size / 2.0;
+    for (x, z) in [(-half, -half), (half, -half), (-half, half), (half, half), (0.0, half), (half, 0.0)] {
+        assert!(a.height_at(x, z) < island.water_level - 1.0, "coast is under water at {x},{z}");
+    }
+    let peak = a.heights.iter().cloned().fold(f32::MIN, f32::max);
+    assert!(peak > 0.6 * island.height && peak <= island.height, "peak {peak}");
+}
+
+#[test]
+fn heightmap_handles_odd_sizes_and_out_of_range() {
+    let hm = terrain::generate(&Island { size: 100.0, cell: 3.0, ..Island::default() });
+    assert_eq!(hm.n, 100 / 3 + 1);
+    assert_eq!(hm.height_at(1e6, -1e6), hm.height_at(hm.size / 2.0, -hm.size / 2.0));
+    let n = hm.normal_at(0.0, 0.0);
+    assert!((n.length() - 1.0).abs() < 1e-3 && n.y > 0.0);
+}
+
+#[test]
+fn stamp_flattens_a_pad() {
+    let mut hm = terrain::generate(&Island::default());
+    hm.stamp_flat(Vec2::new(200.0, -300.0), 30.0, 50.0, 20.0);
+    for (dx, dz) in [(0.0, 0.0), (29.0, 0.0), (0.0, -29.0), (20.0, 20.0)] {
+        assert!((hm.height_at(200.0 + dx, -300.0 + dz) - 50.0).abs() < 0.05);
+    }
+    let untouched = terrain::generate(&Island::default());
+    assert_eq!(hm.height_at(200.0 + 60.0, -300.0), untouched.height_at(200.0 + 60.0, -300.0), "unaffected beyond radius + blend");
+    assert!((hm.height_at(0.0, 0.0) - hm.height_at(20.0, 20.0)).abs() < 0.05, "spawn pad is flat");
+}
+
+#[test]
+fn colliders_match_heightmap() {
+    // 500 m at 4 m cells is 125 cells: three full chunks and a short one per side.
+    let island = Island { size: 500.0, ..Island::default() };
+    let hm = terrain::generate(&island);
+    let mut app = make_app(Tuning::default());
+    // Drop make_app's flat floor so only the terrain can be hit.
+    let floor: Vec<Entity> = app.world_mut().query_filtered::<Entity, (With<Collider>, Without<Player>)>().iter(app.world()).collect();
+    for e in floor {
+        app.world_mut().despawn(e);
+    }
+    terrain::spawn_colliders(app.world_mut(), &hm);
+    app.update();
+    for (x, z) in [(0.0, 0.0), (100.0, -37.0), (-211.0, 180.0), (245.0, 3.0), (-3.0, -245.0), (130.0, 130.0), (240.0, -240.0)] {
+        let got = app
+            .world_mut()
+            .run_system_once(move |q: SpatialQuery| {
+                q.cast_ray(Vec3::new(x, 400.0, z), Dir3::NEG_Y, 800.0, true, &SpatialQueryFilter::default()).map(|hit| 400.0 - hit.distance)
+            })
+            .unwrap()
+            .expect("ray hits terrain");
+        let want = hm.height_at(x, z);
+        assert!((got - want).abs() < 0.1, "at {x},{z}: collider {got} vs heightmap {want}");
+    }
+}
+
+#[test]
+fn falling_in_water_respawns_at_world_bounds() {
+    let mut app = make_app(Tuning::default());
+    app.insert_resource(controller::WorldBounds { spawn: Vec3::new(5.0, 30.0, -5.0), kill_y: 10.0 });
+    set_player(&mut app, Vec3::new(50.0, 9.0, 50.0), Vec3::new(3.0, -5.0, 0.0));
+    run(&mut app, 0.1);
+    let (pos, vel, state) = player(&mut app);
+    assert!((pos.xz() - Vec2::new(5.0, -5.0)).length() < 0.5 && pos.y > 25.0, "respawned at spawn, got {pos}");
+    // Reset to zero, then a few ticks of gravity at the spawn point.
+    assert!(vel.xz().length() < 0.01 && vel.y <= 0.0 && vel.y > -3.0, "velocity reset, got {vel}");
+    assert_eq!(state, MoveState::Air);
 }

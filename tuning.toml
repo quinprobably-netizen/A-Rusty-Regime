@@ -105,3 +105,11 @@ range = 150.0
 prop_impulse = 4.0
 automatic = false
 kick = 0.8
+
+[island]                    # the default level; RUST_REGIME_LEVEL=arena for the old arena
+seed = 7
+size = 4096                 # meters per side
+cell = 4                    # meters per heightmap sample (8 on a weak GPU)
+core = 1500                 # meters; the stage 1 sites stay inside this
+height = 260                # peak height in meters
+water_level = 0.0

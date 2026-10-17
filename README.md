@@ -52,6 +52,11 @@ range, prop impulse, automatic, recoil kick).
 All numbers live in `tuning.toml`.
 
 ## Level
+The default level is a 4 km seeded island (`[island]` in `tuning.toml`: seed, size,
+cell size, peak height, water level). Fall in the water and you respawn on the
+spawn pad. `RUST_REGIME_LEVEL=arena` runs the original arena below, which the
+tests also use.
+
 - Spawn area: dominoes, crate pyramid, barrels, balls, heavy crates
 - Ramps at 15, 30 and 45 degrees, a long wall for wall running, box steps
 - Parkour course (far side): wall-run gap, wall-jump chimney, mantle tower, slide tunnel
