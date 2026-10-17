@@ -79,6 +79,8 @@ pub struct Tuning {
 
     // Island level (table `[island]`)
     pub island: Island,
+    pub soldier: Soldier,
+    pub player: PlayerTuning,
 
     // Look
     pub mouse_sensitivity: f32,
@@ -182,6 +184,8 @@ impl Default for Tuning {
             drone_speed: 2.5,
 
             island: Island::default(),
+            soldier: Soldier::default(),
+            player: PlayerTuning::default(),
 
             mouse_sensitivity: 0.002,
             stick_yaw_speed: 4.5,
@@ -235,6 +239,42 @@ pub struct Island {
 impl Default for Island {
     fn default() -> Self {
         Self { seed: 7, size: 4096.0, cell: 4.0, core: 1500.0, height: 260.0, water_level: 0.0 }
+    }
+}
+
+/// Patrolling soldiers (table `[soldier]`).
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct Soldier {
+    pub health: f32,
+    pub speed: f32,
+    pub sight: f32,
+    pub fire_interval: f32,
+    pub damage: f32,
+    /// Radians of aim error.
+    pub spread: f32,
+    pub forget: f32,
+}
+
+impl Default for Soldier {
+    fn default() -> Self {
+        Self { health: 100.0, speed: 3.5, sight: 40.0, fire_interval: 0.6, damage: 12.0, spread: 0.02, forget: 4.0 }
+    }
+}
+
+/// Player health (table `[player]`).
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct PlayerTuning {
+    pub health: f32,
+    pub regen_delay: f32,
+    pub regen_rate: f32,
+    pub respawn_delay: f32,
+}
+
+impl Default for PlayerTuning {
+    fn default() -> Self {
+        Self { health: 100.0, regen_delay: 5.0, regen_rate: 20.0, respawn_delay: 2.0 }
     }
 }
 

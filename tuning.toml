@@ -113,3 +113,18 @@ cell = 4                    # meters per heightmap sample (8 on a weak GPU)
 core = 1500                 # meters; the stage 1 sites stay inside this
 height = 260                # peak height in meters
 water_level = 0.0
+
+[soldier]                   # patrolling soldiers on the island
+health = 100
+speed = 3.5                 # m/s along their route
+sight = 40                  # meters; they need a clear line to you
+fire_interval = 0.6
+damage = 12
+spread = 0.02               # radians of aim error
+forget = 4.0                # seconds out of sight before they resume patrol
+
+[player]
+health = 100
+regen_delay = 5.0           # seconds without damage before regen
+regen_rate = 20             # hp per second
+respawn_delay = 2.0

@@ -1,8 +1,10 @@
 mod body;
 mod camera;
 mod controller;
+mod health;
 mod hud;
 mod input;
+mod island;
 mod level;
 mod targets;
 mod terrain;
@@ -38,6 +40,7 @@ fn main() {
             camera::CameraPlugin,
             body::BodyPlugin,
             weapon::WeaponPlugin,
+            health::HealthPlugin,
             viewmodel::ViewModelPlugin,
             targets::TargetsPlugin,
             hud::HudPlugin,

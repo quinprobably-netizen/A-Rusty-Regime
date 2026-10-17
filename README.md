@@ -51,12 +51,26 @@ range, prop impulse, automatic, recoil kick).
 
 All numbers live in `tuning.toml`.
 
-## Level
+## Island
 The default level is a 4 km seeded island (`[island]` in `tuning.toml`: seed, size,
 cell size, peak height, water level). Fall in the water and you respawn on the
 spawn pad. `RUST_REGIME_LEVEL=arena` runs the original arena below, which the
 tests also use.
 
+Six sites sit in the island's core, each a parkour toy first and a fight second:
+base camp (spawn, no enemies, the physics playground), the radio tower on the
+highest peak (a spiral of ledges to mantle up, drones circling), the fort to the
+east (walls to run, the mantle tower and wall-jump chimney, four soldiers), the
+quarry to the west (terraces to slide and surf down, soldiers on every ring), the
+ruins to the north (a wall-run gap, two soldiers) and the lighthouse on the south
+coast (a spiral around the tower, drones).
+
+Soldiers patrol a route and shoot when they have a clear line to you within
+`soldier.sight` meters; they lose interest after `soldier.forget` seconds. You
+have `player.health` hit points that regenerate after `player.regen_delay`
+seconds; dying puts you back at base camp. Everything is in `tuning.toml`.
+
+## Arena
 - Spawn area: dominoes, crate pyramid, barrels, balls, heavy crates
 - Ramps at 15, 30 and 45 degrees, a long wall for wall running, box steps
 - Parkour course (far side): wall-run gap, wall-jump chimney, mantle tower, slide tunnel

@@ -41,11 +41,7 @@ pub fn generate(island: &Island) -> Heightmap {
             heights.push(h * m * island.height - (1.0 - m) * 40.0);
         }
     }
-    let mut hm = Heightmap { size: island.size, cell: island.cell, n, heights };
-    // Spawn pad at the center; sites add their own stamps.
-    let center = hm.height_at(0.0, 0.0);
-    hm.stamp_flat(Vec2::ZERO, 40.0, center, 30.0);
-    hm
+    Heightmap { size: island.size, cell: island.cell, n, heights }
 }
 
 /// Cells per chunk side.
@@ -150,6 +146,7 @@ pub fn chunk_collider(hm: &Heightmap, cx: usize, cz: usize) -> (Collider, Transf
 }
 
 /// Colliders only (no meshes), for the headless tests.
+#[cfg(test)]
 pub fn spawn_colliders(world: &mut World, hm: &Heightmap) {
     for cz in 0..hm.chunks() {
         for cx in 0..hm.chunks() {
@@ -219,7 +216,8 @@ impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
         let island = crate::tuning::load().island;
         let start = std::time::Instant::now();
-        let hm = generate(&island);
+        let mut hm = generate(&island);
+        let sites = crate::island::place(&mut hm, &island);
         info!(
             "island: {}x{} samples, {} chunks, generated in {:.0} ms",
             hm.n,
@@ -227,13 +225,15 @@ impl Plugin for TerrainPlugin {
             hm.chunks() * hm.chunks(),
             start.elapsed().as_secs_f32() * 1000.0
         );
-        app.insert_resource(crate::controller::WorldBounds {
-            spawn: Vec3::new(0.0, hm.height_at(0.0, 0.0) + 1.0, 0.0),
-            kill_y: island.water_level - 2.0,
-        })
-        .insert_resource(hm)
-        .insert_resource(ClearColor(SKY))
-        .add_systems(Startup, spawn_terrain)
+        for s in &sites {
+            info!("site {}: x {:.0} z {:.0} y {:.1}", s.name, s.center.x, s.center.y, s.height);
+        }
+        let camp = sites[0].origin();
+        app.insert_resource(crate::controller::WorldBounds { spawn: camp + Vec3::new(0.0, 1.0, 6.0), kill_y: island.water_level - 2.0 })
+            .insert_resource(crate::island::Sites(sites))
+            .insert_resource(hm)
+            .insert_resource(ClearColor(SKY))
+            .add_systems(Startup, (spawn_terrain, crate::island::spawn_sites.after(crate::targets::load_assets)))
         .add_systems(PostStartup, add_fog);
     }
 }

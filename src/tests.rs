@@ -8,6 +8,8 @@ use std::time::Duration;
 
 use crate::controller::{self, ControllerPlugin, MoveState, Player};
 use crate::input::{PlayerInput, ViewAngles};
+use crate::health::{HealthPlugin, PlayerHealth, PlayerHit};
+use crate::targets::Soldier;
 use crate::terrain;
 use crate::tuning::{Island, Tuning};
 use crate::targets::{self, Target, TargetsPlugin};
@@ -23,7 +25,7 @@ fn make_app(tuning: Tuning) -> App {
         .insert_resource(tuning)
         .init_resource::<PlayerInput>()
         .init_resource::<ViewAngles>()
-        .add_plugins((ControllerPlugin, WeaponPlugin, TargetsPlugin));
+        .add_plugins((ControllerPlugin, WeaponPlugin, TargetsPlugin, HealthPlugin));
     app.world_mut().spawn((RigidBody::Static, Collider::cuboid(200.0, 1.0, 200.0), Transform::from_xyz(0.0, -0.5, 0.0)));
     app.finish();
     app.update(); // run Startup so the player exists
@@ -256,6 +258,7 @@ fn full_game_boots_headless() {
         WeaponPlugin,
         crate::viewmodel::ViewModelPlugin,
         TargetsPlugin,
+        HealthPlugin,
         crate::hud::HudPlugin,
         crate::level::LevelPlugin,
     ));
@@ -436,7 +439,24 @@ fn stamp_flattens_a_pad() {
     }
     let untouched = terrain::generate(&Island::default());
     assert_eq!(hm.height_at(200.0 + 60.0, -300.0), untouched.height_at(200.0 + 60.0, -300.0), "unaffected beyond radius + blend");
-    assert!((hm.height_at(0.0, 0.0) - hm.height_at(20.0, 20.0)).abs() < 0.05, "spawn pad is flat");
+}
+
+#[test]
+fn site_pads_are_flat_and_above_water() {
+    let island = Island::default();
+    let mut hm = terrain::generate(&island);
+    let sites = crate::island::place(&mut hm, &island);
+    assert_eq!(sites.len(), 6);
+    for site in &sites {
+        assert!(site.height > island.water_level, "{} above water", site.name);
+        assert!(site.pad <= site.radius);
+        for (dx, dz) in [(0.0, 0.0), (0.7, 0.0), (0.0, -0.7), (0.5, 0.5), (-0.6, 0.3)] {
+            let h = hm.height_at(site.center.x + dx * site.pad, site.center.y + dz * site.pad);
+            assert!((h - site.height).abs() < 0.05, "{} pad flat at {dx},{dz}: {h} vs {}", site.name, site.height);
+        }
+    }
+    assert_eq!(sites[0].name, "Base camp");
+    assert!(sites[5].center.y > island.core * 0.6, "lighthouse is on the south coast");
 }
 
 #[test]
@@ -476,4 +496,94 @@ fn falling_in_water_respawns_at_world_bounds() {
     // Reset to zero, then a few ticks of gravity at the spawn point.
     assert!(vel.xz().length() < 0.01 && vel.y <= 0.0 && vel.y > -3.0, "velocity reset, got {vel}");
     assert_eq!(state, MoveState::Air);
+}
+
+// --- Health and soldiers ---
+
+fn hit_player(app: &mut App, amount: f32) {
+    app.world_mut().resource_mut::<Messages<PlayerHit>>().write(PlayerHit { amount });
+}
+
+fn soldier(app: &mut App, route: Vec<Vec3>) {
+    app.world_mut()
+        .run_system_once(move |mut commands: Commands, tuning: Res<Tuning>| targets::spawn_soldier(&mut commands, &tuning, None, route.clone()))
+        .unwrap();
+    app.update();
+}
+
+fn soldier_state(app: &mut App) -> (Vec3, Option<f32>) {
+    let mut q = app.world_mut().query::<(&Soldier, &Transform)>();
+    let (s, tf) = q.single(app.world()).unwrap();
+    (tf.translation, s.alert)
+}
+
+#[test]
+fn player_dies_and_respawns_with_full_health() {
+    let mut app = make_app(Tuning::default());
+    app.insert_resource(controller::WorldBounds { spawn: Vec3::new(5.0, 1.0, -5.0), kill_y: -30.0 });
+    set_player(&mut app, Vec3::new(40.0, 1.0, 40.0), Vec3::ZERO);
+    hit_player(&mut app, 30.0);
+    run(&mut app, 0.1);
+    assert_eq!(app.world().resource::<PlayerHealth>().hp, 70.0);
+    hit_player(&mut app, 100.0);
+    run(&mut app, 0.1);
+    let h = app.world().resource::<PlayerHealth>();
+    assert!(!h.alive() && h.hp == 0.0, "dead: {h:?}");
+    run(&mut app, 2.2);
+    let h = app.world().resource::<PlayerHealth>().clone();
+    assert!(h.alive() && h.hp == 100.0, "respawned: {h:?}");
+    let (pos, _, _) = player(&mut app);
+    assert!((pos.xz() - Vec2::new(5.0, -5.0)).length() < 0.5, "back at spawn, got {pos}");
+}
+
+#[test]
+fn health_regenerates_after_a_quiet_spell() {
+    let mut app = make_app(Tuning::default());
+    hit_player(&mut app, 50.0);
+    run(&mut app, 4.0);
+    assert_eq!(app.world().resource::<PlayerHealth>().hp, 50.0, "no regen yet");
+    run(&mut app, 2.0);
+    let hp = app.world().resource::<PlayerHealth>().hp;
+    assert!(hp > 60.0 && hp < 80.0, "regenerating, got {hp}");
+}
+
+#[test]
+fn soldier_shoots_player_in_sight() {
+    let mut app = make_app(Tuning::default());
+    set_player(&mut app, Vec3::new(0.0, 1.0, 0.0), Vec3::ZERO);
+    soldier(&mut app, vec![Vec3::new(10.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 6.0)]);
+    run(&mut app, 1.5);
+    let (_, alert) = soldier_state(&mut app);
+    assert!(alert.is_some(), "soldier is alert");
+    let hp = app.world().resource::<PlayerHealth>().hp;
+    assert!(hp <= 100.0 - 12.0, "player was shot, hp {hp}");
+}
+
+#[test]
+fn soldier_ignores_player_behind_wall_and_patrols() {
+    let mut app = make_app(Tuning::default());
+    set_player(&mut app, Vec3::new(0.0, 1.0, 0.0), Vec3::ZERO);
+    wall(&mut app, Vec3::new(1.0, 6.0, 30.0), Vec3::new(5.0, 3.0, 0.0));
+    soldier(&mut app, vec![Vec3::new(10.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 6.0)]);
+    let (start, _) = soldier_state(&mut app);
+    run(&mut app, 1.5);
+    let (pos, alert) = soldier_state(&mut app);
+    assert!(alert.is_none(), "not alert");
+    assert!((pos - start).length() > 2.0, "kept walking its route, moved {}", (pos - start).length());
+    assert_eq!(app.world().resource::<PlayerHealth>().hp, 100.0);
+}
+
+#[test]
+fn soldier_forgets_hidden_player() {
+    let mut app = make_app(Tuning::default());
+    set_player(&mut app, Vec3::new(0.0, 1.0, 0.0), Vec3::ZERO);
+    soldier(&mut app, vec![Vec3::new(10.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 6.0)]);
+    run(&mut app, 0.5);
+    assert!(soldier_state(&mut app).1.is_some());
+    // Out of sight range but still on the floor (off the floor you fall and respawn in view).
+    set_player(&mut app, Vec3::new(0.0, 1.0, -80.0), Vec3::ZERO);
+    run(&mut app, 2.0);
+    assert!(soldier_state(&mut app).1.is_some(), "still alert before forget");
+    run(&mut app, 2.5);
+    assert!(soldier_state(&mut app).1.is_none(), "forgot the player");
 }
