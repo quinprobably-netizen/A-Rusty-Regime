@@ -1,0 +1,107 @@
+# Rust Regime tuning. Edit and press F5 in game to reload.
+# Distances in meters; 1 TF2 Hammer unit = 0.022 m. Delete a line to use its default.
+
+# Core Source movement
+gravity = 17.6              # TF2 sv_gravity 800
+max_speed = 7.5             # ground run speed
+crouch_speed_mult = 0.33
+accelerate = 10.0           # sv_accelerate
+air_accelerate = 10.0       # sv_airaccelerate (TF2 = 10)
+air_speed_cap = 0.66        # the 30u cap that makes air strafing work
+friction = 4.0
+stop_speed = 2.2
+jump_speed = 6.35
+jump_buffer = 0.08          # seconds a jump press is remembered before landing
+auto_bhop = false           # true = hold jump to bunny hop
+bhop_speed_cap = 0.0        # 0 = off. TF2 uses 1.2
+ramp_launch_speed = 4.0     # upward speed above which you can't be grounded (ramp slides)
+walkable_normal_y = 0.7     # slopes steeper than ~45.6 degrees are surfable
+step_height = 0.4
+terminal_velocity = 77.0
+
+# Hull
+radius = 0.4
+stand_height = 1.8
+crouch_height = 1.36
+eye_from_top = 0.2
+
+# Slide
+slide_min_speed = 6.0
+slide_boost = 2.5
+slide_boost_cooldown = 1.0
+slide_friction = 0.6
+slide_end_speed = 3.0
+slide_steer = 1.5
+
+# Wall run / wall jump
+wallrun_min_speed = 5.0
+wallrun_speed = 9.0
+wallrun_max_time = 1.6
+wallrun_gravity_scale = 0.25
+wall_jump_out = 6.0
+wall_jump_up = 6.5
+wall_reach = 0.3
+
+# Mantle (ledge heights measured from your feet)
+mantle_min_height = 0.45
+mantle_max_height = 1.5
+mantle_time = 0.3
+
+# Rocket launcher (weapon 1)
+rocket_damage = 90.0
+rocket_speed = 24.0
+rocket_cooldown = 0.8
+blast_radius = 3.2
+self_knockback = 13.0
+prop_knockback = 14.0
+prop_ref_mass = 40.0
+push_strength = 0.6
+
+# Shooting range: soldier dummies and flying drones
+target_health = 100.0
+drone_health = 60.0
+target_respawn = 3.0        # seconds a dead target stays down
+drone_speed = 2.5           # m/s along their patrol loop
+
+# Look and controller
+mouse_sensitivity = 0.002
+stick_yaw_speed = 4.5       # radians per second at full tilt
+stick_pitch_speed = 3.0
+stick_deadzone = 0.15
+stick_look_curve = 2.0      # higher = finer aim near the center of the stick
+invert_y = false
+fov_degrees = 75.0          # vertical FOV (about 106 horizontal at 16:9)
+wallrun_tilt_degrees = 12.0
+rumble = true
+
+# Hitscan guns. pellets = rays per shot, spread in degrees, prop_impulse is the
+# speed a hit adds to a prop of prop_ref_mass, kick is viewmodel recoil.
+[rifle]                     # weapon 2, hold to fire
+damage = 18.0
+cooldown = 0.09
+pellets = 1
+spread_degrees = 0.6
+range = 200.0
+prop_impulse = 3.0
+automatic = true
+kick = 0.5
+
+[shotgun]                   # weapon 3
+damage = 9.0
+cooldown = 0.75
+pellets = 10
+spread_degrees = 5.0
+range = 40.0
+prop_impulse = 2.5
+automatic = false
+kick = 2.0
+
+[pistol]                    # weapon 4
+damage = 25.0
+cooldown = 0.17
+pellets = 1
+spread_degrees = 0.3
+range = 150.0
+prop_impulse = 4.0
+automatic = false
+kick = 0.8
