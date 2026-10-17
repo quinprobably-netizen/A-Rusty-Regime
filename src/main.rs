@@ -17,6 +17,11 @@ mod vehicle;
 mod loot;
 mod mission;
 mod bots;
+mod look;
+mod veg;
+mod sound;
+mod roads;
+mod world;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -51,6 +56,7 @@ fn main() {
             vehicle::VehiclePlugin,
             loot::LootPlugin,
             mission::MissionPlugin,
+            sound::SoundPlugin,
         ))
         .add_plugins(level_plugin())
         .add_systems(Update, dev_screenshot.run_if(|| std::env::var_os("RUST_REGIME_SCREENSHOT").is_some()))
@@ -64,7 +70,7 @@ fn level_plugin() -> bevy::app::PluginGroupBuilder {
     impl PluginGroup for Level {
         fn build(self) -> bevy::app::PluginGroupBuilder {
             let group = bevy::app::PluginGroupBuilder::start::<Self>();
-            let group = if self.0 { group.add(level::LevelPlugin) } else { group.add(terrain::TerrainPlugin) };
+            let group = if self.0 { group.add(level::LevelPlugin) } else { group.add(terrain::TerrainPlugin).add(look::LookPlugin).add(veg::VegPlugin).add(world::WorldPlugin) };
             if std::env::var("RUST_REGIME_MODE").is_ok_and(|m| m == "6v6") { group.add(bots::MatchPlugin) } else { group }
         }
     }

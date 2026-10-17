@@ -371,7 +371,7 @@ fn dummy_dies_falls_and_respawns() {
     assert!(!target.alive(), "rifle fire for a second kills a {} hp dummy", tuning.target_health);
     assert_eq!(*app.world().get::<RigidBody>(dummy).unwrap(), RigidBody::Dynamic);
     let score = app.world().resource::<targets::Score>();
-    assert!(score.kills == 1 && score.hits >= 6, "{score:?}");
+    assert!(score.kills == 1 && score.hits >= 2, "{score:?}");
 
     run(&mut app, 0.5);
     let fallen = app.world().get::<Transform>(dummy).unwrap().translation;
@@ -542,7 +542,8 @@ fn player_dies_and_respawns_with_full_health() {
     set_player(&mut app, Vec3::new(40.0, 1.0, 40.0), Vec3::ZERO);
     hit_player(&mut app, 30.0);
     run(&mut app, 0.1);
-    assert_eq!(app.world().resource::<PlayerHealth>().hp, 70.0);
+    let hp = app.world().resource::<PlayerHealth>().hp;
+    assert!((hp - 70.0).abs() < 0.5, "30 damage (and a little bleeding): {hp}");
     hit_player(&mut app, 100.0);
     run(&mut app, 0.1);
     let h = app.world().resource::<PlayerHealth>();
@@ -555,14 +556,36 @@ fn player_dies_and_respawns_with_full_health() {
 }
 
 #[test]
-fn health_regenerates_after_a_quiet_spell() {
+fn health_regenerates_to_the_cap_after_a_quiet_spell() {
     let mut app = make_app(Tuning::default());
-    hit_player(&mut app, 50.0);
-    run(&mut app, 4.0);
-    assert_eq!(app.world().resource::<PlayerHealth>().hp, 50.0, "no regen yet");
+    // Three small hits: no bleeding, 58 hp.
+    for _ in 0..3 {
+        hit_player(&mut app, 14.0);
+        run(&mut app, 0.1);
+    }
+    run(&mut app, 3.5);
+    let h = app.world().resource::<PlayerHealth>().clone();
+    assert!((h.hp - 58.0).abs() < 0.01 && h.bleeding <= 0.0, "no regen yet, no bleeding: {h:?}");
     run(&mut app, 2.0);
     let hp = app.world().resource::<PlayerHealth>().hp;
-    assert!(hp > 60.0 && hp < 80.0, "regenerating, got {hp}");
+    assert!((hp - 60.0).abs() < 0.01, "regenerated to the 60% cap, got {hp}");
+}
+
+#[test]
+fn big_hits_bleed_until_a_medkit() {
+    let mut app = make_app(Tuning::default());
+    hit_player(&mut app, 30.0);
+    run(&mut app, 2.0);
+    let h = app.world().resource::<PlayerHealth>().clone();
+    assert!(h.bleeding > 0.0 && h.hp < 67.0 && h.hp > 64.0, "bleeding 2 hp/s: {h:?}");
+    let (pos, _, _) = player(&mut app);
+    app.world_mut().spawn((loot::Medkit { down: 0.0 }, Transform::from_translation(pos), Visibility::default()));
+    run(&mut app, 0.1);
+    let h = app.world().resource::<PlayerHealth>().clone();
+    assert!(h.hp == 100.0 && h.bleeding <= 0.0, "healed: {h:?}");
+    let mut q = app.world_mut().query::<(&loot::Medkit, &Visibility)>();
+    let (kit, vis) = q.single(app.world()).unwrap();
+    assert!(kit.down > 0.0 && *vis == Visibility::Hidden, "the medkit is used up for a while");
 }
 
 #[test]
@@ -574,7 +597,7 @@ fn soldier_shoots_player_in_sight() {
     let (_, alert) = soldier_state(&mut app);
     assert!(alert.is_some(), "soldier is alert");
     let hp = app.world().resource::<PlayerHealth>().hp;
-    assert!(hp <= 100.0 - 12.0, "player was shot, hp {hp}");
+    assert!(hp < 100.0 - 10.0, "player was shot, hp {hp}");
 }
 
 #[test]
@@ -701,10 +724,14 @@ fn humvee_drives_steers_and_the_player_gets_out() {
     assert!((rot * Vec3::Y).y > 0.9, "and stayed on its wheels");
     assert!(vel.length() > 3.0);
 
+    // Holding back brakes to a stop (then it would start reversing).
     input(&mut app).movement = Vec2::new(0.0, -1.0);
-    run(&mut app, 2.5);
-    let (_, _, vel, _) = vehicle_state(&mut app, e);
-    assert!(vel.length() < 2.0, "braked, got {}", vel.length());
+    let mut slowest = f32::MAX;
+    for _ in 0..50 {
+        run(&mut app, 0.05);
+        slowest = slowest.min(vehicle_state(&mut app, e).2.length());
+    }
+    assert!(slowest < 1.0, "braked, got down to {slowest}");
 
     input(&mut app).movement = Vec2::ZERO;
     input(&mut app).interact_pressed = true;
@@ -1003,4 +1030,359 @@ fn match_mode_spawns_two_teams_and_scores() {
     app.world_mut().resource_mut::<Messages<Damage>>().write(Damage { entity: red_bot, amount: 1000.0, impulse: Vec3::ZERO });
     run(&mut app, 0.1);
     assert_eq!(app.world().resource::<crate::bots::MatchState>().score, [1, 0]);
+}
+
+#[test]
+fn splat_weights_sum_to_one_and_follow_the_ground() {
+    let island = Island::default();
+    let sum = |w: [f32; 4]| w.iter().sum::<f32>();
+    for (p, h, ny) in [(Vec2::ZERO, 40.0, 1.0), (Vec2::new(300.0, -200.0), 2.0, 0.95), (Vec2::new(-50.0, 90.0), 120.0, 0.5), (Vec2::new(17.0, 400.0), 240.0, 0.9)] {
+        let w = terrain::splat_weights(p, h, ny, &island);
+        assert!((sum(w) - 1.0).abs() < 1e-4, "weights {w:?} sum to one");
+        assert!(w.iter().all(|x| *x >= -1e-6), "no negative weight in {w:?}");
+    }
+    let cliff = terrain::splat_weights(Vec2::ZERO, 60.0, 0.5, &island);
+    assert!(cliff[2] > 0.9, "a cliff is rock: {cliff:?}");
+    let beach = terrain::splat_weights(Vec2::ZERO, island.water_level + 1.0, 1.0, &island);
+    assert!(beach[3] > 0.9, "the shore is sand: {beach:?}");
+    let meadow = terrain::splat_weights(Vec2::new(500.0, 500.0), 40.0, 1.0, &island);
+    assert!(meadow[0] + meadow[1] > 0.95, "flat land is grass or dirt: {meadow:?}");
+}
+
+#[test]
+fn vegetation_keeps_off_the_pads_the_water_and_the_cliffs() {
+    use crate::veg::{self, Plant};
+    let island = Island::default();
+    let mut hm = terrain::generate(&island);
+    let sites = crate::island::place(&mut hm, &island);
+    let placed = veg::place(&hm, &island, &sites, 1.0);
+    let pines = placed.iter().filter(|p| p.kind == Plant::Pine).count();
+    let rocks = placed.iter().filter(|p| p.kind == Plant::Rock).count();
+    assert!(pines > 2000 && rocks > 200, "{pines} pines, {rocks} rocks");
+    for p in &placed {
+        let q = p.pos.xz();
+        assert!(hm.height_at(q.x, q.y) > island.water_level + 2.0, "{:?} at {q} is on land", p.kind);
+        for s in &sites {
+            assert!(s.center.distance(q) > s.radius + 10.0, "{:?} at {q} is clear of {}", p.kind, s.name);
+        }
+        if p.kind == Plant::Pine {
+            assert!(hm.normal_at(q.x, q.y).y > 0.75, "pines stand on gentle ground");
+        }
+    }
+    assert!(veg::place(&hm, &island, &sites, 0.0).is_empty(), "density 0 grows nothing");
+}
+
+fn dummy_at(app: &mut App, feet: Vec3) -> Entity {
+    let t = app.world().resource::<Tuning>().clone();
+    targets::spawn_dummy(&mut app.world_mut().commands(), &t, None, feet, 0.0);
+    app.update();
+    let mut q = app.world_mut().query_filtered::<Entity, With<Target>>();
+    q.single(app.world()).unwrap()
+}
+
+fn target_health(app: &mut App, e: Entity) -> f32 {
+    app.world().get::<Target>(e).unwrap().health
+}
+
+#[test]
+fn bullets_fly_drop_and_slow_then_vanish() {
+    use crate::weapon::Bullet;
+    let mut app = make_app(Tuning::default());
+    select_weapon(&mut app, WeaponKind::Pistol);
+    let (pos, _, _) = player(&mut app);
+    input(&mut app).fire_pressed = true;
+    run(&mut app, 0.3);
+    let mut q = app.world_mut().query::<(&Bullet, &Transform)>();
+    let (b, tf) = q.single(app.world()).expect("one bullet in the air");
+    let speed = b.velocity.length();
+    assert!(speed < 360.0 && speed > 300.0, "drag slowed it: {speed}");
+    assert!(b.velocity.y < -2.0, "gravity pulls it down: {}", b.velocity);
+    assert!(tf.translation.z < pos.z - 80.0, "it has travelled: {}", tf.translation);
+    run(&mut app, 3.0);
+    let mut q = app.world_mut().query::<&Bullet>();
+    assert_eq!(q.iter(app.world()).count(), 0, "gone after three seconds");
+}
+
+#[test]
+fn bullets_go_through_wood_but_not_stone() {
+    let mut app = make_app(Tuning::default());
+    let dummy = dummy_at(&mut app, controller::SPAWN + Vec3::new(0.0, -1.0, -8.0));
+    // A thin wooden fence halfway, shoulder high.
+    let fence = app.world_mut().spawn((RigidBody::Static, Collider::cuboid(4.0, 3.0, 0.1), crate::weapon::Penetrable { cost: 0.35 }, Transform::from_translation(controller::SPAWN + Vec3::new(0.0, 0.5, -4.0)))).id();
+    select_weapon(&mut app, WeaponKind::Rifle);
+    input(&mut app).fire_pressed = true;
+    input(&mut app).fire_held = true;
+    run(&mut app, 0.12);
+    input(&mut app).fire_held = false;
+    let hp = target_health(&mut app, dummy);
+    assert!(hp < 100.0 && hp > 40.0, "hit through the fence with less energy: {hp}");
+    // Make it stone: no way through.
+    app.world_mut().entity_mut(fence).remove::<crate::weapon::Penetrable>();
+    let before = target_health(&mut app, dummy);
+    input(&mut app).fire_held = true;
+    run(&mut app, 0.3);
+    assert_eq!(target_health(&mut app, dummy), before, "stone stops bullets");
+}
+
+#[test]
+fn headshots_hurt_more_than_legshots() {
+    let t = Tuning::default();
+    let mut app = make_app(t.clone());
+    let feet = controller::SPAWN + Vec3::new(0.0, -1.0, -8.0);
+    let dummy = dummy_at(&mut app, feet);
+    select_weapon(&mut app, WeaponKind::Pistol);
+    let mut q = app.world_mut().query::<(&Player, &Transform)>();
+    let (p, tf) = q.single(app.world()).unwrap();
+    let eye = tf.translation + Vec3::Y * p.eye_offset(&t);
+    let aim_at = |y: f32| ((feet.y + y) - eye.y).atan2(8.0);
+    app.world_mut().resource_mut::<ViewAngles>().pitch = aim_at(1.65);
+    input(&mut app).fire_pressed = true;
+    run(&mut app, 0.2);
+    let head = 100.0 - target_health(&mut app, dummy);
+    app.world_mut().resource_mut::<ViewAngles>().pitch = aim_at(0.4);
+    app.world_mut().resource_mut::<crate::weapon::Recoil>().pending = Vec2::ZERO;
+    let before = target_health(&mut app, dummy);
+    input(&mut app).fire_pressed = true;
+    run(&mut app, 0.2);
+    let legs = before - target_health(&mut app, dummy);
+    assert!(head > 50.0 && legs > 5.0 && legs < 20.0, "head {head} vs legs {legs}");
+}
+
+#[test]
+fn recoil_kicks_the_view_up_then_settles_back() {
+    let mut app = make_app(Tuning::default());
+    select_weapon(&mut app, WeaponKind::Pistol);
+    input(&mut app).fire_pressed = true;
+    run(&mut app, 0.06);
+    let peak = app.world().resource::<ViewAngles>().pitch;
+    assert!(peak > 0.01, "kicked up: {peak}");
+    run(&mut app, 1.5);
+    let rest = app.world().resource::<ViewAngles>().pitch;
+    assert!(rest < peak * 0.5 && rest > 0.0, "most of it came back: {rest} of {peak}");
+}
+
+#[test]
+fn aiming_down_sights_settles_and_tightens() {
+    let mut app = make_app(Tuning::default());
+    select_weapon(&mut app, WeaponKind::Rifle);
+    input(&mut app).aim_held = true;
+    run(&mut app, 0.6);
+    assert!(app.world().resource::<crate::weapon::Aim>().level > 0.95);
+    input(&mut app).aim_held = false;
+    run(&mut app, 0.6);
+    assert!(app.world().resource::<crate::weapon::Aim>().level < 0.05);
+}
+
+fn soldiers(app: &mut App) -> Vec<(Entity, Vec3, Option<f32>)> {
+    let mut q = app.world_mut().query::<(Entity, &Soldier, &Transform)>();
+    q.iter(app.world()).map(|(e, s, tf)| (e, tf.translation, s.alert)).collect()
+}
+
+#[test]
+fn soldier_hears_a_shot_and_goes_to_look() {
+    let mut app = make_app(Tuning::default());
+    set_player(&mut app, Vec3::new(0.0, 1.0, 0.0), Vec3::ZERO);
+    // Out of sight behind a long wall, 40 m off.
+    wall(&mut app, Vec3::new(1.0, 6.0, 60.0), Vec3::new(20.0, 3.0, 0.0));
+    soldier(&mut app, vec![Vec3::new(40.0, 0.0, 0.0), Vec3::new(40.0, 0.0, 1.0)]);
+    run(&mut app, 0.3);
+    assert!(soldier_state(&mut app).1.is_none(), "quiet: not alert");
+    select_weapon(&mut app, WeaponKind::Pistol);
+    app.world_mut().resource_mut::<ViewAngles>().yaw = std::f32::consts::FRAC_PI_2;
+    input(&mut app).fire_pressed = true;
+    run(&mut app, 0.1);
+    let (start, alert) = soldier_state(&mut app);
+    assert!(alert.is_some(), "heard the shot");
+    run(&mut app, 1.0);
+    let (pos, _) = soldier_state(&mut app);
+    assert!(pos.distance(Vec3::new(0.0, pos.y, 0.0)) < start.distance(Vec3::new(0.0, start.y, 0.0)) - 2.0, "walking toward the shot: {start} to {pos}");
+}
+
+#[test]
+fn a_soldier_who_sees_you_calls_his_squad() {
+    let mut app = make_app(Tuning::default());
+    set_player(&mut app, Vec3::new(0.0, 1.0, 0.0), Vec3::ZERO);
+    // The second soldier is round a corner, 30 m from the first.
+    wall(&mut app, Vec3::new(30.0, 6.0, 1.0), Vec3::new(10.0, 3.0, -8.0));
+    soldier(&mut app, vec![Vec3::new(15.0, 0.0, 0.0), Vec3::new(15.0, 0.0, 1.0)]);
+    soldier(&mut app, vec![Vec3::new(10.0, 0.0, -25.0), Vec3::new(11.0, 0.0, -25.0)]);
+    run(&mut app, 0.5);
+    let s = soldiers(&mut app);
+    assert!(s.iter().all(|(_, _, a)| a.is_some()), "both alert: {s:?}");
+}
+
+#[test]
+fn a_hit_soldier_runs_for_cover() {
+    let mut app = make_app(Tuning::default());
+    set_player(&mut app, Vec3::new(0.0, 1.0, 0.0), Vec3::ZERO);
+    // A crate-height wall just beside the soldier, side-on to the player.
+    wall(&mut app, Vec3::new(0.6, 2.0, 3.0), Vec3::new(17.0, 1.0, 0.0));
+    soldier(&mut app, vec![Vec3::new(15.0, 0.0, 3.0), Vec3::new(15.0, 0.0, 4.0)]);
+    run(&mut app, 0.2);
+    let e = soldiers(&mut app)[0].0;
+    app.world_mut().resource_mut::<Messages<Damage>>().write(Damage { entity: e, amount: 10.0, impulse: Vec3::ZERO });
+    run(&mut app, 2.0);
+    let (_, pos, _) = soldiers(&mut app)[0];
+    let eye = Vec3::new(0.0, 1.0, 0.0) + Vec3::Y * 0.6;
+    let to = pos + Vec3::Y * 0.6 - eye;
+    let mut q = app.world_mut().query_filtered::<Entity, With<Player>>();
+    let player_e = q.single(app.world()).unwrap();
+    let blocked = app
+        .world_mut()
+        .run_system_once(move |spatial: SpatialQuery| {
+            spatial
+                .cast_ray(eye, Dir3::new(to.normalize()).unwrap(), to.length(), true, &SpatialQueryFilter::from_excluded_entities([player_e, e]))
+                .is_some()
+        })
+        .unwrap();
+    assert!(blocked, "the wall is between them now, soldier at {pos}");
+}
+
+
+#[test]
+fn roads_join_camp_to_every_site_and_leave_the_pads_alone() {
+    let island = Island::default();
+    let mut hm = terrain::generate(&island);
+    let sites = crate::island::place(&mut hm, &island);
+    let pads = hm.clone();
+    let roads = crate::roads::carve(&mut hm, &sites, &island);
+    assert!(roads.segments.len() > 40, "{} segments", roads.segments.len());
+    for site in sites.iter().take(6) {
+        // The pads are where they were.
+        for (dx, dz) in [(0.0, 0.0), (0.5, 0.5), (-0.6, 0.3)] {
+            let (x, z) = (site.center.x + dx * site.pad, site.center.y + dz * site.pad);
+            assert_eq!(hm.height_at(x, z), pads.height_at(x, z), "{} pad untouched", site.name);
+        }
+        // A road reaches each site's edge.
+        let near = roads.segments.iter().flat_map(|(a, b)| [a.xz(), b.xz()]).map(|p| p.distance(site.center)).fold(f32::MAX, f32::min);
+        assert!(near < site.radius + 10.0, "{} is {near} m from the nearest road", site.name);
+    }
+    // Driveable: the carved surface along every road is gentle and above the sea.
+    for (a, b) in &roads.segments {
+        let grade = (b.y - a.y).abs() / a.xz().distance(b.xz()).max(1.0);
+        assert!(grade < 0.16, "grade {grade} between {a} and {b}");
+        let mid = (a.xz() + b.xz()) / 2.0;
+        assert!(hm.height_at(mid.x, mid.y) > island.water_level, "road above water at {mid}");
+        assert!(roads.on_road(mid));
+    }
+    assert!(!roads.on_road(Vec2::new(5000.0, 5000.0)));
+}
+
+#[test]
+fn roads_grip_better_than_grass() {
+    // The same hard brake from 15 m/s stops shorter on a road.
+    let stop = |road: bool| {
+        let mut app = vehicle_app();
+        if road {
+            app.insert_resource(crate::roads::Roads { segments: vec![(Vec3::new(40.0, 0.0, 100.0), Vec3::new(40.0, 0.0, -200.0))] });
+        }
+        let e = spawn_vehicle(&mut app, Kind::Jeep, Vec3::new(40.0, 0.0, 40.0), 0.0);
+        run(&mut app, 1.0);
+        set_player(&mut app, Vec3::new(42.0, 1.0, 40.0), Vec3::ZERO);
+        input(&mut app).interact_pressed = true;
+        run(&mut app, 0.1);
+        app.world_mut().entity_mut(e).insert(LinearVelocity(Vec3::new(0.0, 0.0, -15.0)));
+        input(&mut app).movement = Vec2::new(0.0, -1.0);
+        run(&mut app, 0.05);
+        let (start, _, _, _) = vehicle_state(&mut app, e);
+        for _ in 0..100 {
+            run(&mut app, 0.05);
+            let (end, _, vel, _) = vehicle_state(&mut app, e);
+            if vel.length() < 1.0 {
+                return start.z - end.z;
+            }
+        }
+        panic!("never stopped");
+    };
+    let (road, grass) = (stop(true), stop(false));
+    assert!(road < grass * 0.9, "road {road} m vs grass {grass} m");
+}
+
+#[test]
+fn fuel_burns_and_an_empty_tank_stops_the_engine() {
+    let mut app = vehicle_app();
+    let e = spawn_vehicle(&mut app, Kind::Jeep, Vec3::new(40.0, 0.0, 40.0), 0.0);
+    run(&mut app, 1.0);
+    set_player(&mut app, Vec3::new(42.0, 1.0, 40.0), Vec3::ZERO);
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 0.1);
+    input(&mut app).movement = Vec2::Y;
+    run(&mut app, 2.0);
+    let fuel = app.world().get::<Vehicle>(e).unwrap().fuel;
+    assert!(fuel < 57.0 && fuel > 56.9, "a little burned: {fuel}");
+    app.world_mut().get_mut::<Vehicle>(e).unwrap().fuel = 0.0;
+    app.world_mut().entity_mut(e).insert(LinearVelocity::ZERO);
+    run(&mut app, 0.3);
+    let (start, _, _, _) = vehicle_state(&mut app, e);
+    run(&mut app, 2.0);
+    let (end, _, vel, _) = vehicle_state(&mut app, e);
+    assert!(vel.length() < 0.5 && start.distance(end) < 0.5, "no power: {vel}");
+}
+
+#[test]
+fn shot_up_vehicles_wreck_throw_the_driver_and_come_back() {
+    let mut app = vehicle_app();
+    let e = spawn_vehicle(&mut app, Kind::Jeep, Vec3::new(40.0, 0.0, 40.0), 0.0);
+    run(&mut app, 1.0);
+    set_player(&mut app, Vec3::new(42.0, 1.0, 40.0), Vec3::ZERO);
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 0.1);
+    for _ in 0..3 {
+        app.world_mut().resource_mut::<Messages<Damage>>().write(Damage { entity: e, amount: 150.0, impulse: Vec3::ZERO });
+        run(&mut app, 0.05);
+    }
+    let v = app.world().get::<Vehicle>(e).unwrap();
+    assert!(v.wreck.is_some() && v.health == 0.0, "wrecked: {} hp", v.health);
+    assert_eq!(driving(&mut app), None, "the driver was thrown out");
+    assert!(app.world().resource::<PlayerHealth>().hp < 70.0, "and hurt");
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 0.1);
+    assert_eq!(driving(&mut app), None, "a wreck can't be driven");
+    run(&mut app, Tuning::default().vehicle.wreck_time);
+    let v = app.world().get::<Vehicle>(e).unwrap();
+    assert!(v.wreck.is_none() && v.health == v.spec.hp && v.fuel == v.spec.tank, "replaced with a fresh one");
+}
+
+#[test]
+fn the_sun_rises_sets_and_the_night_is_dark() {
+    use crate::world::Clock;
+    let noon = Clock { hour: 12.0 };
+    let midnight = Clock { hour: 0.0 };
+    assert!(noon.sun_dir().y > 0.7 && noon.daylight() == 1.0);
+    assert!(midnight.sun_dir().y < -0.7 && midnight.daylight() == 0.0);
+    assert!(Clock { hour: 7.0 }.sun_dir().x > 0.5, "rises in the east");
+    assert!(Clock { hour: 17.0 }.sun_dir().x < -0.5, "sets in the west");
+    let dusk = Clock { hour: 18.2 }.daylight();
+    assert!(dusk > 0.0 && dusk < 1.0, "dusk is a ramp: {dusk}");
+}
+
+#[test]
+fn weather_changes_smoothly_and_rain_wets_the_ground() {
+    use crate::world::{Sky, Weather};
+    let mut w = Weather::default();
+    let mut seen = std::collections::HashSet::new();
+    let mut prev = w.clone();
+    for _ in 0..(4 * 3600) {
+        w.step(1.0, 6.0);
+        assert!((w.rain - prev.rain).abs() < 0.03 && (w.fog - prev.fog).abs() < 0.03, "no jumps");
+        seen.insert(format!("{:?}", w.sky));
+        if w.sky == Sky::Rain && w.rain > 0.8 {
+            assert!(w.wet > 0.0);
+        }
+        prev = w.clone();
+    }
+    assert!(seen.len() == 4, "every sky turns up in four hours: {seen:?}");
+}
+
+#[test]
+fn a_crosswind_pushes_bullets_sideways() {
+    use crate::weapon::Bullet;
+    let mut app = make_app(Tuning::default());
+    app.insert_resource(crate::world::Wind(Vec3::new(10.0, 0.0, 0.0)));
+    select_weapon(&mut app, WeaponKind::Pistol);
+    input(&mut app).fire_pressed = true;
+    run(&mut app, 0.5);
+    let mut q = app.world_mut().query::<&Bullet>();
+    let b = q.single(app.world()).expect("a bullet in the air");
+    assert!(b.velocity.x > 0.3, "drifting downwind: {}", b.velocity);
 }

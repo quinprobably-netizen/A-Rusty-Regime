@@ -17,8 +17,10 @@ impl Plugin for WeaponPlugin {
             .add_message::<WeaponFired>()
             .init_resource::<Arsenal>()
             .add_systems(Startup, load_assets)
-            .add_systems(FixedUpdate, (switch_weapon, fire, fly_rockets).chain().before(ControllerSet))
-            .add_systems(Update, (fade_explosions, fade_tracers));
+            .init_resource::<Recoil>()
+            .init_resource::<Aim>()
+            .add_systems(FixedUpdate, (switch_weapon, fire, fly_rockets, fly_bullets).chain().before(ControllerSet))
+            .add_systems(Update, (fade_explosions, fade_tracers, recoil, aim));
     }
 }
 
@@ -97,6 +99,54 @@ pub struct WeaponFired {
     pub kick: f32,
 }
 
+/// A bullet in flight: it drops under 9.81 m/s², slows by `drag` per metre, and does
+/// `damage` times its remaining energy (the square of its speed over its muzzle speed).
+#[derive(Component, Debug)]
+pub struct Bullet {
+    pub velocity: Vec3,
+    pub muzzle: f32,
+    pub damage: f32,
+    pub impulse: f32,
+    pub drag: f32,
+    pub owner: Entity,
+    pub age: f32,
+    pub through: u8,
+}
+
+/// Thin cover a bullet can go through, losing `cost` of its energy (0..1).
+#[derive(Component, Debug, Clone, Copy)]
+pub struct Penetrable {
+    pub cost: f32,
+}
+
+/// View kick from firing: `pending` is still to apply, `applied` pulls back toward zero.
+#[derive(Resource, Debug, Default)]
+pub struct Recoil {
+    pub pending: Vec2,
+    pub applied: Vec2,
+    pub since_shot: f32,
+    /// Sustained-fire heat, 0..1, widening the spread.
+    pub heat: f32,
+}
+
+/// Aim down sights: 0 from the hip, 1 fully aimed.
+#[derive(Resource, Debug, Default)]
+pub struct Aim {
+    pub level: f32,
+}
+
+/// Fire one bullet from `from` along `dir` (unit).
+pub fn spawn_bullet(commands: &mut Commands, fx: Option<&FxAssets>, from: Vec3, dir: Vec3, gun: &Gun, owner: Entity) {
+    let mut e = commands.spawn((
+        Name::new("Bullet"),
+        Bullet { velocity: dir * gun.velocity, muzzle: gun.velocity, damage: gun.damage, impulse: gun.prop_impulse, drag: gun.drag, owner, age: 0.0, through: 0 },
+        Transform::from_translation(from).looking_to(dir, Vec3::Y).with_scale(Vec3::new(0.02, 0.02, 0.01)),
+    ));
+    if let Some(fx) = fx {
+        e.insert((Mesh3d(fx.tracer_mesh.clone()), MeshMaterial3d(fx.tracer_mat.clone())));
+    }
+}
+
 #[derive(Resource)]
 pub struct FxAssets {
     rocket_mesh: Handle<Mesh>,
@@ -112,8 +162,9 @@ struct Rocket {
     life: f32,
 }
 
+/// A rocket's blast, growing then fading; `sound` listens for it appearing.
 #[derive(Component)]
-struct Explosion {
+pub struct Explosion {
     age: f32,
     radius: f32,
     material: Handle<StandardMaterial>,
@@ -207,12 +258,10 @@ fn fire(
     mut input: ResMut<PlayerInput>,
     view: Res<ViewAngles>,
     fx: Option<Res<FxAssets>>,
-    mut materials: Option<ResMut<Assets<StandardMaterial>>>,
-    spatial: SpatialQuery,
     mut arsenal: ResMut<Arsenal>,
+    mut recoil: ResMut<Recoil>,
+    aim_level: Res<Aim>,
     player: Single<(Entity, &Player, &Transform)>,
-    mut bodies: Query<(&RigidBody, &mut LinearVelocity, &ComputedMass), Without<Player>>,
-    mut damage: MessageWriter<Damage>,
     mut fired: MessageWriter<WeaponFired>,
     mut rumble: MessageWriter<Rumble>,
     mut seed: Local<u64>,
@@ -220,6 +269,7 @@ fn fire(
     let t = &*tuning;
     let dt = time.delta_secs();
     arsenal.cooldown -= dt;
+    recoil.heat = (recoil.heat - dt * 0.6).max(0.0);
     let fire_pressed = std::mem::take(&mut input.fire_pressed);
     if arsenal.switch_time > 0.0 {
         arsenal.switch_time -= dt;
@@ -256,46 +306,24 @@ fn fire(
     };
 
     arsenal.cooldown = gun.cooldown;
-    let filter = SpatialQueryFilter::from_excluded_entities([player_entity]);
-    let spread = gun.spread_degrees.to_radians();
+    // Spread: the gun's, wider with heat and on the move, tighter crouched or aiming.
+    let moving = (p.velocity.xz().length() / t.max_speed).clamp(0.0, 1.0);
+    let mut spread = gun.spread_degrees.to_radians() * (1.0 + recoil.heat * gun.heat_spread) * (1.0 + moving * 0.8);
+    if p.crouched {
+        spread *= 0.7;
+    }
+    spread *= 1.0 - aim_level.level * (1.0 - gun.ads_spread);
+    recoil.heat = (recoil.heat + 0.12).min(1.0);
+    recoil.since_shot = 0.0;
+    let side = ((arsenal.shots as f32) * 0.9).sin();
+    let ads = 1.0 - aim_level.level * 0.5;
+    recoil.pending += Vec2::new(gun.recoil_side.to_radians() * side, gun.recoil_up.to_radians()) * ads;
     for _ in 0..gun.pellets.max(1) {
         // Uniform point in a disc, as yaw/pitch offsets.
         let angle = next_unit(&mut seed) * std::f32::consts::TAU;
         let r = next_unit(&mut seed).sqrt() * spread;
         let dir = aim * Quat::from_euler(EulerRot::YXZ, r * angle.cos(), r * angle.sin(), 0.0) * Vec3::NEG_Z;
-        let Ok(dir) = Dir3::new(dir) else { continue };
-        let hit = spatial.cast_ray(eye, dir, gun.range, true, &filter);
-        let end = match hit {
-            Some(hit) => {
-                let point = eye + dir * hit.distance;
-                damage.write(Damage { entity: hit.entity, amount: gun.damage, impulse: dir * gun.prop_impulse });
-                if let Ok((body, mut lv, mass)) = bodies.get_mut(hit.entity)
-                    && *body == RigidBody::Dynamic
-                {
-                    let scale = (t.prop_ref_mass * mass.inverse()).min(1.0);
-                    lv.0 += dir * gun.prop_impulse * scale;
-                }
-                if let (Some(fx), Some(materials)) = (&fx, materials.as_mut()) {
-                    spawn_blast(&mut commands, fx, materials, point + hit.normal * 0.03, 0.18);
-                }
-                point
-            }
-            None => eye + dir * gun.range,
-        };
-        if let Some(fx) = &fx {
-            let delta = end - muzzle;
-            let len = delta.length();
-            if len > 0.5 {
-                commands.spawn((
-                    Tracer { age: 0.0 },
-                    Mesh3d(fx.tracer_mesh.clone()),
-                    MeshMaterial3d(fx.tracer_mat.clone()),
-                    Transform::from_translation(muzzle + delta * 0.5)
-                        .looking_to(delta / len, Vec3::Y)
-                        .with_scale(Vec3::new(0.02, 0.02, len)),
-                ));
-            }
-        }
+        spawn_bullet(&mut commands, fx.as_deref(), muzzle, dir.normalize(), gun, player_entity);
     }
     fired.write(WeaponFired { kick: gun.kick });
     rumble.write(Rumble { strength: (0.15 * gun.kick).min(0.6), seconds: 0.08 });
@@ -389,6 +417,124 @@ fn fade_explosions(
             m.base_color.set_alpha(0.8 * (1.0 - k));
         }
     }
+}
+
+/// Steps every bullet: gravity and drag, a ray along the step, damage scaled by the energy left,
+/// head and leg zones on soldiers, and a pass through thin cover.
+#[allow(clippy::too_many_arguments)]
+fn fly_bullets(
+    mut commands: Commands,
+    time: Res<Time>,
+    tuning: Res<Tuning>,
+    spatial: SpatialQuery,
+    fx: Option<Res<FxAssets>>,
+    mut materials: Option<ResMut<Assets<StandardMaterial>>>,
+    player: Single<Entity, With<Player>>,
+    wind: Option<Res<crate::world::Wind>>,
+    mut bullets: Query<(Entity, &mut Bullet, &mut Transform)>,
+    targets: Query<(&crate::targets::Target, &Transform), Without<Bullet>>,
+    cover: Query<&Penetrable>,
+    mut bodies: Query<(&RigidBody, &mut LinearVelocity, &ComputedMass), (Without<Player>, Without<Bullet>)>,
+    mut damage: MessageWriter<Damage>,
+    mut hits: MessageWriter<crate::health::PlayerHit>,
+) {
+    let dt = time.delta_secs();
+    let t = &*tuning;
+    for (entity, mut b, mut tf) in &mut bullets {
+        b.age += dt;
+        b.velocity.y -= 9.81 * dt;
+        let speed = b.velocity.length();
+        if b.age > 3.0 || speed < 20.0 {
+            commands.entity(entity).despawn();
+            continue;
+        }
+        // Drag acts on the bullet's speed through the air, so a crosswind pushes it sideways.
+        let air = wind.as_ref().map_or(Vec3::ZERO, |w| w.0);
+        let rel = b.velocity - air;
+        b.velocity = air + rel * (-b.drag * rel.length() * dt).exp();
+        let mut pos = tf.translation;
+        let mut remaining = speed * dt;
+        let dir = b.velocity / speed;
+        let filter = SpatialQueryFilter::from_excluded_entities([b.owner, entity]);
+        let mut stopped = false;
+        while remaining > 0.0 {
+            let Some(hit) = spatial.cast_ray(pos, Dir3::new(dir).unwrap(), remaining, true, &filter) else { break };
+            let point = pos + dir * hit.distance;
+            let energy = (b.velocity.length() / b.muzzle).powi(2);
+            if hit.entity == *player {
+                hits.write(crate::health::PlayerHit { amount: b.damage * energy });
+                stopped = true;
+                break;
+            }
+            // Head and leg zones on the capsule targets.
+            let zone = targets.get(hit.entity).map_or(1.0, |(_, ttf)| {
+                let local = point.y - (ttf.translation.y - crate::targets::DUMMY_HEIGHT * 0.5);
+                if local > crate::targets::DUMMY_HEIGHT - 0.35 {
+                    t.headshot
+                } else if local < 0.85 {
+                    t.legshot
+                } else {
+                    1.0
+                }
+            });
+            damage.write(Damage { entity: hit.entity, amount: b.damage * energy * zone, impulse: dir * b.impulse * energy });
+            if let Ok((body, mut lv, mass)) = bodies.get_mut(hit.entity)
+                && *body == RigidBody::Dynamic
+            {
+                let scale = (t.prop_ref_mass * mass.inverse()).min(1.0);
+                lv.0 += dir * b.impulse * energy * scale;
+            }
+            if let (Some(fx), Some(materials)) = (&fx, materials.as_mut()) {
+                spawn_blast(&mut commands, fx, materials, point + hit.normal * 0.03, 0.18);
+            }
+            // Through thin cover, slower, up to twice.
+            match cover.get(hit.entity) {
+                Ok(c) if energy > c.cost && b.through < 2 => {
+                    b.through += 1;
+                    let left = ((energy - c.cost) / energy).sqrt();
+                    b.velocity *= left;
+                    pos = point + dir * 0.3;
+                    remaining = (remaining - hit.distance - 0.3) * left;
+                }
+                _ => {
+                    stopped = true;
+                    break;
+                }
+            }
+        }
+        if stopped {
+            commands.entity(entity).despawn();
+            continue;
+        }
+        pos += dir * remaining;
+        let streak = (speed * dt * 2.0).min(4.0);
+        *tf = Transform::from_translation(pos).looking_to(dir, Vec3::Y).with_scale(Vec3::new(0.02, 0.02, streak));
+    }
+}
+
+/// Applies the pending view kick fast, then pulls most of it back once the trigger rests.
+fn recoil(time: Res<Time>, mut recoil: ResMut<Recoil>, mut view: ResMut<ViewAngles>) {
+    let dt = time.delta_secs();
+    recoil.since_shot += dt;
+    let step = recoil.pending * (1.0 - (-30.0 * dt).exp());
+    recoil.pending -= step;
+    recoil.applied += step;
+    view.yaw += step.x;
+    view.pitch = (view.pitch + step.y).min(1.54);
+    if recoil.since_shot > 0.12 {
+        let back = recoil.applied * (1.0 - (-8.0 * dt).exp());
+        recoil.applied -= back;
+        view.yaw -= back.x * 0.7;
+        view.pitch = (view.pitch - back.y * 0.7).max(-1.54);
+    }
+}
+
+/// Aim down sights settles in `ads_time`; driving or the rocket launcher can't aim.
+fn aim(time: Res<Time>, tuning: Res<Tuning>, input: Res<PlayerInput>, arsenal: Res<Arsenal>, player: Single<Has<crate::vehicle::Driving>, With<Player>>, mut aim: ResMut<Aim>) {
+    let want = input.aim_held && !*player && arsenal.kind() != WeaponKind::RocketLauncher;
+    let target = if want { 1.0 } else { 0.0 };
+    let k = (time.delta_secs() / tuning.ads_time.max(0.01)).min(1.0);
+    aim.level += (target - aim.level) * k;
 }
 
 fn fade_tracers(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &mut Tracer, &mut Transform)>) {

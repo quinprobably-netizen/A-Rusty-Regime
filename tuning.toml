@@ -70,7 +70,9 @@ stick_pitch_speed = 3.0
 stick_deadzone = 0.15
 stick_look_curve = 2.0      # higher = finer aim near the center of the stick
 invert_y = false
-fov_degrees = 75.0          # vertical FOV (about 106 horizontal at 16:9)
+fov_degrees = 75
+ads_fov = 0.7               # field of view multiplier aiming down sights (right mouse)
+ads_time = 0.15.0          # vertical FOV (about 106 horizontal at 16:9)
 wallrun_tilt_degrees = 12.0
 rumble = true
 
@@ -85,6 +87,12 @@ range = 200.0
 prop_impulse = 3.0
 automatic = true
 kick = 0.5
+velocity = 850              # m/s; bullets drop and slow (drag per metre)
+drag = 0.0006
+recoil_up = 0.35            # degrees of view kick per shot
+recoil_side = 0.18
+heat_spread = 2.5           # spread multiplier at full heat
+ads_spread = 0.4            # spread multiplier aiming down sights (right mouse)
 
 [shotgun]                   # weapon 3
 damage = 9.0
@@ -123,18 +131,29 @@ damage = 12
 spread = 0.02               # radians of aim error
 forget = 4.0                # seconds out of sight before they resume patrol
 hold = 12                   # meters; they close in on you to about this
+bullet_speed = 750          # m/s
+hearing = 150               # m; a gunshot this close sends them to look
+squad_radius = 60           # m; a soldier who spots you tells mates this close
+cover_time = 2.5            # seconds behind cover after being hit
 
 [player]
 health = 100
 regen_delay = 5.0           # seconds without damage before regen
 regen_rate = 20             # hp per second
 respawn_delay = 2.0
+regen_cap = 0.6             # regen stops at this fraction of max; medkits heal the rest
+bleed_threshold = 15        # a hit this big starts bleeding
+bleed_rate = 2.0            # hp per second while bleeding
+bleed_time = 8.0            # seconds, or until a medkit
 
 [vehicle]                   # Humvee, jeep and dirt bike (E to enter, WASD drive, Space handbrake)
 enter_radius = 4.0          # meters from a vehicle to press E
 mu = 1.0                    # peak tyre grip as a fraction of wheel load
 rolling = 0.02              # rolling resistance
 bike_upright = 6.0          # how fast a bike rolls toward its balanced lean
+offroad_grip = 0.7          # grip off the roads, as a fraction of mu
+crash_speed = 9.0           # m/s of sudden speed change before a crash does damage
+wreck_time = 30             # seconds before a wreck is replaced at its spot
 
 [loot]                      # extraction loop
 pickup_radius = 1.6
@@ -144,3 +163,35 @@ extract_time = 8            # seconds standing on a pad to bank your haul
 [match]                     # RUST_REGIME_MODE=6v6: you and five bots against six at the fort
 kills_to_win = 30
 bots_per_team = 6
+
+[graphics]                  # the look: sky and post effects, texture tiling, vegetation
+atmosphere = true           # physical sky and sun; off = plain blue sky, cheaper
+ssao = true                 # screen-space ambient occlusion
+taa = true                  # temporal anti-aliasing
+bloom = true
+exposure = 15               # camera EV100, 15 is full sun; lower = brighter
+shadow_distance = 500       # m; lower if the frame rate drops
+grass_tile = 3              # metres per texture tile
+dirt_tile = 4
+rock_tile = 6
+sand_tile = 3
+wave_height = 0.25
+wave_length = 9
+trees = 1.0                 # tree and scrub density multiplier, 0 for none
+grass = true                # grass blades around you
+grass_density = 4000        # blades per 24 m cell
+tree_range = 900            # m, trees fade out past this
+
+[sound]                     # volumes 0..1; drop CC0 .ogg files in assets/sounds/ (rifle, shotgun, ...) to replace the synthesized ones
+master = 0.8
+guns = 0.9
+effects = 0.7
+engine = 0.6
+ambience = 0.5
+
+[world]                     # time of day and weather
+start_hour = 15             # the game starts mid-afternoon
+day_minutes = 48            # real minutes per game day; 0 stops the clock
+weather = true              # clear, overcast, rain and fog come and go
+weather_minutes = 6         # roughly how long each lasts
+sky = "auto"                # or hold one: "clear", "overcast", "rain", "fog"

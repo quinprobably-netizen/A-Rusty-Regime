@@ -19,7 +19,8 @@ impl Plugin for TargetsPlugin {
             .add_systems(Startup, load_assets)
             .add_message::<PlayerHit>()
             .add_message::<Killed>()
-            .add_systems(FixedUpdate, (take_damage, respawn, patrol, soldier_ai).chain().in_set(TargetSet).after(ControllerSet))
+            .add_message::<Shot>()
+            .add_systems(FixedUpdate, (take_damage, respawn, patrol, hear, soldier_ai).chain().in_set(TargetSet).after(ControllerSet))
             .add_observer(start_animation);
     }
 }
@@ -30,6 +31,13 @@ pub struct TargetSet;
 /// Whose side a soldier is on. The player is team 0; the island's patrols are team 1.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Team(pub u8);
+
+/// A soldier fired from `pos`, for the sound.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct Shot {
+    pub pos: Vec3,
+    pub team: Team,
+}
 
 /// A target just died.
 #[derive(Message, Debug, Clone, Copy)]
@@ -65,6 +73,10 @@ pub struct Soldier {
     pub fire_cd: f32,
     /// Where the enemy was last seen (feet height).
     pub last_seen: Vec3,
+    /// Hit since the last tick: look for cover.
+    pub take_cover: bool,
+    /// A cover spot (feet) and the seconds left there.
+    pub cover: Option<(Vec3, f32)>,
 }
 
 #[derive(Component, Debug)]
@@ -148,7 +160,7 @@ pub fn spawn_soldier_team(commands: &mut Commands, tuning: &Tuning, assets: Opti
     let mut e = commands.spawn((
         Name::new("Soldier"),
         Target { kind: TargetKind::Soldier, health: tuning.soldier.health, home, down: 0.0 },
-        Soldier { next: 1 % route.len(), route, alert: None, fire_cd: 0.0, last_seen: feet },
+        Soldier { next: 1 % route.len(), route, alert: None, fire_cd: 0.0, last_seen: feet, take_cover: false, cover: None },
         team,
         RigidBody::Kinematic,
         Collider::capsule(radius, DUMMY_HEIGHT - 2.0 * radius),
@@ -314,6 +326,61 @@ struct Enemy {
     eye: Vec3,
 }
 
+/// Soldiers react to what they hear: a gunshot within `hearing` sends them to look where it came
+/// from, a soldier who has an enemy in sight calls it out to squad mates within `squad_radius`, and
+/// one who is hit looks for cover.
+#[allow(clippy::too_many_arguments)]
+pub fn hear(
+    tuning: Res<Tuning>,
+    player: Single<&Transform, With<Player>>,
+    mut fired: MessageReader<crate::weapon::WeaponFired>,
+    mut shots: MessageReader<Shot>,
+    mut damage: MessageReader<Damage>,
+    mut soldiers: Query<(Entity, &Target, &Team, &mut Soldier, &Transform), Without<Player>>,
+) {
+    let t = &tuning.soldier;
+    let mut noises: Vec<(Vec3, Team)> = shots.read().map(|s| (s.pos, s.team)).collect();
+    if fired.read().count() > 0 {
+        noises.push((player.translation, Team(0)));
+    }
+    let hit: Vec<Entity> = damage.read().map(|d| d.entity).collect();
+    // Who has an enemy in sight right now, to call it out.
+    let callouts: Vec<(Team, Vec3, Vec3)> = soldiers
+        .iter()
+        .filter(|(_, target, _, s, _)| target.alive() && s.alert == Some(0.0))
+        .map(|(_, _, team, s, tf)| (*team, tf.translation, s.last_seen))
+        .collect();
+    for (entity, target, team, mut s, tf) in &mut soldiers {
+        if !target.alive() {
+            continue;
+        }
+        if hit.contains(&entity) {
+            s.take_cover = true;
+        }
+        if s.alert.is_some_and(|a| a < 0.5) {
+            continue;
+        }
+        let pos = tf.translation;
+        let mut heard = None;
+        // A shot from the other side is the enemy; one from our side is where the fight is.
+        for (at, _) in &noises {
+            let d = at.distance(pos);
+            if d < t.hearing && d > 1.0 && heard.is_none_or(|(_, hd)| d < hd) {
+                heard = Some((*at, d));
+            }
+        }
+        for (from, at, target) in &callouts {
+            if from == team && at.distance(pos) < t.squad_radius && at.distance(pos) > 0.01 {
+                heard = Some((*target + Vec3::Y * SOLDIER_EYE, 0.0));
+            }
+        }
+        if let Some((at, _)) = heard {
+            s.alert = Some(0.0);
+            s.last_seen = at - Vec3::Y * SOLDIER_EYE;
+        }
+    }
+}
+
 /// Patrol the route; on a clear line to an enemy within `sight`, face them and fire, closing in to `hold`
 /// meters; chase the last place they were seen and give up after `forget` seconds. Soldiers hit by other
 /// soldiers take `Damage`; the player takes `PlayerHit`.
@@ -329,8 +396,7 @@ fn soldier_ai(
     mut materials: Option<ResMut<Assets<StandardMaterial>>>,
     player: Single<(Entity, &Player, &Transform)>,
     mut soldiers: Query<(Entity, &Target, &Team, &mut Soldier, &mut Transform), Without<Player>>,
-    mut hits: MessageWriter<PlayerHit>,
-    mut damage: MessageWriter<Damage>,
+    mut shots: MessageWriter<Shot>,
     mut seed: Local<u64>,
 ) {
     let dt = time.delta_secs();
@@ -367,6 +433,54 @@ fn soldier_ai(
         }
         soldier.fire_cd -= dt;
         let feet = tf.translation - Vec3::Y * DUMMY_HEIGHT * 0.5;
+        // Hit: find the nearest spot within 10 m that the shooter can't see, and go there.
+        if std::mem::take(&mut soldier.take_cover) && soldier.cover.is_none() {
+            let threat = seen.map_or(soldier.last_seen + Vec3::Y * SOLDIER_EYE, |(e, _)| e.eye);
+            let mut skip = vec![entity, player_entity];
+            if let Some((e, _)) = seen {
+                skip.push(e.entity);
+            }
+            let block = SpatialQueryFilter::from_excluded_entities(skip);
+            let mut best: Option<(Vec3, f32)> = None;
+            for k in 0..16 {
+                let a = k as f32 * std::f32::consts::TAU / 16.0;
+                for r in [3.0, 6.0, 9.0] {
+                    let mut spot = feet + Vec3::new(a.cos() * r, 0.0, a.sin() * r);
+                    spot.y = feet_y(spot);
+                    let to = spot + Vec3::Y * SOLDIER_EYE - threat;
+                    let len = to.length();
+                    let Ok(dir) = Dir3::new(to / len.max(1e-3)) else { continue };
+                    let hidden = spatial.cast_ray(threat, dir, len, true, &block).is_some_and(|h| h.distance < len - 0.6);
+                    // Only spots it can walk to: nothing in the way at waist height.
+                    let path = spot + Vec3::Y * 0.9 - (feet + Vec3::Y * 0.9);
+                    let clear = Dir3::new(path / r).ok().is_some_and(|d| spatial.cast_ray(feet + Vec3::Y * 0.9, d, r, true, &block).is_none());
+                    if hidden && clear && best.is_none_or(|(_, d)| r < d) {
+                        best = Some((spot, r));
+                    }
+                }
+            }
+            if let Some((spot, _)) = best {
+                soldier.cover = Some((spot, t.cover_time));
+                soldier.alert = Some(0.0);
+            }
+        }
+        if let Some((spot, left)) = soldier.cover.as_mut() {
+            let delta = *spot - feet;
+            let flat = Vec3::new(delta.x, 0.0, delta.z);
+            if flat.length() > 0.3 {
+                // Run for it, no shooting.
+                let next = feet + flat.normalize() * (t.speed * 1.4 * dt).min(flat.length());
+                tf.translation = Vec3::new(next.x, feet_y(next) + DUMMY_HEIGHT * 0.5, next.z);
+                tf.rotation = Quat::from_rotation_y(flat.x.atan2(flat.z));
+                continue;
+            }
+            *left -= dt;
+            if *left > 0.0 {
+                continue;
+            }
+            // Peek out: back to fighting from here.
+            soldier.cover = None;
+        }
         if let Some((enemy, dist)) = seen {
             soldier.alert = Some(0.0);
             soldier.last_seen = enemy.eye - Vec3::Y * SOLDIER_EYE;
@@ -374,6 +488,7 @@ fn soldier_ai(
             tf.rotation = Quat::from_rotation_y(to_enemy.x.atan2(to_enemy.z));
             if soldier.fire_cd <= 0.0 {
                 soldier.fire_cd = t.fire_interval;
+                shots.write(Shot { pos: eye, team: *team });
                 // Aim error: a random offset in a disc of `spread` radians.
                 let a = next_unit(&mut seed) * std::f32::consts::TAU;
                 let r = next_unit(&mut seed).sqrt() * t.spread;
@@ -381,15 +496,8 @@ fn soldier_ai(
                 let right = dir.cross(Vec3::Y).normalize_or(Vec3::X);
                 let up = right.cross(dir);
                 let aim = (dir + right * (r * a.cos()) + up * (r * a.sin())).normalize();
-                if let Some(hit) = spatial.cast_ray(eye, Dir3::new(aim).unwrap(), t.sight * 1.5, true, &filter)
-                    && hit.entity == enemy.entity
-                {
-                    if enemy.entity == player_entity {
-                        hits.write(PlayerHit { amount: t.damage });
-                    } else {
-                        damage.write(Damage { entity: enemy.entity, amount: t.damage, impulse: aim * 2.0 });
-                    }
-                }
+                let gun = crate::tuning::Gun { damage: t.damage, velocity: t.bullet_speed, drag: 0.0006, prop_impulse: 2.0, ..default() };
+                weapon::spawn_bullet(&mut commands, fx.as_deref(), eye + aim * 0.6, aim, &gun, entity);
                 if let (Some(fx), Some(materials)) = (&fx, materials.as_mut()) {
                     weapon::spawn_blast(&mut commands, fx, materials, eye + aim * 0.6, 0.25);
                 }

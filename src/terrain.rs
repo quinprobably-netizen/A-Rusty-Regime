@@ -158,13 +158,20 @@ pub fn spawn_colliders(world: &mut World, hm: &Heightmap) {
 
 /// Indexed chunk mesh in chunk-local coordinates (the chunk entity sits at
 /// the chunk center, like its collider), smooth normals from the heightmap,
-/// vertex colors by height and slope.
-pub fn chunk_mesh(hm: &Heightmap, cx: usize, cz: usize, island: &Island) -> Mesh {
+/// splat weights in the vertex colors.
+pub fn chunk_mesh(hm: &Heightmap, cx: usize, cz: usize, island: &Island, roads: Option<&crate::roads::Roads>) -> Mesh {
     use bevy::asset::RenderAssetUsages;
     use bevy::mesh::{Indices, PrimitiveTopology};
     let (x0, x1) = hm.chunk_range(cx);
     let (z0, z1) = hm.chunk_range(cz);
     let center = (hm.sample_pos(x0, z0) + hm.sample_pos(x1, z1)) / 2.0;
+    // Only the road segments that come near this chunk.
+    let near = roads.map(|r| {
+        let (lo, hi) = (hm.sample_pos(x0, z0) - Vec2::splat(12.0), hm.sample_pos(x1, z1) + Vec2::splat(12.0));
+        crate::roads::Roads {
+            segments: r.segments.iter().filter(|(a, b)| a.xz().max(b.xz()).cmpge(lo).all() && a.xz().min(b.xz()).cmple(hi).all()).cloned().collect(),
+        }
+    });
     let w = x1 - x0 + 1;
     let mut positions = Vec::with_capacity(w * (z1 - z0 + 1));
     let mut normals = Vec::with_capacity(positions.capacity());
@@ -176,7 +183,13 @@ pub fn chunk_mesh(hm: &Heightmap, cx: usize, cz: usize, island: &Island) -> Mesh
             let n = hm.normal_at(p.x, p.y);
             positions.push([p.x - center.x, h, p.y - center.y]);
             normals.push(n.to_array());
-            colors.push(ground_color(h, n.y, island));
+            let mut w = splat_weights(p, h, n.y, island);
+            // Roads are packed dirt with a soft edge.
+            if let Some((d, _)) = near.as_ref().and_then(|r| r.nearest(p)) {
+                let r = 1.0 - smoothstep(crate::roads::HALF_WIDTH - 0.5, crate::roads::HALF_WIDTH + 1.5, d);
+                w = [w[0] * (1.0 - r), w[1] * (1.0 - r) + r, w[2] * (1.0 - r), w[3] * (1.0 - r)];
+            }
+            colors.push(w);
         }
     }
     let mut indices = Vec::with_capacity((x1 - x0) * (z1 - z0) * 6);
@@ -194,19 +207,36 @@ pub fn chunk_mesh(hm: &Heightmap, cx: usize, cz: usize, island: &Island) -> Mesh
         .with_inserted_indices(Indices::U32(indices))
 }
 
-/// Sand by the water, grass, rock on steep faces, snow on the peaks.
-/// Vertex colors are linear, so the sRGB picks are converted.
-fn ground_color(h: f32, normal_y: f32, island: &Island) -> [f32; 4] {
-    let srgb = if normal_y < 0.75 {
-        Color::srgb(0.45, 0.42, 0.40)
-    } else if h < island.water_level + 3.0 {
-        Color::srgb(0.76, 0.70, 0.50)
-    } else if h > 0.8 * island.height {
-        Color::srgb(0.92, 0.92, 0.95)
-    } else {
-        Color::srgb(0.33, 0.52, 0.25)
-    };
-    srgb.to_linear().to_f32_array()
+/// Splat weights for the terrain shader (vertex color r, g, b, a = grass, dirt, rock, sand):
+/// rock on steep faces, sand by the water, dirt in noisy patches, grass elsewhere.
+pub fn splat_weights(p: Vec2, h: f32, normal_y: f32, island: &Island) -> [f32; 4] {
+    let rock = smoothstep(0.86, 0.66, normal_y) + smoothstep(0.72 * island.height, 0.9 * island.height, h) * 0.6;
+    let rock = rock.min(1.0);
+    let rest = 1.0 - rock;
+    let sand = rest * smoothstep(island.water_level + 5.0, island.water_level + 1.5, h);
+    let rest = rest - sand;
+    let n = value_noise(p * 0.011) * 0.65 + value_noise(p * 0.047) * 0.35;
+    let dirt = rest * smoothstep(0.52, 0.7, n);
+    [rest - dirt, dirt, rock, sand]
+}
+
+fn hash2(p: Vec2) -> f32 {
+    let v = (p.dot(Vec2::new(127.1, 311.7))).sin() * 43758.547;
+    v - v.floor()
+}
+
+/// Smooth value noise in 0..1.
+pub fn value_noise(p: Vec2) -> f32 {
+    let i = p.floor();
+    let f = p - i;
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = hash2(i);
+    let b = hash2(i + Vec2::X);
+    let c = hash2(i + Vec2::Y);
+    let d = hash2(i + Vec2::ONE);
+    let x1 = a + (b - a) * u.x;
+    let x2 = c + (d - c) * u.x;
+    x1 + (x2 - x1) * u.y
 }
 
 /// The island level: terrain chunks, water, sun and fog.
@@ -214,10 +244,15 @@ pub struct TerrainPlugin;
 
 impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
-        let island = crate::tuning::load().island;
+        let tuning = crate::tuning::load();
+        let island = tuning.island;
+        // With the physical sky the camera's exposure is ~30 times lower, and the sky itself lights the shade.
+        let ambient = if tuning.graphics.atmosphere { 2000.0 } else { 450.0 };
         let start = std::time::Instant::now();
         let mut hm = generate(&island);
         let sites = crate::island::place(&mut hm, &island);
+        let roads = crate::roads::carve(&mut hm, &sites, &island);
+        info!("roads: {} segments", roads.segments.len());
         info!(
             "island: {}x{} samples, {} chunks, generated in {:.0} ms",
             hm.n,
@@ -231,68 +266,70 @@ impl Plugin for TerrainPlugin {
         let camp = sites[0].origin();
         app.insert_resource(crate::controller::WorldBounds { spawn: camp + Vec3::new(0.0, 1.0, 6.0), kill_y: island.water_level - 2.0 })
             .insert_resource(crate::island::Sites(sites))
+            .insert_resource(roads)
             .insert_resource(hm)
             .insert_resource(ClearColor(SKY))
-            .insert_resource(bevy::light::GlobalAmbientLight { color: Color::srgb(0.75, 0.85, 1.0), brightness: 450.0, ..default() })
+            .insert_resource(bevy::light::GlobalAmbientLight { color: Color::srgb(0.75, 0.85, 1.0), brightness: ambient, ..default() })
             .add_systems(Startup, (spawn_terrain, crate::island::spawn_sites.after(crate::targets::load_assets).after(crate::vehicle::load_assets)))
-        .add_systems(PostStartup, add_fog);
+        .add_systems(PostStartup, add_fog.run_if(|t: Res<crate::tuning::Tuning>| !t.graphics.atmosphere));
     }
 }
 
 const SKY: Color = Color::srgb(0.55, 0.7, 0.85);
 
-fn spawn_terrain(
+pub fn spawn_terrain(
     mut commands: Commands,
     hm: Res<Heightmap>,
     tuning: Res<crate::tuning::Tuning>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    textures: Option<Res<crate::look::Textures>>,
+    roads: Option<Res<crate::roads::Roads>>,
 ) {
     let island = &tuning.island;
-    let ground = materials.add(StandardMaterial { perceptual_roughness: 1.0, ..default() });
+    // Textured splat when the look is loaded, else flat shading (tests, or a GPU that can't).
+    let ground = textures.as_ref().map(|t| t.terrain.clone());
+    let plain = materials.add(StandardMaterial { perceptual_roughness: 1.0, ..default() });
     let mut vertices = 0usize;
     for cz in 0..hm.chunks() {
         for cx in 0..hm.chunks() {
             let (collider, transform) = chunk_collider(&hm, cx, cz);
-            let mesh = chunk_mesh(&hm, cx, cz, island);
+            let mesh = chunk_mesh(&hm, cx, cz, island, roads.as_deref());
             vertices += mesh.count_vertices();
-            commands.spawn((
-                Name::new(format!("Terrain {cx},{cz}")),
-                Mesh3d(meshes.add(mesh)),
-                MeshMaterial3d(ground.clone()),
-                transform,
-                RigidBody::Static,
-                collider,
-            ));
+            let mut e = commands.spawn((Name::new(format!("Terrain {cx},{cz}")), Mesh3d(meshes.add(mesh)), transform, RigidBody::Static, collider));
+            match &ground {
+                Some(g) => e.insert(MeshMaterial3d(g.clone())),
+                None => e.insert(MeshMaterial3d(plain.clone())),
+            };
         }
     }
     info!("island: {vertices} terrain vertices");
 
-    commands.spawn((
-        Name::new("Water"),
-        Mesh3d(meshes.add(Plane3d::new(Vec3::Y, Vec2::splat(island.size / 2.0)))),
-        MeshMaterial3d(materials.add(StandardMaterial {
+    let mut water = commands.spawn((Name::new("Water"), Mesh3d(meshes.add(Plane3d::new(Vec3::Y, Vec2::splat(island.size * 5.0)))), Transform::from_xyz(0.0, island.water_level, 0.0)));
+    match &textures {
+        Some(t) => water.insert(MeshMaterial3d(t.water.clone())),
+        None => water.insert(MeshMaterial3d(materials.add(StandardMaterial {
             base_color: Color::srgba(0.15, 0.35, 0.55, 0.85),
             alpha_mode: AlphaMode::Blend,
             perceptual_roughness: 0.2,
             ..default()
-        })),
-        Transform::from_xyz(0.0, island.water_level, 0.0),
-    ));
+        }))),
+    };
 
     commands.spawn((
         Name::new("Sun"),
         DirectionalLight { illuminance: 10_000.0, shadow_maps_enabled: true, ..default() },
         bevy::light::CascadeShadowConfigBuilder {
             num_cascades: 4,
-            maximum_distance: 400.0,
+            maximum_distance: tuning.graphics.shadow_distance,
             first_cascade_far_bound: 20.0,
             ..default()
         }
         .build(),
         // Also sees the shadow-only layer, so the player's hidden head still casts a shadow.
         bevy::camera::visibility::RenderLayers::from_layers(&[0, crate::body::SHADOW_ONLY_LAYER]),
-        Transform::from_xyz(200.0, 400.0, 100.0).looking_at(Vec3::ZERO, Vec3::Y),
+        // Mid-afternoon sun from the south-west, low enough for long shadows.
+        Transform::from_xyz(300.0, 230.0, 180.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 }
 

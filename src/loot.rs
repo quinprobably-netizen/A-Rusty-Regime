@@ -21,7 +21,7 @@ impl Plugin for LootPlugin {
         app.insert_resource(file)
             .insert_resource(save)
             .init_resource::<Inventory>()
-            .add_systems(FixedUpdate, (pickup, extract, lose_on_death).chain().in_set(LootSet).after(ControllerSet));
+            .add_systems(FixedUpdate, (pickup, medkits, extract, lose_on_death).chain().in_set(LootSet).after(ControllerSet));
     }
 }
 
@@ -40,6 +40,12 @@ impl Loot {
     pub fn available(&self) -> bool {
         self.down <= 0.0
     }
+}
+
+/// A medkit: full health and no more bleeding, then gone for `down` seconds.
+#[derive(Component, Debug)]
+pub struct Medkit {
+    pub down: f32,
 }
 
 /// Stand inside `radius` of it to extract.
@@ -130,6 +136,25 @@ fn pickup(time: Res<Time>, tuning: Res<Tuning>, health: Res<PlayerHealth>, playe
                 inv.keys.push(key);
             }
             loot.down = tuning.loot.respawn;
+            *vis = Visibility::Hidden;
+        }
+    }
+}
+
+fn medkits(time: Res<Time>, tuning: Res<Tuning>, mut health: ResMut<PlayerHealth>, player: Single<&Transform, With<Player>>, mut kits: Query<(&mut Medkit, &Transform, &mut Visibility)>) {
+    let dt = time.delta_secs();
+    for (mut kit, tf, mut vis) in &mut kits {
+        if kit.down > 0.0 {
+            kit.down -= dt;
+            if kit.down <= 0.0 {
+                *vis = Visibility::Inherited;
+            }
+            continue;
+        }
+        let needs = health.hp < health.max || health.bleeding > 0.0;
+        if needs && health.alive() && tf.translation.distance(player.translation) < tuning.loot.pickup_radius {
+            health.heal();
+            kit.down = tuning.loot.respawn * 0.5;
             *vis = Visibility::Hidden;
         }
     }

@@ -19,6 +19,8 @@ First build takes a while. Linux needs `libasound2-dev libudev-dev libwayland-de
 | Jump / wall jump | Space | A / Cross |
 | Crouch / slide | Ctrl, Shift or C | B / Circle, L3 or LT |
 | Fire | Left mouse | RT |
+| Aim down sights | Right mouse | LT |
+| Flashlight | F | |
 | Weapon 1-4 | 1 2 3 4 | D-pad up / right / down / left |
 | Next / previous weapon | Wheel down / up | RB / LB |
 | Last weapon | Q | Y / Triangle |
@@ -44,13 +46,36 @@ head is drawn only into the shadow map so it never covers the screen.
 | Slot | Weapon | Notes |
 |---|---|---|
 | 1 | Rocket launcher | Slow projectile, splash knockback on you, props and targets |
-| 2 | Rifle | Automatic hitscan, tight spread |
+| 2 | Rifle | Automatic, fast bullet, tight spread |
 | 3 | Shotgun | 10 pellets, wide spread, big push on props, short range |
 | 4 | Pistol | Semi-automatic, one shot per click, accurate |
 
 Hits push physics props and damage targets. Each gun has its own `[rifle]`,
 `[shotgun]`, `[pistol]` table in `tuning.toml` (damage, cooldown, pellets, spread,
 range, prop impulse, automatic, recoil kick).
+
+Rifle, shotgun and pistol fire real bullets: they drop, slow down, drift in the
+wind and take time to arrive. Wood walls, crates and thin metal let them through
+with less damage, stone and concrete stop them. Head hits do 2.5x, legs 0.6x.
+Recoil climbs with sustained fire and settles when you stop; aiming down sights
+zooms in and tightens the spread.
+
+## Survival and the world
+- **Health**: heavy hits make you bleed until a medkit (green boxes at camp and five
+  sites). Health regenerates only up to 60% and not while bleeding.
+- **Soldiers** hear gunshots up to 150 m, call nearby squadmates, and run to cover
+  that hides them from you when hit.
+- **Roads**: dirt roads link camp to every site. Tyres grip better on them than off.
+- **Vehicles** burn fuel and take damage from crashes and bullets (HUD shows speed,
+  gear, fuel and hull). A wreck throws you out and respawns at camp after 30 s.
+  Park within 15 m of your vehicle's home spot to refuel and repair.
+- **Day and night**: a 48-minute day (`[world] day_minutes`, 0 stops the clock) with
+  a moon, headlights and an F flashlight.
+- **Weather**: clear, overcast, rain and fog roll through, with wet ground and rain.
+  `[world] sky` can hold one.
+- **Sound** is synthesized at startup. Put a CC0 `.ogg` with the same name in
+  `assets/sounds/` (rifle, shotgun, pistol, rocket, explosion, hit, hurt, jump, land,
+  engine_big, engine_small, engine_bike, wind, surf) to replace one.
 
 All numbers live in `tuning.toml`.
 
@@ -110,6 +135,16 @@ against six red bots. Bots fight each other and you; first team to
 this is the bot mode the open-world design called for, and the spec leaves
 networking for later only if still wanted.
 
+### The look
+The island renders with a physical sky and sun (Bevy's atmosphere), sunlight exposure,
+AgX tonemapping, bloom, screen-space ambient occlusion and temporal anti-aliasing. The
+ground is a four-layer PBR splat (grass, dirt, rock, sand; rock is triplanar on cliffs)
+and the site walls, crates and posts use triplanar concrete, wood and rusty metal, so
+nothing stretches. The sea has moving waves and foam where it meets the shore. Pines,
+scrub and boulders are generated meshes placed by noise (about 5500 trees), and grass
+blades are built in cells around you. `[graphics]` in `tuning.toml` turns each effect
+off, scales the textures and the vegetation, and sets the exposure.
+
 ## Arena
 - Spawn area: dominoes, crate pyramid, barrels, balls, heavy crates
 - Ramps at 15, 30 and 45 degrees, a long wall for wall running, box steps
@@ -126,4 +161,6 @@ the MIT-licensed [Starter Kit FPS](https://github.com/KenneyNL/Starter-Kit-FPS)
 (blasters, flying enemy) and [Starter Kit Basic Scene](https://github.com/KenneyNL/Starter-Kit-Basic-Scene)
 (Mini Arena: the rigged, animated soldier used for the player body and the dummies, columns, statue, trees, banners, racks, blocks, bricks).
 They live in `assets/models/` and must sit next to the binary. The rocket launcher
-viewmodel and the effects are generated meshes.
+viewmodel and the effects are generated meshes. The textures in `assets/textures/` are
+CC0 1K sets from [ambientCG](https://ambientcg.com) (Grass004, Ground103, Rock035,
+Ground054, Concrete034, Planks037A, Metal063). Trees, rocks and grass are generated.

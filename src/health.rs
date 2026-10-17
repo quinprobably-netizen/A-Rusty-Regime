@@ -32,17 +32,25 @@ pub struct PlayerHealth {
     pub dead_for: Option<f32>,
     /// Set for one tick when a hit lands, for the HUD flash.
     pub hit_this_tick: bool,
+    /// Seconds of bleeding left.
+    pub bleeding: f32,
 }
 
 impl Default for PlayerHealth {
     fn default() -> Self {
-        Self { hp: 100.0, max: 100.0, since_hit: 1e9, dead_for: None, hit_this_tick: false }
+        Self { hp: 100.0, max: 100.0, since_hit: 1e9, dead_for: None, hit_this_tick: false, bleeding: 0.0 }
     }
 }
 
 impl PlayerHealth {
     pub fn alive(&self) -> bool {
         self.dead_for.is_none()
+    }
+
+    /// A medkit: full health and the bleeding stops.
+    pub fn heal(&mut self) {
+        self.hp = self.max;
+        self.bleeding = 0.0;
     }
 }
 
@@ -58,6 +66,7 @@ fn tick(time: Res<Time>, tuning: Res<Tuning>, mut hits: MessageReader<PlayerHit>
             health.dead_for = None;
             health.hp = t.health;
             health.since_hit = 1e9;
+            health.bleeding = 0.0;
             input.reset_pressed = true;
         }
         return;
@@ -66,6 +75,13 @@ fn tick(time: Res<Time>, tuning: Res<Tuning>, mut hits: MessageReader<PlayerHit>
         health.hp -= hit.amount;
         health.since_hit = 0.0;
         health.hit_this_tick = true;
+        if hit.amount >= t.bleed_threshold {
+            health.bleeding = t.bleed_time;
+        }
+    }
+    if health.bleeding > 0.0 {
+        health.bleeding -= dt;
+        health.hp -= t.bleed_rate * dt;
     }
     if health.hp <= 0.0 {
         health.hp = 0.0;
@@ -73,7 +89,8 @@ fn tick(time: Res<Time>, tuning: Res<Tuning>, mut hits: MessageReader<PlayerHit>
         return;
     }
     health.since_hit += dt;
-    if health.since_hit >= t.regen_delay && health.hp < t.health {
-        health.hp = (health.hp + t.regen_rate * dt).min(t.health);
+    let cap = t.health * t.regen_cap;
+    if health.bleeding <= 0.0 && health.since_hit >= t.regen_delay && health.hp < cap {
+        health.hp = (health.hp + t.regen_rate * dt).min(cap);
     }
 }

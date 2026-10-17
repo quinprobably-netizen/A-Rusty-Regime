@@ -20,7 +20,7 @@ pub struct VehiclePlugin;
 impl Plugin for VehiclePlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, load_assets)
-            .add_systems(FixedUpdate, (enter_exit, drive).chain().in_set(VehicleSet).before(ControllerSet))
+            .add_systems(FixedUpdate, (enter_exit, take_damage, drive).chain().in_set(VehicleSet).before(ControllerSet))
             .add_systems(Update, (wheel_visuals, hide_while_driving));
     }
 }
@@ -62,12 +62,19 @@ pub struct Vehicle {
     pub driver: Option<Entity>,
     /// Where it respawns after falling off the island.
     pub home: Transform,
+    /// Hull points and fuel (L) left.
+    pub health: f32,
+    pub fuel: f32,
+    /// Seconds until a wreck is replaced.
+    pub wreck: Option<f32>,
+    last_vel: Vec3,
 }
 
 impl Vehicle {
     pub fn new(spec: VehicleSpec, home: Transform) -> Self {
         let wheels = vec![WheelState { normal: Vec3::Y, ..default() }; spec.wheels.len()];
-        Vehicle { spec, wheels, steer: 0.0, gear: 1, rpm: 0.0, shift: 0.0, throttle: 0.0, brake: 0.0, handbrake: false, driver: None, home }
+        let (health, fuel) = (spec.hp, spec.tank);
+        Vehicle { spec, wheels, steer: 0.0, gear: 1, rpm: 0.0, shift: 0.0, throttle: 0.0, brake: 0.0, handbrake: false, driver: None, home, health, fuel, wreck: None, last_vel: Vec3::ZERO }
     }
 
     pub fn grounded_wheels(&self) -> usize {
@@ -174,7 +181,7 @@ fn enter_exit(
         } else {
             let near = vehicles
                 .iter()
-                .filter(|(_, v, _, _)| v.driver.is_none())
+                .filter(|(_, v, _, _)| v.driver.is_none() && v.wreck.is_none())
                 .map(|(e, _, tf, _)| (e, tf.translation.distance(ptf.translation)))
                 .filter(|(_, d)| *d < tuning.vehicle.enter_radius)
                 .min_by(|a, b| a.1.total_cmp(&b.1));
@@ -186,30 +193,105 @@ fn enter_exit(
     }
 }
 
+/// Bullets and rockets that hit a hull wear it down, less through armour.
+fn take_damage(mut damage: MessageReader<crate::weapon::Damage>, mut vehicles: Query<&mut Vehicle>) {
+    for d in damage.read() {
+        if let Ok(mut v) = vehicles.get_mut(d.entity)
+            && v.wreck.is_none()
+        {
+            let armor = v.spec.armor;
+            v.health -= d.amount * armor;
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn drive(
     mut commands: Commands,
     time: Res<Time>,
     tuning: Res<Tuning>,
     bounds: Res<WorldBounds>,
+    roads: Option<Res<crate::roads::Roads>>,
+    fx: Option<Res<crate::weapon::FxAssets>>,
+    mut materials: Option<ResMut<Assets<StandardMaterial>>>,
     mut input: ResMut<PlayerInput>,
     spatial: SpatialQuery,
     mut vehicles: Query<(Entity, &mut Vehicle, Forces)>,
     mut players: Query<(Entity, &Driving, &mut Player, &mut Transform)>,
+    mut hits: MessageWriter<crate::health::PlayerHit>,
 ) {
     let dt = time.delta_secs();
     if dt <= 0.0 {
         return;
     }
     let g = tuning.gravity;
+    let t = &tuning.vehicle;
     let mut anyone_driving = false;
     for (entity, mut v, mut forces) in &mut vehicles {
-        let driver = players.iter().find(|(_, d, _, _)| d.0 == entity).map(|(e, _, _, _)| e);
+        let mut driver = players.iter().find(|(_, d, _, _)| d.0 == entity).map(|(e, _, _, _)| e);
+
+        // A wreck sits until it is replaced by a fresh one at its spot.
+        if let Some(left) = v.wreck.as_mut() {
+            *left -= dt;
+            if *left <= 0.0 {
+                let home = v.home;
+                v.wreck = None;
+                v.health = v.spec.hp;
+                v.fuel = v.spec.tank;
+                for w in &mut v.wheels {
+                    *w = WheelState { normal: Vec3::Y, ..default() };
+                }
+                commands.entity(entity).insert((Position(home.translation), Rotation(home.rotation), LinearVelocity::ZERO, AngularVelocity::ZERO, home));
+            }
+        }
+
+        // Crashes: a sudden change of speed bends the hull and hurts whoever is inside.
+        let vel = forces.linear_velocity();
+        let dv = (vel - v.last_vel).length();
+        v.last_vel = vel;
+        if dv > t.crash_speed && v.wreck.is_none() {
+            let over = dv - t.crash_speed;
+            v.health -= over * over * v.spec.mass / 1000.0;
+            if driver.is_some() && dv > t.crash_speed + 3.0 {
+                hits.write(crate::health::PlayerHit { amount: (dv - t.crash_speed - 3.0) * 6.0 });
+            }
+        }
+        if v.health <= 0.0 && v.wreck.is_none() {
+            v.health = 0.0;
+            v.wreck = Some(t.wreck_time);
+            let pos = forces.position().0;
+            if let (Some(fx), Some(materials)) = (&fx, materials.as_mut()) {
+                crate::weapon::spawn_blast(&mut commands, fx, materials, pos, 3.0);
+            }
+            // Thrown clear, and hurt.
+            if let Some(d) = driver.take() {
+                let (pe, _, mut p, mut tf) = players.get_mut(d).unwrap();
+                tf.translation = pos + forces.rotation().0 * v.spec.exit + Vec3::Y;
+                p.prev_pos = tf.translation;
+                p.velocity = vel + Vec3::Y * 4.0;
+                p.state = MoveState::Air;
+                commands.entity(pe).remove::<(Driving, ColliderDisabled)>();
+                v.driver = None;
+                hits.write(crate::health::PlayerHit { amount: 35.0 });
+            }
+        }
+
         let ctl = match driver {
             Some(_) => Controls { axis: input.movement.y, steer: -input.movement.x, handbrake: input.jump_held },
             None => Controls::default(),
         };
-        step(&mut v, &mut forces, &spatial, entity, driver, ctl, &tuning.vehicle, g, dt);
+        // Damage saps power; an empty tank or a wreck has none.
+        let power = if v.wreck.is_some() || v.fuel <= 0.0 { 0.0 } else { 0.4 + 0.6 * v.health / v.spec.hp };
+        if driver.is_some() && power > 0.0 {
+            let load = 0.15 + 0.85 * v.throttle * (v.rpm / v.spec.redline).min(1.0);
+            v.fuel = (v.fuel - v.spec.burn * load * dt).max(0.0);
+        }
+        // Parked at its own spot, it is refuelled and patched up.
+        if driver.is_none() && v.wreck.is_none() && forces.position().0.distance(v.home.translation) < 15.0 {
+            v.fuel = (v.fuel + 2.0 * dt).min(v.spec.tank);
+            v.health = (v.health + 10.0 * dt).min(v.spec.hp);
+        }
+        step(&mut v, &mut forces, &spatial, entity, driver, ctl, t, roads.as_deref(), power, g, dt);
 
         if forces.position().y < bounds.kill_y {
             let home = v.home;
@@ -237,7 +319,19 @@ fn drive(
 
 /// One 66 Hz step of a vehicle: steering and gearbox from the controls, then each wheel's ray, coil-over and tyre.
 #[allow(clippy::too_many_arguments)]
-fn step(v: &mut Vehicle, f: &mut avian3d::dynamics::rigid_body::forces::ForcesItem<'_, '_>, spatial: &SpatialQuery, entity: Entity, driver: Option<Entity>, ctl: Controls, t: &VehicleTuning, g: f32, dt: f32) {
+fn step(
+    v: &mut Vehicle,
+    f: &mut avian3d::dynamics::rigid_body::forces::ForcesItem<'_, '_>,
+    spatial: &SpatialQuery,
+    entity: Entity,
+    driver: Option<Entity>,
+    ctl: Controls,
+    t: &VehicleTuning,
+    roads: Option<&crate::roads::Roads>,
+    power: f32,
+    g: f32,
+    dt: f32,
+) {
     let spec = v.spec.clone();
     let pos = f.position().0;
     let rot = f.rotation().0;
@@ -256,7 +350,12 @@ fn step(v: &mut Vehicle, f: &mut avian3d::dynamics::rigid_body::forces::ForcesIt
     let v_fwd = vel.dot(fwd);
 
     // Steering: full lock when slow, less with speed.
-    let lock = spec.max_steer / (1.0 + v_fwd.abs() / 15.0);
+    let mut lock = spec.max_steer / (1.0 + v_fwd.abs() / 15.0);
+    if spec.kind == Kind::DirtBike && v_fwd.abs() > 1.0 {
+        // A rider only asks for a turn the tyres can hold on loose ground.
+        let grip = 0.7 * t.mu * t.offroad_grip * g;
+        lock = lock.min((spec.wheelbase() * grip / (v_fwd * v_fwd)).atan());
+    }
     v.steer = damp(v.steer, ctl.steer * lock, 8.0, dt);
 
     // Pedals: the axis accelerates in the direction of the gear and brakes against the direction of travel;
@@ -273,6 +372,13 @@ fn step(v: &mut Vehicle, f: &mut avian3d::dynamics::rigid_body::forces::ForcesIt
         (0.0, ctl.axis.abs())
     } else {
         (0.0, 0.0)
+    };
+    // A rider feathers the throttle when the rear tyre breaks loose or slides wide, as riders do on grass.
+    let throttle = if spec.kind == Kind::DirtBike {
+        let rear = v.wheels.iter().zip(&spec.wheels).filter(|(_, ws)| ws.driven).map(|(w, _)| (w.kappa / 0.16).hypot(w.alpha / 0.19)).fold(0.0, f32::max);
+        throttle * (1.6 - rear).clamp(0.15, 1.0)
+    } else {
+        throttle
     };
     v.throttle = damp(v.throttle, throttle, 10.0, dt);
     // Parked vehicles hold their brakes.
@@ -306,7 +412,7 @@ fn step(v: &mut Vehicle, f: &mut avian3d::dynamics::rigid_body::forces::ForcesIt
             v.shift = 0.2;
         }
     }
-    let per_wheel = t_e * ratio / driven.len() as f32;
+    let per_wheel = t_e * power * ratio / driven.len() as f32;
     let om_max = spec.redline * 1.1 / 60.0 * std::f32::consts::TAU / ratio.abs();
 
     // Wheels.
@@ -336,7 +442,10 @@ fn step(v: &mut Vehicle, f: &mut avian3d::dynamics::rigid_body::forces::ForcesIt
         w.comp_vel = ((w.comp - prev) / dt).clamp(-12.0, 12.0);
 
         let t_drive = if ws.driven { per_wheel } else { 0.0 };
-        let t_brake = v.brake * spec.brake_t + if v.handbrake && !ws.steers { 2.0 * spec.brake_t } else { 0.0 };
+        // Brake torques are real-world figures; the game's heavier gravity presses the tyres harder, so the
+        // brakes scale with it to keep the same margin over grip.
+        let brake_t = spec.brake_t * g / 9.81;
+        let t_brake = v.brake * brake_t + if v.handbrake && !ws.steers { 2.0 * brake_t } else { 0.0 };
         let i_w = spec.unsprung * ws.radius * ws.radius * 0.6;
         let mut om = w.om + t_drive / i_w * dt;
 
@@ -360,7 +469,9 @@ fn step(v: &mut Vehicle, f: &mut avian3d::dynamics::rigid_body::forces::ForcesIt
             w.alpha = damp(w.alpha, v_lat.atan2(v_long.abs() + 0.8), relax, dt);
             let slip_v = om * ws.radius - v_long;
             w.kappa = damp(w.kappa, slip_v / v_long.abs().max(3.0), relax, dt);
-            let tf = tyre_force(&TyreCurve::GRAVEL, t.mu * load, w.kappa, w.alpha);
+            // Packed road: the tarmac curve at full grip; grass and dirt hold less.
+            let (curve, mu) = if roads.is_some_and(|r| r.on_road(contact.xz())) { (&TyreCurve::TARMAC, t.mu) } else { (&TyreCurve::GRAVEL, t.mu * t.offroad_grip) };
+            let tf = tyre_force(curve, mu * load, w.kappa, w.alpha);
             // Neither force may reverse the slip it acts on within one tick.
             let lim_y = m_k * v_lat.abs() / dt;
             let lim_x = (m_k + i_w / (ws.radius * ws.radius)) * slip_v.abs() / dt;
@@ -397,7 +508,12 @@ fn step(v: &mut Vehicle, f: &mut avian3d::dynamics::rigid_body::forces::ForcesIt
             let right_flat = fwd_flat.cross(Vec3::Y);
             let roll = up.dot(right_flat).clamp(-1.0, 1.0).asin();
             let v_f = v_fwd.max(0.0);
-            let target = -(v_f * v_f * v.steer.tan() / (spec.wheelbase() * g)).atan().clamp(-0.7, 0.7);
+            // Lean for the turn the bike is really making (speed times yaw rate), blended with the one the
+            // steering asks for so it tips in as the turn starts: on loose ground the tyres slide and the
+            // bike turns less than its bars say.
+            let asked = v_f * v_f * v.steer.tan() / spec.wheelbase();
+            let real = v_f * ang.y;
+            let target = -((0.3 * asked + 0.7 * real) / g).atan().clamp(-0.7, 0.7);
             // The rider's balance is a constraint, not a spring: the roll rate is set straight toward the target
             // lean, so the lateral forces of a fast turn can't throw the bike over.
             let roll_rate = ((target - roll) * t.bike_upright).clamp(-6.0, 6.0);

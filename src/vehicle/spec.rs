@@ -58,6 +58,11 @@ pub struct VehicleSpec {
     pub exit: Vec3,
     /// Chase camera distance and height.
     pub cam: (f32, f32),
+    /// Hull points, the fraction of bullet damage that gets through, fuel tank (L) and full-load burn (L/s).
+    pub hp: f32,
+    pub armor: f32,
+    pub tank: f32,
+    pub burn: f32,
 }
 
 impl VehicleSpec {
@@ -119,6 +124,7 @@ pub fn humvee() -> VehicleSpec {
         drag: 2.6,
         seat: Vec3::new(-0.5, 0.75, -0.3),
         exit: Vec3::new(-2.0, 0.6, -0.3),
+        hp: 800.0, armor: 0.4, tank: 95.0, burn: 0.02,
         cam: (8.0, 3.0),
     }
 }
@@ -149,6 +155,7 @@ pub fn jeep() -> VehicleSpec {
         drag: 1.9,
         seat: Vec3::new(-0.35, 0.55, 0.15),
         exit: Vec3::new(-1.6, 0.5, 0.15),
+        hp: 400.0, armor: 1.0, tank: 57.0, burn: 0.008,
         cam: (6.5, 2.5),
     }
 }
@@ -181,6 +188,7 @@ pub fn dirt_bike() -> VehicleSpec {
         drag: 0.7,
         seat: Vec3::new(0.0, 0.75, 0.15),
         exit: Vec3::new(-1.0, 0.4, 0.0),
+        hp: 120.0, armor: 1.0, tank: 8.0, burn: 0.003,
         cam: (5.0, 2.0),
     }
 }

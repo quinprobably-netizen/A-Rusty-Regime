@@ -17,6 +17,8 @@ pub struct PlayerInput {
     pub jump_pressed: bool,
     pub crouch_held: bool,
     pub fire_held: bool,
+    /// Aim down sights (right mouse / left trigger).
+    pub aim_held: bool,
     /// Latched like `jump_pressed`; semi-auto guns fire once per press.
     pub fire_pressed: bool,
     pub reset_pressed: bool,
@@ -28,6 +30,8 @@ pub struct PlayerInput {
     pub weapon_last: bool,
     /// Enter or leave a vehicle (E / X), latched like `jump_pressed`.
     pub interact_pressed: bool,
+    /// Toggle the flashlight (F), latched.
+    pub flashlight_pressed: bool,
 }
 
 /// Where the player is looking, in radians.
@@ -87,6 +91,7 @@ fn gather(
     time: Res<Time>,
     mut input: ResMut<PlayerInput>,
     mut view: ResMut<ViewAngles>,
+    aim: Option<Res<crate::weapon::Aim>>,
 ) {
     let t = &*tuning;
     let dt = time.delta_secs();
@@ -101,6 +106,7 @@ fn gather(
     let mut jump_pressed = keys.just_pressed(KeyCode::Space);
     let mut crouch_held = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ShiftLeft, KeyCode::KeyC]);
     let mut fire_held = false;
+    let mut aim_held = false;
     let mut fire_pressed = false;
     let mut reset = keys.just_pressed(KeyCode::KeyR);
     let mut weapon_select = None;
@@ -117,6 +123,7 @@ fn gather(
     if cursor.grab_mode != CursorGrabMode::None {
         look += motion.delta * t.mouse_sensitivity;
         fire_held |= mouse.pressed(MouseButton::Left);
+        aim_held |= mouse.pressed(MouseButton::Right);
         fire_pressed |= mouse.just_pressed(MouseButton::Left);
         // Wheel up = previous weapon, wheel down = next (Source convention).
         if scroll.delta.y > 0.0 {
@@ -146,6 +153,7 @@ fn gather(
             GamepadButton::LeftTrigger2,
         ]);
         fire_held |= pad.pressed(GamepadButton::RightTrigger2);
+        aim_held |= pad.pressed(GamepadButton::LeftTrigger);
         fire_pressed |= pad.just_pressed(GamepadButton::RightTrigger2);
         // RB = next weapon, LB = previous, Y = last weapon, d-pad = pick a slot.
         if pad.just_pressed(GamepadButton::RightTrigger) {
@@ -164,6 +172,10 @@ fn gather(
         reset |= pad.just_pressed(GamepadButton::Select);
     }
 
+    // Aiming down sights narrows the view, so the mouse turns it less.
+    if let Some(aim) = aim.as_ref() {
+        look *= 1.0 - aim.level * (1.0 - t.ads_fov);
+    }
     view.yaw -= look.x;
     view.pitch = (view.pitch - look.y).clamp(-1.54, 1.54);
 
@@ -172,6 +184,7 @@ fn gather(
     input.jump_pressed |= jump_pressed;
     input.crouch_held = crouch_held;
     input.fire_held = fire_held;
+    input.aim_held = aim_held;
     input.fire_pressed |= fire_pressed;
     input.reset_pressed |= reset;
     if weapon_select.is_some() {
@@ -180,6 +193,7 @@ fn gather(
     input.weapon_step += weapon_step;
     input.weapon_last |= weapon_last;
     input.interact_pressed |= interact;
+    input.flashlight_pressed |= keys.just_pressed(KeyCode::KeyF);
 }
 
 fn grab_cursor(
