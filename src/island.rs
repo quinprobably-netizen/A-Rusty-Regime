@@ -85,7 +85,29 @@ pub fn place(hm: &mut Heightmap, island: &Island) -> Vec<Placed> {
         z += 4.0;
     }
     sites.push(flat(hm, "Lighthouse", Vec2::new(0.0, z - 40.0), 30.0, 35.0, 20.0));
+
+    // Extraction pads: three in the wilderness ring, each on the first dry, gentle ground inward from the coast.
+    for (name, bearing) in [("Extract north", 1.95f32), ("Extract east", -0.35f32), ("Extract west", 3.8f32)] {
+        let dir = Vec2::new(bearing.cos(), bearing.sin());
+        let mut r = island.size / 2.0 - 250.0;
+        let floor = island.core + 120.0;
+        while r > floor {
+            let c = dir * r;
+            let h = hm.height_at(c.x, c.y);
+            let gentle = [Vec2::X, Vec2::NEG_X, Vec2::Y, Vec2::NEG_Y].iter().all(|d| (hm.height_at(c.x + d.x * 20.0, c.y + d.y * 20.0) - h).abs() < 12.0);
+            if h > island.water_level + 8.0 && gentle {
+                break;
+            }
+            r -= 20.0;
+        }
+        sites.push(flat(hm, name, dir * r, 16.0, 18.0, 24.0));
+    }
     sites
+}
+
+/// The site indices of the extraction pads.
+pub fn extract_pads(sites: &[Placed]) -> impl Iterator<Item = &Placed> {
+    sites.iter().filter(|p| p.name.starts_with("Extract"))
 }
 
 /// Materials for generated blocks.
@@ -108,6 +130,7 @@ struct Kit<'w, 's, 'a> {
     tuning: &'a Tuning,
     targets: Option<&'a TargetAssets>,
     mats: [Handle<StandardMaterial>; 7],
+    hm: &'a Heightmap,
 }
 
 impl Kit<'_, '_, '_> {
@@ -182,6 +205,40 @@ impl Kit<'_, '_, '_> {
     fn drone(&mut self, center: Vec3, radius: f32, phase: f32) {
         targets::spawn_drone(self.commands, self.tuning, self.targets, center, radius, phase);
     }
+
+    /// A cache worth `value` lying at `pos` (its base).
+    fn loot(&mut self, pos: Vec3, value: u32, key: Option<usize>) {
+        let mat = if key.is_some() { Mat::Goal } else { Mat::Crate };
+        self.commands.spawn((
+            crate::loot::bundle(pos, value, key),
+            Mesh3d(self.meshes.add(Cuboid::new(0.7, 0.5, 0.5))),
+            MeshMaterial3d(self.mat(mat)),
+        ));
+    }
+
+    /// A cache on the ground at island coordinates `(x, z)`.
+    fn ground_loot(&mut self, x: f32, z: f32, value: u32) {
+        let y = self.hm.height_at(x, z);
+        self.loot(Vec3::new(x, y, z), value, None);
+    }
+
+    /// An extraction pad: a lit disc you stand on.
+    fn extract_pad(&mut self, p: &Placed) {
+        let o = p.origin();
+        self.commands.spawn((
+            Name::new(p.name),
+            crate::loot::ExtractPad { radius: 10.0 },
+            Mesh3d(self.meshes.add(Cylinder::new(10.0, 0.3))),
+            MeshMaterial3d(self.mat(Mat::Goal)),
+            Transform::from_translation(o + Vec3::Y * 0.15),
+            RigidBody::Static,
+            Collider::cylinder(10.0, 0.3),
+        ));
+        for (x, z) in [(-9.0, -9.0), (9.0, -9.0), (9.0, 9.0), (-9.0, 9.0)] {
+            self.block(Vec3::new(0.4, 6.0, 0.4), o + Vec3::new(x, 3.0, z), 0.0, Mat::Metal);
+            self.block(Vec3::new(0.8, 0.8, 0.8), o + Vec3::new(x, 6.4, z), 0.0, Mat::Goal);
+        }
+    }
 }
 
 /// Square loop of feet positions `half` meters from `o`, at `o.y`.
@@ -210,7 +267,7 @@ pub fn spawn_sites(
         Color::srgb(0.9, 0.8, 0.2),
     ]
     .map(|c| materials.add(StandardMaterial { base_color: c, perceptual_roughness: 0.9, ..default() }));
-    let mut kit = Kit { commands: &mut commands, meshes: &mut meshes, server: &server, tuning: &tuning, targets: targets.as_deref(), mats };
+    let mut kit = Kit { commands: &mut commands, meshes: &mut meshes, server: &server, tuning: &tuning, targets: targets.as_deref(), mats, hm: &heightmap };
     let s = &sites.0;
     base_camp(&mut kit, &s[BASE_CAMP]);
     radio_tower(&mut kit, &s[TOWER]);
@@ -218,7 +275,23 @@ pub fn spawn_sites(
     quarry(&mut kit, &s[QUARRY]);
     ruins(&mut kit, &s[RUINS]);
     lighthouse(&mut kit, &s[LIGHTHOUSE]);
+    for pad in extract_pads(s) {
+        kit.extract_pad(pad);
+    }
+    wilderness_loot(&mut kit, &tuning.island);
     spawn_vehicles(&mut commands, vehicles.as_deref(), &tuning, s, &heightmap);
+}
+
+/// Caches out in the ring between the core and the coast, worth the walk.
+fn wilderness_loot(k: &mut Kit, island: &Island) {
+    for i in 0..10 {
+        let a = i as f32 * TAU / 10.0 + 0.3;
+        let r = island.core + 150.0 + (i % 3) as f32 * 180.0;
+        let (x, z) = (a.cos() * r, a.sin() * r);
+        if k.hm.height_at(x, z) > island.water_level + 3.0 {
+            k.ground_loot(x, z, 60);
+        }
+    }
 }
 
 /// The motor pool: a row south of base camp, a Humvee outside the fort gate, a jeep on the quarry rim and a bike at the lighthouse.
@@ -305,6 +378,8 @@ fn radio_tower(k: &mut Kit, p: &Placed) {
         k.block(Vec3::new(1.8, 0.3, 1.8), o + Vec3::new(a.cos() * 2.4, y, a.sin() * 2.4), a, Mat::Wood);
     }
     k.block(Vec3::new(9.0, 0.5, 9.0), o + Vec3::new(0.0, 40.25, 0.0), 0.0, Mat::Goal);
+    k.loot(o + Vec3::new(2.0, 40.5, 2.0), 80, None);
+    k.loot(o + Vec3::new(-2.0, 0.0, 12.0), 20, None);
     for i in 0..3 {
         k.drone(o + Vec3::new(0.0, 26.0 + i as f32 * 9.0, 0.0), 10.0 + i as f32 * 3.0, i as f32 * 2.1);
     }
@@ -321,6 +396,9 @@ fn fort(k: &mut Kit, p: &Placed) {
     k.block(Vec3::new(1.0, 8.0, 30.0), o + Vec3::new(-36.0, 4.0, 21.0), 0.0, Mat::Stone);
     for (x, z) in [(-36.0, -36.0), (36.0, -36.0), (36.0, 36.0), (-36.0, 36.0)] {
         k.block(Vec3::new(5.0, 14.0, 5.0), o + Vec3::new(x, 7.0, z), 0.0, Mat::Stone);
+    }
+    for (x, z) in [(-20.0, -25.0), (25.0, 20.0), (0.0, 0.0), (28.0, -28.0)] {
+        k.loot(o + Vec3::new(x, 0.0, z), 30, None);
     }
     for i in 0..3 {
         let h = 1.8 * (i + 1) as f32;
@@ -351,6 +429,10 @@ fn fort(k: &mut Kit, p: &Placed) {
 fn quarry(k: &mut Kit, p: &Placed) {
     let pit = p.origin();
     let rim = pit.y + 18.0;
+    k.loot(pit, 100, Some(0));
+    for (x, z, y) in [(40.0, 0.0, rim - 12.0), (-40.0, 10.0, rim - 12.0), (0.0, -58.0, rim - 6.0)] {
+        k.loot(Vec3::new(pit.x + x, y, pit.z + z), 40, None);
+    }
     for (i, (x, z)) in [(44.0, 20.0), (-30.0, 38.0), (10.0, -45.0)].iter().enumerate() {
         k.block(Vec3::new(3.0, 3.0, 3.0), Vec3::new(pit.x + x, rim - 6.0 + 1.5, pit.z + z), i as f32, Mat::Stone);
     }
@@ -372,6 +454,9 @@ fn quarry(k: &mut Kit, p: &Placed) {
 /// Broken colonnade, statues, and the wall-run gap between two platforms.
 fn ruins(k: &mut Kit, p: &Placed) {
     let o = p.origin();
+    for (x, z) in [(-11.0, 0.0), (11.0, 0.0), (0.0, -24.0)] {
+        k.loot(o + Vec3::new(x, if z == 0.0 { 3.0 } else { 0.0 }, z), 30, None);
+    }
     for i in 0..4 {
         for j in 0..3 {
             k.column(o + Vec3::new(-12.0 + i as f32 * 8.0, 0.0, 18.0 + j as f32 * 8.0), (i + j) % 2 == 1);
@@ -401,6 +486,8 @@ fn lighthouse(k: &mut Kit, p: &Placed) {
     let o = p.origin();
     k.cylinder(3.0, 24.0, o, Mat::Stone);
     k.cylinder(4.5, 0.5, o + Vec3::Y * 24.0, Mat::Goal);
+    k.loot(o + Vec3::new(2.0, 24.5, 1.0), 80, None);
+    k.loot(o + Vec3::new(9.0, 3.0, -2.0), 20, None);
     for i in 0..16 {
         let a = i as f32 * 0.5;
         let y = 1.5 * (i + 1) as f32;

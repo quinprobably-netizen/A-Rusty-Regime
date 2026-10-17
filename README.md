@@ -86,6 +86,30 @@ of the tyre, suspension and engine models from Q's Regolith Rally, stepped at
 and cylinders in code. `[vehicle]` in `tuning.toml` sets grip and the enter
 radius.
 
+
+### Extraction loop
+Caches (brown boxes) lie around every site and out in the wilderness ring;
+walk over one to carry its value. Three extraction pads (yellow discs with
+lit posts) sit in the ring between the core and the coast; stand on one for
+`loot.extract_time` seconds to bank your haul and start a new run from base
+camp. Die and you lose what you carry. Banked value, runs, deaths and
+mission progress persist in `save.toml` next to the binary
+(`RUST_REGIME_SAVE` overrides the path).
+
+### Missions
+A chain of six objectives shows at the top of the screen with its distance
+and a bearing mark (`^` ahead, `<` `>` to a side, `v` behind): climb the
+radio tower, clear the fort, recover the quarry cache and extract with it,
+drive a Humvee to the ruins, reach the lighthouse top. Soldiers now chase
+the last place they saw you and close to `soldier.hold` meters.
+
+### 6v6 (optional)
+`RUST_REGIME_MODE=6v6` starts you at the fort gate with five blue bots
+against six red bots. Bots fight each other and you; first team to
+`match.kills_to_win` kills wins and the scores reset. There is no netcode:
+this is the bot mode the open-world design called for, and the spec leaves
+networking for later only if still wanted.
+
 ## Arena
 - Spawn area: dominoes, crate pyramid, barrels, balls, heavy crates
 - Ramps at 15, 30 and 45 degrees, a long wall for wall running, box steps

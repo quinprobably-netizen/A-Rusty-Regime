@@ -13,23 +13,35 @@ use crate::targets::Soldier;
 use crate::terrain;
 use crate::tuning::{Island, Tuning};
 use crate::targets::{self, Target, TargetsPlugin};
+use crate::island::{Placed, Sites};
+use crate::loot::{self, ExtractPad, Inventory, Loot, LootPlugin, Save, SaveFile};
+use crate::mission::{MissionPlugin, Missions};
+use crate::targets::{Killed, Team};
+use crate::weapon::Damage;
 use crate::vehicle::{self, Driving, Kind, Vehicle, VehiclePlugin};
 use crate::weapon::{Arsenal, WeaponKind, WeaponPlugin};
 
 const DT: f32 = 1.0 / 66.0;
 
 fn make_app(tuning: Tuning) -> App {
+    let mut app = build_app(tuning);
+    app.finish();
+    app.update(); // run Startup so the player exists
+    app
+}
+
+/// `make_app` before `finish`, for tests that add a plugin or resources first.
+fn build_app(tuning: Tuning) -> App {
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, TransformPlugin, AssetPlugin::default(), bevy::world_serialization::WorldSerializationPlugin, bevy::mesh::MeshPlugin, PhysicsPlugins::default()))
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(DT)))
         .insert_resource(Time::<Fixed>::from_seconds(DT as f64))
         .insert_resource(tuning)
+        .insert_resource(SaveFile(None))
         .init_resource::<PlayerInput>()
         .init_resource::<ViewAngles>()
-        .add_plugins((ControllerPlugin, WeaponPlugin, TargetsPlugin, HealthPlugin, VehiclePlugin));
+        .add_plugins((ControllerPlugin, WeaponPlugin, TargetsPlugin, HealthPlugin, VehiclePlugin, LootPlugin, MissionPlugin));
     app.world_mut().spawn((RigidBody::Static, Collider::cuboid(200.0, 1.0, 200.0), Transform::from_xyz(0.0, -0.5, 0.0)));
-    app.finish();
-    app.update(); // run Startup so the player exists
     app
 }
 
@@ -251,6 +263,7 @@ fn full_game_boots_headless() {
     ))
     .insert_resource(Time::<Fixed>::from_hz(66.0))
     .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(DT)))
+    .insert_resource(SaveFile(None))
     .add_plugins((
         crate::tuning::TuningPlugin,
         crate::input::InputPlugin,
@@ -262,6 +275,8 @@ fn full_game_boots_headless() {
         HealthPlugin,
         crate::hud::HudPlugin,
         VehiclePlugin,
+        LootPlugin,
+        MissionPlugin,
         crate::level::LevelPlugin,
     ));
     app.finish();
@@ -448,7 +463,8 @@ fn site_pads_are_flat_and_above_water() {
     let island = Island::default();
     let mut hm = terrain::generate(&island);
     let sites = crate::island::place(&mut hm, &island);
-    assert_eq!(sites.len(), 6);
+    assert_eq!(sites.len(), 9, "six sites and three extraction pads");
+    assert_eq!(crate::island::extract_pads(&sites).count(), 3);
     for site in &sites {
         assert!(site.height > island.water_level, "{} above water", site.name);
         assert!(site.pad <= site.radius);
@@ -754,6 +770,7 @@ fn vehicles_park_on_the_island() {
     .insert_resource(Time::<Fixed>::from_hz(66.0))
     .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(DT)))
     .insert_resource(Gravity(Vec3::NEG_Y * Tuning::default().gravity))
+    .insert_resource(SaveFile(None))
     .add_plugins((
         crate::tuning::TuningPlugin,
         crate::input::InputPlugin,
@@ -765,6 +782,8 @@ fn vehicles_park_on_the_island() {
         HealthPlugin,
         crate::hud::HudPlugin,
         VehiclePlugin,
+        LootPlugin,
+        MissionPlugin,
         terrain::TerrainPlugin,
     ));
     app.finish();
@@ -783,4 +802,205 @@ fn vehicles_park_on_the_island() {
     }
     assert_eq!(n, 7);
     assert!(bad.is_empty(), "every vehicle stays parked and upright:\n{}", bad.join("\n"));
+}
+
+// ---------------------------------------------------------------------------
+// Extraction loop, missions, teams
+
+fn spawn_loot(app: &mut App, pos: Vec3, value: u32, key: Option<usize>) -> Entity {
+    app.world_mut().spawn(loot::bundle(pos, value, key)).id()
+}
+
+fn spawn_pad(app: &mut App, pos: Vec3) {
+    app.world_mut().spawn((ExtractPad { radius: 6.0 }, Transform::from_translation(pos)));
+}
+
+fn inventory(app: &mut App) -> (u32, Vec<usize>) {
+    let inv = app.world().resource::<Inventory>();
+    (inv.carried, inv.keys.clone())
+}
+
+fn save(app: &mut App) -> Save {
+    app.world().resource::<Save>().clone()
+}
+
+/// Six fake sites on the test floor, in `island::place` order, plus one extraction pad.
+fn fake_sites(app: &mut App) {
+    let site = |name, x: f32, z: f32| Placed { name, center: Vec2::new(x, z), height: 0.0, pad: 10.0, radius: 20.0 };
+    app.insert_resource(Sites(vec![
+        site("Base camp", 0.0, 60.0),
+        site("Radio tower", 60.0, -60.0),
+        site("Fort", 80.0, 0.0),
+        site("Quarry", -80.0, 0.0),
+        site("Ruins", 0.0, -80.0),
+        site("Lighthouse", 0.0, 90.0),
+        site("Extract north", -60.0, 60.0),
+    ]));
+    spawn_pad(app, Vec3::new(-60.0, 0.0, 60.0));
+}
+
+#[test]
+fn loot_is_carried_banked_on_extraction_and_lost_on_death() {
+    let mut app = make_app(Tuning::default());
+    spawn_loot(&mut app, Vec3::new(20.0, 0.0, 20.0), 40, None);
+    spawn_pad(&mut app, Vec3::new(-40.0, 0.0, -40.0));
+    set_player(&mut app, Vec3::new(20.0, 1.0, 20.0), Vec3::ZERO);
+    run(&mut app, 0.2);
+    assert_eq!(inventory(&mut app), (40, vec![]), "picked up");
+    set_player(&mut app, Vec3::new(-40.0, 1.0, -40.0), Vec3::ZERO);
+    run(&mut app, 4.0);
+    assert_eq!(inventory(&mut app).0, 40, "still extracting");
+    assert!(app.world().resource::<Inventory>().extracting > 3.0);
+    run(&mut app, 4.5);
+    let s = save(&mut app);
+    assert_eq!((s.banked, s.runs, inventory(&mut app).0), (40, 1, 0), "banked: {s:?}");
+    let (pos, _, _) = player(&mut app);
+    assert!(pos.distance(Vec3::new(-40.0, 1.0, -40.0)) > 10.0, "sent back to spawn, got {pos}");
+
+    // The cache comes back later; pick it up again and die with it.
+    let mut q = app.world_mut().query::<&mut Loot>();
+    q.single_mut(app.world_mut()).unwrap().down = 0.1;
+    run(&mut app, 0.2);
+    set_player(&mut app, Vec3::new(20.0, 1.0, 20.0), Vec3::ZERO);
+    run(&mut app, 0.2);
+    assert_eq!(inventory(&mut app).0, 40);
+    hit_player(&mut app, 500.0);
+    run(&mut app, 0.2);
+    let s = save(&mut app);
+    assert_eq!((inventory(&mut app).0, s.deaths, s.banked), (0, 1, 40), "lost the haul: {s:?}");
+}
+
+#[test]
+fn save_round_trips_through_a_file() {
+    let path = std::env::temp_dir().join(format!("rust-regime-save-{}.toml", std::process::id()));
+    let file = SaveFile(Some(path.clone()));
+    let s = Save { banked: 1234, runs: 7, deaths: 2, missions_done: 3 };
+    file.write(&s);
+    assert_eq!(file.load(), s);
+    std::fs::remove_file(&path).ok();
+    assert_eq!(file.load(), Save::default(), "missing file is a fresh save");
+}
+
+fn mission(app: &mut App) -> usize {
+    app.world().resource::<Missions>().current
+}
+
+#[test]
+fn missions_progress_in_order() {
+    let mut app = make_app(Tuning::default());
+    fake_sites(&mut app);
+    assert_eq!(mission(&mut app), 0);
+
+    // 0: reach the tower top.
+    set_player(&mut app, Vec3::new(60.0, 41.4, -60.0), Vec3::ZERO);
+    run(&mut app, 0.1);
+    assert_eq!(mission(&mut app), 1, "reached the tower");
+    set_player(&mut app, Vec3::new(0.0, 1.0, 0.0), Vec3::ZERO);
+
+    // 1: kill four soldiers at the fort (and one elsewhere that must not count).
+    for i in 0..4 {
+        soldier(&mut app, vec![Vec3::new(80.0 + i as f32 * 2.0, 0.0, 10.0)]);
+    }
+    soldier(&mut app, vec![Vec3::new(-20.0, 0.0, -60.0)]);
+    let mut q = app.world_mut().query_filtered::<(Entity, &Transform), With<Soldier>>();
+    let soldiers: Vec<(Entity, Vec3)> = q.iter(app.world()).map(|(e, tf)| (e, tf.translation)).collect();
+    for (e, pos) in &soldiers {
+        if pos.x < 0.0 {
+            app.world_mut().resource_mut::<Messages<Damage>>().write(Damage { entity: *e, amount: 1000.0, impulse: Vec3::ZERO });
+        }
+    }
+    run(&mut app, 0.1);
+    assert_eq!(mission(&mut app), 1, "a kill away from the fort does not count");
+    for (e, pos) in &soldiers {
+        if pos.x > 0.0 {
+            app.world_mut().resource_mut::<Messages<Damage>>().write(Damage { entity: *e, amount: 1000.0, impulse: Vec3::ZERO });
+        }
+    }
+    run(&mut app, 0.1);
+    assert_eq!(mission(&mut app), 2, "fort cleared");
+
+    // 2 and 3: the quarry cache, carried to the pad; dying with it sends you back a step.
+    let cache = spawn_loot(&mut app, Vec3::new(-80.0, 0.0, 0.0), 100, Some(0));
+    set_player(&mut app, Vec3::new(-80.0, 1.0, 0.0), Vec3::ZERO);
+    run(&mut app, 0.1);
+    assert_eq!(mission(&mut app), 3, "cache collected");
+    hit_player(&mut app, 500.0);
+    run(&mut app, 0.1);
+    assert_eq!(mission(&mut app), 2, "lost the cache with your life");
+    run(&mut app, 2.5);
+    assert!(app.world().get::<Loot>(cache).unwrap().available(), "the cache is back quickly");
+    set_player(&mut app, Vec3::new(-80.0, 1.0, 0.0), Vec3::ZERO);
+    run(&mut app, 0.1);
+    assert_eq!(mission(&mut app), 3);
+    set_player(&mut app, Vec3::new(-60.0, 1.0, 60.0), Vec3::ZERO);
+    run(&mut app, 8.5);
+    assert_eq!(mission(&mut app), 4, "extracted with the cache");
+    assert_eq!(save(&mut app).missions_done, 4);
+
+    // 4: drive a Humvee to the ruins.
+    app.insert_resource(Gravity(Vec3::NEG_Y * 17.6));
+    let humvee = spawn_vehicle(&mut app, Kind::Humvee, Vec3::new(0.0, 0.0, -50.0), 0.0);
+    run(&mut app, 1.0);
+    set_player(&mut app, Vec3::new(3.0, 1.0, -50.0), Vec3::ZERO);
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 0.1);
+    assert_eq!(driving(&mut app), Some(humvee));
+    assert_eq!(mission(&mut app), 5, "drove to the ruins");
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 0.1);
+
+    // 5: the lighthouse top, and then there is nothing left.
+    set_player(&mut app, Vec3::new(0.0, 25.3, 90.0), Vec3::ZERO);
+    run(&mut app, 0.1);
+    assert_eq!(mission(&mut app), 6, "all done");
+    run(&mut app, 1.0);
+    assert_eq!(mission(&mut app), 6);
+}
+
+#[test]
+fn soldiers_of_different_teams_fight_each_other() {
+    let mut app = make_app(Tuning::default());
+    set_player(&mut app, Vec3::new(90.0, 1.0, 90.0), Vec3::ZERO);
+    let spawn = |app: &mut App, pos: Vec3, team: Team| {
+        app.world_mut()
+            .run_system_once(move |mut commands: Commands, tuning: Res<Tuning>| targets::spawn_soldier_team(&mut commands, &tuning, None, vec![pos], team))
+            .unwrap();
+    };
+    spawn(&mut app, Vec3::new(0.0, 0.0, 0.0), Team(0));
+    spawn(&mut app, Vec3::new(0.0, 0.0, 20.0), Team(1));
+    spawn(&mut app, Vec3::new(-30.0, 0.0, 0.0), Team(1));
+    run(&mut app, 6.0);
+    let mut killed = 0;
+    let mut q = app.world_mut().query::<(&Target, &Team)>();
+    for (t, _) in q.iter(app.world()) {
+        if !t.alive() {
+            killed += 1;
+        }
+    }
+    assert!(killed >= 1, "someone died in the crossfire");
+    let hp = app.world().resource::<PlayerHealth>().hp;
+    assert_eq!(hp, 100.0, "nobody shot the far-off player");
+    let mut kills = app.world_mut().resource_mut::<Messages<Killed>>();
+    kills.clear();
+}
+
+#[test]
+fn match_mode_spawns_two_teams_and_scores() {
+    let mut app = build_app(Tuning::default());
+    fake_sites(&mut app);
+    app.add_plugins(crate::bots::MatchPlugin);
+    app.finish();
+    run(&mut app, 0.1);
+    let mut q = app.world_mut().query::<&Team>();
+    let (mut blue, mut red) = (0, 0);
+    for team in q.iter(app.world()) {
+        if team.0 == 0 { blue += 1 } else { red += 1 }
+    }
+    assert_eq!((blue, red), (5, 6));
+    assert_eq!(app.world().resource::<controller::WorldBounds>().spawn.x, 28.0, "spawn moved to the fort gate");
+    let mut q = app.world_mut().query::<(Entity, &Team)>();
+    let red_bot = q.iter(app.world()).find(|(_, t)| t.0 == 1).map(|(e, _)| e).unwrap();
+    app.world_mut().resource_mut::<Messages<Damage>>().write(Damage { entity: red_bot, amount: 1000.0, impulse: Vec3::ZERO });
+    run(&mut app, 0.1);
+    assert_eq!(app.world().resource::<crate::bots::MatchState>().score, [1, 0]);
 }

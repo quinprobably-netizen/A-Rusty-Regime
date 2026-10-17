@@ -14,6 +14,9 @@ mod weapon;
 #[cfg(test)]
 mod tests;
 mod vehicle;
+mod loot;
+mod mission;
+mod bots;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -46,6 +49,8 @@ fn main() {
             targets::TargetsPlugin,
             hud::HudPlugin,
             vehicle::VehiclePlugin,
+            loot::LootPlugin,
+            mission::MissionPlugin,
         ))
         .add_plugins(level_plugin())
         .add_systems(Update, dev_screenshot.run_if(|| std::env::var_os("RUST_REGIME_SCREENSHOT").is_some()))
@@ -59,7 +64,8 @@ fn level_plugin() -> bevy::app::PluginGroupBuilder {
     impl PluginGroup for Level {
         fn build(self) -> bevy::app::PluginGroupBuilder {
             let group = bevy::app::PluginGroupBuilder::start::<Self>();
-            if self.0 { group.add(level::LevelPlugin) } else { group.add(terrain::TerrainPlugin) }
+            let group = if self.0 { group.add(level::LevelPlugin) } else { group.add(terrain::TerrainPlugin) };
+            if std::env::var("RUST_REGIME_MODE").is_ok_and(|m| m == "6v6") { group.add(bots::MatchPlugin) } else { group }
         }
     }
     Level(std::env::var("RUST_REGIME_LEVEL").is_ok_and(|v| v == "arena")).build()

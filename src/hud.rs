@@ -2,7 +2,11 @@ use bevy::prelude::*;
 
 use crate::controller::{MoveState, Player};
 use crate::health::PlayerHealth;
+use crate::bots::MatchState;
+use crate::loot::{Inventory, Save};
+use crate::mission::ObjectiveHud;
 use crate::targets::Score;
+use crate::tuning::Tuning;
 use crate::weapon::Arsenal;
 
 /// Speedometer, movement state, weapon, score, and a crosshair that flashes on hits.
@@ -10,7 +14,7 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<PlayerHealth>().add_systems(Startup, spawn_hud).add_systems(Update, (update_hud, update_weapon_hud, update_health_hud));
+        app.init_resource::<PlayerHealth>().add_systems(Startup, spawn_hud).add_systems(Update, (update_hud, update_weapon_hud, update_health_hud, update_objective_hud));
     }
 }
 
@@ -34,6 +38,12 @@ struct HealthText;
 
 #[derive(Component)]
 struct HitFlash;
+
+#[derive(Component)]
+struct ObjectiveText;
+
+#[derive(Component)]
+struct HaulText;
 
 fn spawn_hud(mut commands: Commands) {
     commands.spawn((
@@ -69,6 +79,21 @@ fn spawn_hud(mut commands: Commands) {
             right: Val::Px(24.0),
             ..default()
         },
+    ));
+    commands.spawn((
+        ObjectiveText,
+        Text::new(""),
+        TextFont { font_size: FontSize::Px(20.0), ..default() },
+        TextColor(Color::srgba(1.0, 0.95, 0.7, 0.95)),
+        Node { position_type: PositionType::Absolute, top: Val::Px(48.0), left: Val::Percent(50.0), width: Val::Px(700.0), margin: UiRect::left(Val::Px(-350.0)), justify_content: JustifyContent::Center, ..default() },
+        TextLayout { justify: Justify::Center, ..default() },
+    ));
+    commands.spawn((
+        HaulText,
+        Text::new(""),
+        TextFont { font_size: FontSize::Px(18.0), ..default() },
+        TextColor(Color::srgba(1.0, 1.0, 1.0, 0.8)),
+        Node { position_type: PositionType::Absolute, top: Val::Px(36.0), right: Val::Px(24.0), ..default() },
     ));
     commands.spawn((
         Crosshair,
@@ -166,6 +191,44 @@ fn update_weapon_hud(
     node.width = Val::Px(size);
     node.height = Val::Px(size);
     node.margin = UiRect::all(Val::Px(-size / 2.0));
+}
+
+fn update_objective_hud(
+    tuning: Res<Tuning>,
+    objective: Option<Res<ObjectiveHud>>,
+    inventory: Option<Res<Inventory>>,
+    save: Option<Res<Save>>,
+    match_state: Option<Res<MatchState>>,
+    mut texts: ParamSet<(Single<&mut Text, With<ObjectiveText>>, Single<&mut Text, With<HaulText>>)>,
+) {
+    let mut line = String::new();
+    if let Some(m) = &match_state {
+        line = match m.over {
+            Some((0, _)) => "BLUE WINS".to_string(),
+            Some(_) => "RED WINS".to_string(),
+            None => format!("BLUE {}   RED {}", m.score[0], m.score[1]),
+        };
+    } else if let Some(o) = &objective {
+        line = o.text.clone();
+        if let Some(d) = o.distance {
+            let arrow = match o.bearing {
+                b if b.abs() < 0.35 => "^",
+                b if b.abs() > 2.8 => "v",
+                b if b > 0.0 => ">",
+                _ => "<",
+            };
+            line = format!("{line}   {d:.0} m {arrow}");
+        }
+    }
+    texts.p0().0 = line;
+    let mut haul = String::new();
+    if let (Some(inv), Some(save)) = (&inventory, &save) {
+        haul = format!("CARRY {}   BANK {}   RUNS {}", inv.carried, save.banked, save.runs);
+        if inv.extracting > 0.0 {
+            haul = format!("EXTRACTING {:.0}/{:.0} s   {haul}", inv.extracting, tuning.loot.extract_time);
+        }
+    }
+    texts.p1().0 = haul;
 }
 
 fn update_health_hud(

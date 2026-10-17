@@ -6,7 +6,8 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 
 use crate::controller::{ControllerSet, Player};
-use crate::health::PlayerHit;
+use crate::health::{PlayerHealth, PlayerHit};
+use crate::terrain::Heightmap;
 use crate::tuning::Tuning;
 use crate::weapon::{self, Damage, FxAssets};
 
@@ -17,9 +18,25 @@ impl Plugin for TargetsPlugin {
         app.init_resource::<Score>()
             .add_systems(Startup, load_assets)
             .add_message::<PlayerHit>()
-            .add_systems(FixedUpdate, (take_damage, respawn, patrol, soldier_ai).chain().after(ControllerSet))
+            .add_message::<Killed>()
+            .add_systems(FixedUpdate, (take_damage, respawn, patrol, soldier_ai).chain().in_set(TargetSet).after(ControllerSet))
             .add_observer(start_animation);
     }
+}
+
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TargetSet;
+
+/// Whose side a soldier is on. The player is team 0; the island's patrols are team 1.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Team(pub u8);
+
+/// A target just died.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct Killed {
+    pub kind: TargetKind,
+    pub team: Team,
+    pub pos: Vec3,
 }
 
 #[derive(Resource, Default, Debug)]
@@ -43,9 +60,11 @@ pub enum TargetKind {
 pub struct Soldier {
     pub route: Vec<Vec3>,
     pub next: usize,
-    /// Seconds since the player was last seen, while alert.
+    /// Seconds since the enemy was last seen, while alert.
     pub alert: Option<f32>,
     pub fire_cd: f32,
+    /// Where the enemy was last seen (feet height).
+    pub last_seen: Vec3,
 }
 
 #[derive(Component, Debug)]
@@ -118,13 +137,19 @@ pub fn spawn_dummy(commands: &mut Commands, tuning: &Tuning, assets: Option<&Tar
 
 /// A soldier walking `route` (feet positions, looped), starting at its first point.
 pub fn spawn_soldier(commands: &mut Commands, tuning: &Tuning, assets: Option<&TargetAssets>, route: Vec<Vec3>) {
+    spawn_soldier_team(commands, tuning, assets, route, Team(1));
+}
+
+/// A soldier on `team` walking `route`.
+pub fn spawn_soldier_team(commands: &mut Commands, tuning: &Tuning, assets: Option<&TargetAssets>, route: Vec<Vec3>, team: Team) {
     let radius = 0.35;
     let feet = route[0];
     let home = feet + Vec3::Y * DUMMY_HEIGHT * 0.5;
     let mut e = commands.spawn((
         Name::new("Soldier"),
         Target { kind: TargetKind::Soldier, health: tuning.soldier.health, home, down: 0.0 },
-        Soldier { route, next: 1, alert: None, fire_cd: 0.0 },
+        Soldier { next: 1 % route.len(), route, alert: None, fire_cd: 0.0, last_seen: feet },
+        team,
         RigidBody::Kinematic,
         Collider::capsule(radius, DUMMY_HEIGHT - 2.0 * radius),
         Mass(70.0),
@@ -188,10 +213,11 @@ fn take_damage(
     mut score: ResMut<Score>,
     fx: Option<Res<FxAssets>>,
     mut materials: Option<ResMut<Assets<StandardMaterial>>>,
-    mut targets: Query<(&mut Target, &Transform)>,
+    mut killed: MessageWriter<Killed>,
+    mut targets: Query<(&mut Target, &Transform, Option<&Team>)>,
 ) {
     for hit in damage.read() {
-        let Ok((mut target, tf)) = targets.get_mut(hit.entity) else { continue };
+        let Ok((mut target, tf, team)) = targets.get_mut(hit.entity) else { continue };
         if !target.alive() {
             continue;
         }
@@ -202,6 +228,7 @@ fn take_damage(
         }
         score.kills += 1;
         target.down = tuning.target_respawn;
+        killed.write(Killed { kind: target.kind, team: team.copied().unwrap_or(Team(1)), pos: tf.translation });
         match target.kind {
             TargetKind::Dummy | TargetKind::Soldier => {
                 // Let it fall: becomes a dynamic body with the hit's momentum.
@@ -280,58 +307,100 @@ fn next_unit(seed: &mut u64) -> f32 {
 
 const SOLDIER_EYE: f32 = 0.6;
 
-/// Patrol the route; on a clear line to the player within `sight`, stop,
-/// face them and fire; lose interest after `forget` seconds unseen.
+/// Something a soldier can shoot at: the player, or a live soldier of another team.
+struct Enemy {
+    entity: Entity,
+    team: Team,
+    eye: Vec3,
+}
+
+/// Patrol the route; on a clear line to an enemy within `sight`, face them and fire, closing in to `hold`
+/// meters; chase the last place they were seen and give up after `forget` seconds. Soldiers hit by other
+/// soldiers take `Damage`; the player takes `PlayerHit`.
 #[allow(clippy::too_many_arguments)]
 fn soldier_ai(
     mut commands: Commands,
     time: Res<Time>,
     tuning: Res<Tuning>,
     spatial: SpatialQuery,
+    heightmap: Option<Res<Heightmap>>,
+    health: Res<PlayerHealth>,
     fx: Option<Res<FxAssets>>,
     mut materials: Option<ResMut<Assets<StandardMaterial>>>,
     player: Single<(Entity, &Player, &Transform)>,
-    mut soldiers: Query<(Entity, &Target, &mut Soldier, &mut Transform), Without<Player>>,
+    mut soldiers: Query<(Entity, &Target, &Team, &mut Soldier, &mut Transform), Without<Player>>,
     mut hits: MessageWriter<PlayerHit>,
+    mut damage: MessageWriter<Damage>,
     mut seed: Local<u64>,
 ) {
     let dt = time.delta_secs();
     let t = &tuning.soldier;
     let (player_entity, p, ptf) = *player;
-    let player_eye = ptf.translation + Vec3::Y * p.eye_offset(&tuning);
-    for (entity, target, mut soldier, mut tf) in &mut soldiers {
+    let mut enemies: Vec<Enemy> = Vec::new();
+    if health.alive() {
+        enemies.push(Enemy { entity: player_entity, team: Team(0), eye: ptf.translation + Vec3::Y * p.eye_offset(&tuning) });
+    }
+    for (entity, target, team, _, tf) in soldiers.iter() {
+        if target.alive() {
+            enemies.push(Enemy { entity, team: *team, eye: tf.translation + Vec3::Y * SOLDIER_EYE });
+        }
+    }
+    let feet_y = |pos: Vec3| heightmap.as_ref().map_or(pos.y, |hm| hm.height_at(pos.x, pos.z));
+
+    for (entity, target, team, mut soldier, mut tf) in &mut soldiers {
         if !target.alive() || soldier.route.is_empty() {
             continue;
         }
         let eye = tf.translation + Vec3::Y * SOLDIER_EYE;
-        let to_player = player_eye - eye;
-        let dist = to_player.length();
         let filter = SpatialQueryFilter::from_excluded_entities([entity]);
-        let sees = dist <= t.sight
-            && dist > 0.01
-            && spatial
-                .cast_ray(eye, Dir3::new(to_player).unwrap(), dist + 0.1, true, &filter)
-                .is_some_and(|hit| hit.entity == player_entity);
+        // The nearest enemy in sight.
+        let mut seen: Option<(&Enemy, f32)> = None;
+        for enemy in enemies.iter().filter(|e| e.team != *team && e.entity != entity) {
+            let dist = enemy.eye.distance(eye);
+            if dist > t.sight || dist < 0.01 || seen.is_some_and(|(_, d)| d <= dist) {
+                continue;
+            }
+            let dir = (enemy.eye - eye) / dist;
+            if spatial.cast_ray(eye, Dir3::new(dir).unwrap(), dist + 0.1, true, &filter).is_some_and(|hit| hit.entity == enemy.entity) {
+                seen = Some((enemy, dist));
+            }
+        }
         soldier.fire_cd -= dt;
-        if sees {
+        let feet = tf.translation - Vec3::Y * DUMMY_HEIGHT * 0.5;
+        if let Some((enemy, dist)) = seen {
             soldier.alert = Some(0.0);
-            tf.rotation = Quat::from_rotation_y(to_player.x.atan2(to_player.z));
+            soldier.last_seen = enemy.eye - Vec3::Y * SOLDIER_EYE;
+            let to_enemy = enemy.eye - eye;
+            tf.rotation = Quat::from_rotation_y(to_enemy.x.atan2(to_enemy.z));
             if soldier.fire_cd <= 0.0 {
                 soldier.fire_cd = t.fire_interval;
                 // Aim error: a random offset in a disc of `spread` radians.
                 let a = next_unit(&mut seed) * std::f32::consts::TAU;
                 let r = next_unit(&mut seed).sqrt() * t.spread;
-                let dir = to_player / dist;
+                let dir = to_enemy / dist;
                 let right = dir.cross(Vec3::Y).normalize_or(Vec3::X);
                 let up = right.cross(dir);
                 let aim = (dir + right * (r * a.cos()) + up * (r * a.sin())).normalize();
                 if let Some(hit) = spatial.cast_ray(eye, Dir3::new(aim).unwrap(), t.sight * 1.5, true, &filter)
-                    && hit.entity == player_entity
+                    && hit.entity == enemy.entity
                 {
-                    hits.write(PlayerHit { amount: t.damage });
+                    if enemy.entity == player_entity {
+                        hits.write(PlayerHit { amount: t.damage });
+                    } else {
+                        damage.write(Damage { entity: enemy.entity, amount: t.damage, impulse: aim * 2.0 });
+                    }
                 }
                 if let (Some(fx), Some(materials)) = (&fx, materials.as_mut()) {
                     weapon::spawn_blast(&mut commands, fx, materials, eye + aim * 0.6, 0.25);
+                }
+            }
+            // Close in, but keep some distance.
+            if dist > t.hold {
+                let delta = soldier.last_seen - feet;
+                let flat = Vec3::new(delta.x, 0.0, delta.z);
+                if flat.length() > 0.1 {
+                    let next = feet + flat.normalize() * t.speed * dt;
+                    tf.translation = Vec3::new(next.x, feet_y(next) + DUMMY_HEIGHT * 0.5, next.z);
                 }
             }
             continue;
@@ -339,12 +408,19 @@ fn soldier_ai(
         if let Some(unseen) = soldier.alert.as_mut() {
             *unseen += dt;
             if *unseen < t.forget {
+                // Head for where the enemy was last seen.
+                let delta = soldier.last_seen - feet;
+                let flat = Vec3::new(delta.x, 0.0, delta.z);
+                if flat.length() > 1.0 {
+                    let next = feet + flat.normalize() * t.speed * dt;
+                    tf.translation = Vec3::new(next.x, feet_y(next) + DUMMY_HEIGHT * 0.5, next.z);
+                    tf.rotation = Quat::from_rotation_y(flat.x.atan2(flat.z));
+                }
                 continue;
             }
             soldier.alert = None;
         }
         // Patrol: walk toward the next waypoint (feet positions).
-        let feet = tf.translation - Vec3::Y * DUMMY_HEIGHT * 0.5;
         let goal = soldier.route[soldier.next];
         let delta = goal - feet;
         let step = t.speed * dt;

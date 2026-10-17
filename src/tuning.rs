@@ -82,6 +82,8 @@ pub struct Tuning {
     pub soldier: Soldier,
     pub player: PlayerTuning,
     pub vehicle: VehicleTuning,
+    pub loot: LootTuning,
+    pub r#match: MatchTuning,
 
     // Look
     pub mouse_sensitivity: f32,
@@ -188,6 +190,8 @@ impl Default for Tuning {
             soldier: Soldier::default(),
             player: PlayerTuning::default(),
             vehicle: VehicleTuning::default(),
+            loot: LootTuning::default(),
+            r#match: MatchTuning::default(),
 
             mouse_sensitivity: 0.002,
             stick_yaw_speed: 4.5,
@@ -256,11 +260,13 @@ pub struct Soldier {
     /// Radians of aim error.
     pub spread: f32,
     pub forget: f32,
+    /// How close a soldier gets to an enemy it can see.
+    pub hold: f32,
 }
 
 impl Default for Soldier {
     fn default() -> Self {
-        Self { health: 100.0, speed: 3.5, sight: 40.0, fire_interval: 0.6, damage: 12.0, spread: 0.02, forget: 4.0 }
+        Self { health: 100.0, speed: 3.5, sight: 40.0, fire_interval: 0.6, damage: 12.0, spread: 0.02, forget: 4.0, hold: 12.0 }
     }
 }
 
@@ -296,6 +302,37 @@ pub struct VehicleTuning {
 impl Default for VehicleTuning {
     fn default() -> Self {
         Self { enter_radius: 4.0, mu: 1.0, rolling: 0.02, bike_upright: 6.0 }
+    }
+}
+
+/// The extraction loop (table `[loot]`).
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct LootTuning {
+    pub pickup_radius: f32,
+    /// Seconds a taken cache stays gone.
+    pub respawn: f32,
+    /// Seconds on a pad to extract.
+    pub extract_time: f32,
+}
+
+impl Default for LootTuning {
+    fn default() -> Self {
+        Self { pickup_radius: 1.6, respawn: 300.0, extract_time: 8.0 }
+    }
+}
+
+/// The 6v6 mode (table `[match]`).
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct MatchTuning {
+    pub kills_to_win: u32,
+    pub bots_per_team: u32,
+}
+
+impl Default for MatchTuning {
+    fn default() -> Self {
+        Self { kills_to_win: 30, bots_per_team: 6 }
     }
 }
 

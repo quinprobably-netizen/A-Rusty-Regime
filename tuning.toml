@@ -122,6 +122,7 @@ fire_interval = 0.6
 damage = 12
 spread = 0.02               # radians of aim error
 forget = 4.0                # seconds out of sight before they resume patrol
+hold = 12                   # meters; they close in on you to about this
 
 [player]
 health = 100
@@ -134,3 +135,12 @@ enter_radius = 4.0          # meters from a vehicle to press E
 mu = 1.0                    # peak tyre grip as a fraction of wheel load
 rolling = 0.02              # rolling resistance
 bike_upright = 6.0          # how fast a bike rolls toward its balanced lean
+
+[loot]                      # extraction loop
+pickup_radius = 1.6
+respawn = 300               # seconds a taken cache stays gone
+extract_time = 8            # seconds standing on a pad to bank your haul
+
+[match]                     # RUST_REGIME_MODE=6v6: you and five bots against six at the fort
+kills_to_win = 30
+bots_per_team = 6
