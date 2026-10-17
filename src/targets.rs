@@ -5,6 +5,7 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
+use crate::character::{Pose, Rig, RigPose};
 use crate::controller::{ControllerSet, Player};
 use crate::health::{PlayerHealth, PlayerHit};
 use crate::terrain::Heightmap;
@@ -19,8 +20,7 @@ impl Plugin for TargetsPlugin {
             .add_systems(Startup, load_assets)
             .add_message::<PlayerHit>()
             .add_message::<Killed>()
-            .add_systems(FixedUpdate, (take_damage, respawn, patrol, soldier_ai).chain().in_set(TargetSet).after(ControllerSet))
-            .add_observer(start_animation);
+            .add_systems(FixedUpdate, (take_damage, respawn, patrol, soldier_ai).chain().in_set(TargetSet).after(ControllerSet));
     }
 }
 
@@ -85,26 +85,16 @@ impl Target {
 /// glTF handles for target models; absent in headless tests.
 #[derive(Resource)]
 pub struct TargetAssets {
-    soldier: Handle<bevy::world_serialization::WorldAsset>,
-    soldier_idle: Handle<AnimationClip>,
-    soldier_walk: Handle<AnimationClip>,
+    character: Handle<bevy::world_serialization::WorldAsset>,
     drone: Handle<bevy::world_serialization::WorldAsset>,
 }
-
-/// Put on a `WorldAssetRoot`: once the glTF is spawned, loop this clip.
-#[derive(Component)]
-pub struct PlayAnimation(pub Handle<AnimationClip>);
 
 pub fn load_assets(mut commands: Commands, server: Res<AssetServer>, materials: Option<Res<Assets<StandardMaterial>>>) {
     if materials.is_none() {
         return;
     }
-    let soldier = "models/arena/character-soldier.glb";
     commands.insert_resource(TargetAssets {
-        soldier: server.load(GltfAssetLabel::Scene(0).from_asset(soldier)),
-        // Animation 1 is "idle" (0 is "static").
-        soldier_idle: server.load(GltfAssetLabel::Animation(1).from_asset(soldier)),
-        soldier_walk: server.load(GltfAssetLabel::Animation(2).from_asset(soldier)),
+        character: server.load(GltfAssetLabel::Scene(0).from_asset(crate::character::MODEL)),
         drone: server.load(GltfAssetLabel::Scene(0).from_asset("models/fps/enemy-flying.glb")),
     });
 }
@@ -125,13 +115,7 @@ pub fn spawn_dummy(commands: &mut Commands, tuning: &Tuning, assets: Option<&Tar
         Visibility::default(),
     ));
     if let Some(assets) = assets {
-        // Kenney's soldier is 0.84 units tall; the model's origin is at its feet.
-        let scale = DUMMY_HEIGHT / 0.84;
-        e.with_child((
-            bevy::world_serialization::WorldAssetRoot(assets.soldier.clone()),
-            PlayAnimation(assets.soldier_idle.clone()),
-            Transform::from_xyz(0.0, -DUMMY_HEIGHT * 0.5, 0.0).with_scale(Vec3::splat(scale)),
-        ));
+        e.with_child(soldier_model(assets, Pose::Idle));
     }
 }
 
@@ -157,12 +141,7 @@ pub fn spawn_soldier_team(commands: &mut Commands, tuning: &Tuning, assets: Opti
         Visibility::default(),
     ));
     if let Some(assets) = assets {
-        let scale = DUMMY_HEIGHT / 0.84;
-        e.with_child((
-            bevy::world_serialization::WorldAssetRoot(assets.soldier.clone()),
-            PlayAnimation(assets.soldier_walk.clone()),
-            Transform::from_xyz(0.0, -DUMMY_HEIGHT * 0.5, 0.0).with_scale(Vec3::splat(scale)),
-        ));
+        e.with_child(soldier_model(assets, Pose::Walk));
     }
 }
 
@@ -185,24 +164,15 @@ pub fn spawn_drone(commands: &mut Commands, tuning: &Tuning, assets: Option<&Tar
     }
 }
 
-/// Find the glTF's `AnimationPlayer` once the model is spawned and loop the clip.
-fn start_animation(
-    ready: On<bevy::world_serialization::WorldInstanceReady>,
-    mut commands: Commands,
-    requests: Query<&PlayAnimation>,
-    children: Query<&Children>,
-    mut players: Query<&mut AnimationPlayer>,
-    graphs: Option<ResMut<Assets<AnimationGraph>>>,
-) {
-    let (Ok(request), Some(mut graphs)) = (requests.get(ready.entity), graphs) else { return };
-    let (graph, node) = AnimationGraph::from_clip(request.0.clone());
-    let graph = graphs.add(graph);
-    for e in children.iter_descendants(ready.entity) {
-        if let Ok(mut player) = players.get_mut(e) {
-            player.play(node).repeat();
-            commands.entity(e).insert(AnimationGraphHandle(graph.clone()));
-        }
-    }
+/// Our character in the soldier outfit, feet at the bottom of the capsule, playing `pose`.
+fn soldier_model(assets: &TargetAssets, pose: Pose) -> impl Bundle {
+    (
+        Rig::new("soldier"),
+        RigPose { pose, rate: 1.0 },
+        bevy::world_serialization::WorldAssetRoot(assets.character.clone()),
+        Transform::from_xyz(0.0, -DUMMY_HEIGHT * 0.5, 0.0).with_scale(Vec3::splat(DUMMY_HEIGHT / crate::character::MODEL_HEIGHT)),
+        Visibility::default(),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

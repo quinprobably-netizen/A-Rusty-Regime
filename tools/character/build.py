@@ -216,26 +216,21 @@ def make_object(name, geo, arm):
 
 # --------------------------------------------------------------------------------------------- parts
 
-def both(fn):
-    """Run a builder for the left side and its mirror."""
-    def run(geo, side, s):
-        fn(geo, side, s)
-    run(None, None, None) if False else None
-    return fn
-
-
 def LR(name):
     return [name + ".L", name + ".R"]
 
 
-def body(geo):
-    # Head, neck, hands: the skin that always shows.
+def body_head(geo):
+    # Head and neck skin: its own part so the player's own head can go on the shadow-only layer.
     sphere(geo, (0, 0, 1.68), 0.11, "skin", ["head"], scale=(1, 1.1, 1.15))
     box(geo, (0, -0.07, 1.63), (0.06, 0.05, 0.05), "skin", ["head"])  # jaw/chin hint
     tube(geo, (0, 0, 1.42), (0, 0, 1.54), 0.045, 0.045, "skin", ["neck"])
+
+
+def body(geo):
+    # Hands, torso and limbs under the clothes, so bare styles still have a body.
     for s, x in (("L", 1), ("R", -1)):
         box(geo, (x * 0.27, -0.025, 0.80), (0.07, 0.045, 0.14), "skin", ["hand." + s])
-    # Torso and limbs under the clothes, so bare styles still have a body.
     tube(geo, (0, 0, 0.95), (0, 0, 1.42), 0.14, 0.17, "primary", ["hips", "spine", "chest"], sx=0.7)
     for s, x in (("L", 1), ("R", -1)):
         tube(geo, (x * 0.17, 0, 1.40), (x * 0.22, 0, 1.12), 0.055, 0.045, "primary", ["upper_arm." + s])
@@ -365,7 +360,7 @@ def gear_chalkbag(geo):
 
 
 PARTS = {
-    "body": body,
+    "body": body, "body.head": body_head,
     "head.hood": head_hood, "head.beanie": head_beanie, "head.cap": head_cap, "head.helmet": head_helmet,
     "face.mask": face_mask, "face.goggles": face_goggles,
     "torso.jacket": torso_jacket, "torso.shirt": torso_shirt, "torso.carrier": torso_carrier,
@@ -377,9 +372,9 @@ PARTS = {
 }
 
 OUTFITS = {
-    "runner": ["body", "head.hood", "face.mask", "torso.jacket", "torso.carrier", "hands.gloves",
+    "runner": ["body", "body.head", "head.hood", "face.mask", "torso.jacket", "torso.carrier", "hands.gloves",
                "legs.cargo", "legs.kneepads", "feet.boots", "back.rope", "gear.launcher", "gear.chalkbag"],
-    "soldier": ["body", "head.helmet", "torso.shirt", "torso.carrier", "legs.cargo", "feet.boots", "back.pack"],
+    "soldier": ["body", "body.head", "head.helmet", "torso.shirt", "torso.carrier", "legs.cargo", "feet.boots", "back.pack"],
 }
 
 # ---------------------------------------------------------------------------------------- animation
@@ -432,7 +427,7 @@ def clip_jump(t):
     k = min(1.0, t * 3)
     return {"upper_leg.L": (-35 * k, 0, 0), "upper_leg.R": (-20 * k, 0, 0),
             "lower_leg.L": (55 * k, 0, 0), "lower_leg.R": (40 * k, 0, 0),
-            "upper_arm.L": (25, 0, 20), "upper_arm.R": (25, 0, -20),
+            "upper_arm.L": (25, 0, -20), "upper_arm.R": (25, 0, 20),
             "forearm.L": (-30, 0, 0), "forearm.R": (-30, 0, 0), "spine": (6, 0, 0)}
 
 
@@ -440,16 +435,67 @@ def clip_fall(t):
     b = S(t)
     return {"upper_leg.L": (-10, 0, 0), "upper_leg.R": (10, 0, 0),
             "lower_leg.L": (25, 0, 0), "lower_leg.R": (30, 0, 0),
-            "upper_arm.L": (-20 + 4 * b, 0, 45), "upper_arm.R": (-20 - 4 * b, 0, -45),
+            "upper_arm.L": (-20 + 4 * b, 0, -45), "upper_arm.R": (-20 - 4 * b, 0, 45),
             "forearm.L": (-25, 0, 0), "forearm.R": (-25, 0, 0), "spine": (-5, 0, 0)}
 
 
 def clip_crouch(t):
     b = S(t * 0.5)
-    return {"hips.loc": (0, -0.34, 0), "upper_leg.L": (-72, 0, 6), "upper_leg.R": (-72, 0, -6),
+    return {"hips.loc": (0, -0.34, 0), "upper_leg.L": (-72, 0, -6), "upper_leg.R": (-72, 0, 6),
             "lower_leg.L": (108, 0, 0), "lower_leg.R": (108, 0, 0), "foot.L": (-30, 0, 0), "foot.R": (-30, 0, 0),
             "spine": (24 + b, 0, 0), "chest": (6, 0, 0), "head": (-22, 0, 0),
             "upper_arm.L": (-25, 0, 0), "upper_arm.R": (-25, 0, 0), "forearm.L": (-45, 0, 0), "forearm.R": (-45, 0, 0)}
+
+
+def clip_slide(t):
+    b = S(t * 0.5)
+    return {"hips.loc": (0, -0.50, 0), "hips": (-20, 0, 0),
+            "upper_leg.L": (-70, 0, -8), "upper_leg.R": (-45, 0, 8), "lower_leg.L": (15, 0, 0), "lower_leg.R": (70, 0, 0),
+            "foot.L": (-20, 0, 0), "foot.R": (-10, 0, 0), "spine": (12, 0, 0), "chest": (4, 0, 0), "head": (-18, 0, 0),
+            "upper_arm.L": (-40 + 3 * b, 0, -25), "upper_arm.R": (20, 0, 30), "forearm.L": (-35, 0, 0), "forearm.R": (-60, 0, 0)}
+
+
+def wallrun(t, side):
+    # Running along a wall on `side` (+1 left, -1 right): body tilts away from it, inner arm reaches to it.
+    p = gait(t, leg=38, knee=70, arm=20, elbow=60, lean=8, bob=0.02)
+    inner = "L" if side > 0 else "R"
+    outer = "R" if side > 0 else "L"
+    p["hips"] = (0, 0, -14 * side)
+    p["spine"] = (8, 0, -6 * side)
+    p["head"] = (-6, 0, 10 * side)
+    p["upper_arm." + inner] = (-30, 0, -80 * side)
+    p["forearm." + inner] = (-20, 0, 0)
+    p["upper_arm." + outer] = (-25, 0, 20 * side)
+    p["forearm." + outer] = (-85, 0, 0)
+    return p
+
+
+def clip_wallrun_l(t):
+    return wallrun(t, 1)
+
+
+def clip_wallrun_r(t):
+    return wallrun(t, -1)
+
+
+def clip_mantle(t):
+    # Hands on the ledge, pull up, then a knee comes over. Not looped; played at the mantle's speed.
+    k = min(1.0, t * 2.0)
+    step = max(0.0, (t - 0.5) * 2.0)
+    return {"upper_arm.L": (-165 + 60 * k, 0, -15), "upper_arm.R": (-165 + 60 * k, 0, 15),
+            "forearm.L": (-20 - 50 * k, 0, 0), "forearm.R": (-20 - 50 * k, 0, 0),
+            "upper_leg.L": (-20 - 70 * step, 0, -5), "upper_leg.R": (-10 - 20 * k, 0, 5),
+            "lower_leg.L": (30 + 60 * step, 0, 0), "lower_leg.R": (40, 0, 0),
+            "spine": (25 - 10 * k, 0, 0), "chest": (10, 0, 0), "head": (-30 + 15 * k, 0, 0)}
+
+
+def clip_grapple(t):
+    # Left arm out along the rope, body stretched behind it, legs trailing.
+    b = S(t * 0.5)
+    return {"upper_arm.L": (-150, 0, -10), "forearm.L": (-10, 0, 0), "hand.L": (-20, 0, 0),
+            "upper_arm.R": (-35 + 3 * b, 0, 35), "forearm.R": (-70, 0, 0),
+            "upper_leg.L": (15, 0, -6), "upper_leg.R": (-5, 0, 6), "lower_leg.L": (35, 0, 0), "lower_leg.R": (55, 0, 0),
+            "spine": (18, 0, 0), "chest": (8, 0, 0), "head": (-24, 0, 0)}
 
 
 CLIPS = {
@@ -460,6 +506,11 @@ CLIPS = {
     "jump": (clip_jump, 24),
     "fall": (clip_fall, 48),
     "crouch": (clip_crouch, 96),
+    "slide": (clip_slide, 48),
+    "wallrun_l": (clip_wallrun_l, 20),
+    "wallrun_r": (clip_wallrun_r, 20),
+    "mantle": (clip_mantle, 24),
+    "grapple": (clip_grapple, 48),
 }
 
 
@@ -583,6 +634,8 @@ def build():
         render_preview(arm, parts, "runner", "idle", 0, os.path.join(SHOTS, "character-runner.png"))
         render_preview(arm, parts, "runner", "run", 5, os.path.join(SHOTS, "character-runner-run.png"), cam=(2.4, -2.2, 1.1))
         render_preview(arm, parts, "soldier", "idle", 0, os.path.join(SHOTS, "character-soldier.png"))
+        render_preview(arm, parts, "runner", "grapple", 0, os.path.join(SHOTS, "character-runner-grapple.png"), cam=(2.4, -2.2, 1.1))
+        render_preview(arm, parts, "runner", "wallrun_l", 5, os.path.join(SHOTS, "character-runner-wallrun.png"), cam=(0.5, -3.2, 1.2))
 
 
 def check():
