@@ -98,7 +98,9 @@ def frame(p0, p1):
 
 
 def tube(geo, p0, p1, r0, r1, mat, bones, n=8, caps=True, sx=1.0):
-    """Cylinder from p0 to p1 with radii r0, r1; sx squashes it along the first frame axis."""
+    """Cylinder from p0 to p1 with radii r0, r1; sx squashes it along the first frame axis.
+    `caps` is True, False or "start" (only the p0 end closed: torsos stay open at the neck so the
+    first-person camera, which sits inside the head, looks down a hollow collar at the legs)."""
     u, v = frame(p0, p1)
     verts = []
     for p, r in ((p0, r0), (p1, r1)):
@@ -108,7 +110,8 @@ def tube(geo, p0, p1, r0, r1, mat, bones, n=8, caps=True, sx=1.0):
     faces = [(i, (i + 1) % n, n + (i + 1) % n, n + i) for i in range(n)]
     if caps:
         faces.append(tuple(range(n - 1, -1, -1)))
-        faces.append(tuple(range(n, 2 * n)))
+        if caps != "start":
+            faces.append(tuple(range(n, 2 * n)))
     geo.add(verts, faces, mat, bones)
 
 
@@ -231,7 +234,7 @@ def body(geo):
     # Hands, torso and limbs under the clothes, so bare styles still have a body.
     for s, x in (("L", 1), ("R", -1)):
         box(geo, (x * 0.27, -0.025, 0.80), (0.07, 0.045, 0.14), "skin", ["hand." + s])
-    tube(geo, (0, 0, 0.95), (0, 0, 1.42), 0.14, 0.17, "primary", ["hips", "spine", "chest"], sx=0.7)
+    tube(geo, (0, 0, 0.95), (0, 0, 1.42), 0.14, 0.17, "primary", ["hips", "spine", "chest"], sx=0.7, caps="start")
     for s, x in (("L", 1), ("R", -1)):
         tube(geo, (x * 0.17, 0, 1.40), (x * 0.22, 0, 1.12), 0.055, 0.045, "primary", ["upper_arm." + s])
         tube(geo, (x * 0.22, 0, 1.12), (x * 0.26, -0.02, 0.86), 0.045, 0.035, "primary", ["forearm." + s])
@@ -273,7 +276,7 @@ def face_goggles(geo):
 
 
 def torso_jacket(geo):
-    tube(geo, (0, 0, 0.93), (0, 0, 1.43), 0.17, 0.20, "primary", ["hips", "spine", "chest"], n=10, sx=0.7)
+    tube(geo, (0, 0, 0.93), (0, 0, 1.43), 0.17, 0.20, "primary", ["hips", "spine", "chest"], n=10, sx=0.7, caps="start")
     box(geo, (0, 0.0, 1.0), (0.36, 0.26, 0.06), "primary", ["hips"])  # hem
     for s, x in (("L", 1), ("R", -1)):
         tube(geo, (x * 0.16, 0, 1.42), (x * 0.22, 0, 1.10), 0.075, 0.06, "primary", ["shoulder." + s, "upper_arm." + s])
@@ -284,7 +287,7 @@ def torso_jacket(geo):
 
 
 def torso_shirt(geo):
-    tube(geo, (0, 0, 0.94), (0, 0, 1.43), 0.155, 0.18, "secondary", ["hips", "spine", "chest"], n=10, sx=0.7)
+    tube(geo, (0, 0, 0.94), (0, 0, 1.43), 0.155, 0.18, "secondary", ["hips", "spine", "chest"], n=10, sx=0.7, caps="start")
     for s, x in (("L", 1), ("R", -1)):
         tube(geo, (x * 0.16, 0, 1.42), (x * 0.20, 0, 1.26), 0.07, 0.06, "secondary", ["shoulder." + s, "upper_arm." + s])
 
