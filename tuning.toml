@@ -42,6 +42,11 @@ wall_jump_out = 6.0
 wall_jump_up = 6.5
 wall_reach = 0.3
 
+# Air jump (double jump): extra jumps after leaving the ground, reset on ground, wall, mantle, grapple
+air_jumps = 1
+air_jump_speed = 6.35
+air_jump_redirect = 0.6     # 0 keeps momentum, 1 fully redirects horizontal speed to the wish direction
+
 # Mantle (ledge heights measured from your feet)
 mantle_min_height = 0.45
 mantle_max_height = 1.5
@@ -144,3 +149,16 @@ extract_time = 8            # seconds standing on a pad to bank your haul
 [match]                     # RUST_REGIME_MODE=6v6: you and five bots against six at the fort
 kills_to_win = 30
 bots_per_team = 6
+
+[grapple]                   # ability: F / mouse 4 fires, again or jump lets go. Titanfall 2 ships 50 power to fire of 100, 50/s use, 28 m rope
+range = 30.0
+power_max = 100.0
+power_to_fire = 10.0
+power_use_rate = 10.0       # per second while pulling
+power_regen = 60.0          # per second while not pulling
+pull_accel = 55.0
+pull_max_speed = 22.0
+look_steer = 0.6            # pull direction blends from the rope toward where you look
+release_boost = 2.0         # m/s added along your velocity when you jump off the rope
+arrive_distance = 1.5
+gravity_cancel = 0.8        # how much of gravity the taut rope carries while you are pulled

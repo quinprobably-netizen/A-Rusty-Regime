@@ -43,7 +43,8 @@ script). It outputs one file, `assets/models/character/character.glb`, holding:
   Each mesh uses a material named `primary`, `secondary`, `accent` or `skin`, which is what the game tints.
 - **Animation clips**, keyframed procedurally in the script (no mocap, so they are simple but clean):
   `idle`, `walk`, `run`, `sprint`, `jump`, `fall`, `crouch`, `slide`, `wallrun_l`, `wallrun_r`,
-  `mantle`, `grapple`, `drive`, `ride`, `aim`, `die`. Same names as `body.rs` poses plus the new ones.
+  `mantle`, `grapple`. Seated (`drive`, `ride`), `aim` and `die` clips come with the work that uses them
+  (vehicle seating, soldier AI, ragdolls) so nothing ships unused.
 - A preview render per outfit to `screenshots/character-<outfit>.png` with Blender's Workbench engine
   (CPU, a few seconds each), so Q can see each pass without the game.
 
@@ -103,7 +104,7 @@ Unknown part names fail loudly in tests and fall back to nothing at runtime.
   The Kenney soldier stays for the arena level only.
 - `src/abilities.rs` (new): `Ability` component with `Grapple { state, power }`, plus the `Class` resource
   picked from `characters.toml`. Input: a new `ability` action (Q key, mouse 4 as alternate).
-- `controller.rs` gains double jump and a grapple force hook. `tuning.toml` gains:
+- `controller.rs` gains double jump and a grapple force hook. `tuning.toml` gains (the grapple block lives in a `[grapple]` table, shown here flattened):
 
 ```toml
 # Air jump
@@ -117,10 +118,11 @@ grapple_power_max = 100.0
 grapple_power_to_fire = 10.0
 grapple_power_use_rate = 10.0  # per second while pulling
 grapple_power_regen = 60.0     # per second while not pulling
-grapple_pull_accel = 40.0
+grapple_pull_accel = 55.0
 grapple_pull_max_speed = 22.0
 grapple_look_steer = 0.6       # pull direction blends from rope toward look direction by this much
 grapple_release_boost = 2.0    # m/s added along velocity when you jump off the rope
+grapple_gravity_cancel = 0.8   # share of gravity the taut rope carries, so low anchors still lift
 ```
 
 Grapple rules, from the Titanfall 2 script and wiki behaviour: press fires a ray from the camera; it
@@ -145,7 +147,7 @@ game (existing xvfb path).
 1. Generator: rig, base body, runner outfit, idle/run/jump clips, preview render. Show Q the render.
 2. `character.rs` with outfit data and tinting; player and soldiers switched over; tests.
 3. Double jump, then grapple with HUD arc and rope; tests and a screenshot.
-4. Remaining clips (slide, wallrun, mantle, grapple, drive, ride, aim, die) and the soldier outfit.
+4. Remaining clips (slide, wallrun, mantle, grapple) and the soldier outfit.
 5. Wardrobe locker at the camp, saved outfit overrides, tests for save round-trip.
 
 Shared files touched: `body.rs`, `controller.rs`, `input.rs`, `hud.rs`, `tuning.rs`, `tuning.toml`,

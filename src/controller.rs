@@ -61,6 +61,8 @@ pub struct Player {
     pub eye_shift: f32,
     /// While positive the player can't be grounded (keeps rocket jumps airborne).
     pub knockback_lock: f32,
+    /// Air jumps left before touching ground, a wall, a ledge or a grapple anchor again.
+    pub air_jumps_left: u32,
     jump_buffer: f32,
     slide_cooldown: f32,
     wallrun_time: f32,
@@ -353,6 +355,7 @@ fn player_tick(
                     p.state = MoveState::Ground;
                     p.last_wall = None;
                 }
+                p.air_jumps_left = t.air_jumps;
                 pos.y -= h.distance - SKIN;
             }
             None => {
@@ -378,6 +381,8 @@ fn player_tick(
                 };
                 if let Some(n) = wall.filter(|n| p.wall_cooldown <= 0.0 && p.last_wall.is_none_or(|l| l.dot(*n) < 0.7)) {
                     wall_jump(&mut p, n, t);
+                } else if p.air_jumps_left > 0 && p.state == MoveState::Air {
+                    air_jump(&mut p, wish_dir, t);
                 }
             }
         }
@@ -430,6 +435,7 @@ fn player_tick(
         } else {
             update_wallrun(&space, &mut p, &shape, pos, &mut vel, input.movement, input.crouch_held, t);
             if p.state == MoveState::WallRun {
+                p.air_jumps_left = t.air_jumps;
                 p.wallrun_time += dt;
                 let n = p.wall_normal;
                 vel = clip_velocity(vel, n);
@@ -443,6 +449,7 @@ fn player_tick(
                 if input.movement.y > 0.5 {
                     if let Some(m) = try_mantle(&space, &p, &shape, pos, forward, vel, t) {
                         p.mantle = Some(m);
+                        p.air_jumps_left = t.air_jumps;
                         p.state = MoveState::Mantle;
                         p.velocity = Vec3::ZERO;
                         tf.translation = pos;
@@ -487,6 +494,25 @@ fn jump(p: &mut Player, t: &Tuning) {
     }
     p.velocity.y = p.velocity.y.max(0.0) + t.jump_speed;
     p.state = MoveState::Air;
+}
+
+/// Double jump: a fresh hop in the air that can bend momentum toward where you want to go.
+pub fn air_jump_velocity(v: Vec3, wish_dir: Vec3, t: &Tuning) -> Vec3 {
+    let flat = v.with_y(0.0);
+    let speed = flat.length();
+    let flat = if wish_dir.length_squared() > 0.0 && speed > 0.01 {
+        // Turn the direction, keep the speed.
+        (flat / speed).lerp(wish_dir, t.air_jump_redirect).normalize_or_zero() * speed
+    } else {
+        flat
+    };
+    flat.with_y(v.y.max(0.0) + t.air_jump_speed)
+}
+
+fn air_jump(p: &mut Player, wish_dir: Vec3, t: &Tuning) {
+    p.jump_buffer = 0.0;
+    p.air_jumps_left -= 1;
+    p.velocity = air_jump_velocity(p.velocity, wish_dir, t);
 }
 
 fn wall_jump(p: &mut Player, n: Vec3, t: &Tuning) {
