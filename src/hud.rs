@@ -177,7 +177,25 @@ fn spawn_hud(mut commands: Commands) {
     ));
 }
 
-fn update_hud(player: Single<&Player>, mut text: Single<&mut Text, With<SpeedText>>) {
+fn update_hud(
+    player: Single<(&Player, Option<&crate::vehicle::Driving>)>,
+    vehicles: Query<(&crate::vehicle::Vehicle, &avian3d::prelude::LinearVelocity)>,
+    mut text: Single<&mut Text, With<SpeedText>>,
+) {
+    let (player, driving) = *player;
+    if let Some((v, vel)) = driving.and_then(|d| vehicles.get(d.0).ok()) {
+        let gear = if v.gear < 0 { "R".to_string() } else { v.gear.to_string() };
+        let fuel = if v.fuel <= 0.0 { "  OUT OF FUEL" } else { "" };
+        text.0 = format!(
+            "{} {:4.0} km/h  gear {gear}  {:5.0} rpm   fuel {:.0}%  hull {:.0}%{fuel}",
+            v.spec.name.to_uppercase(),
+            vel.0.length() * 3.6,
+            v.rpm,
+            v.fuel / v.spec.tank * 100.0,
+            v.health / v.spec.hp * 100.0
+        );
+        return;
+    }
     let speed = player.horizontal_speed();
     let state = match player.state {
         MoveState::Ground => "",
@@ -262,7 +280,13 @@ fn update_health_hud(
     mut level: Local<f32>,
 ) {
     fill.width = Val::Percent((health.hp / health.max.max(1.0) * 100.0).clamp(0.0, 100.0));
-    text.0 = if health.alive() { format!("{:.0}", health.hp) } else { "RESPAWNING".into() };
+    text.0 = if !health.alive() {
+        "RESPAWNING".into()
+    } else if health.bleeding > 0.0 {
+        format!("{:.0}  BLEEDING", health.hp)
+    } else {
+        format!("{:.0}", health.hp)
+    };
     if health.hit_this_tick {
         *level = 0.45;
     }

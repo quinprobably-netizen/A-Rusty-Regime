@@ -16,6 +16,8 @@ dial sprint, jump and air control down later if you want the full sim.
 
 ## Stage R1: look (biggest win per hour)
 
+*Done 2026-10-17* (see `src/look.rs`, `src/veg.rs`, `assets/shaders/`): items 1, 4, 5 as written; 2 and 3 as generated meshes rather than CC0 model kits; 6 as triplanar textures on the existing generated walls. Props kits are left for the model thread.
+
 1. **PBR terrain splatting**: 4-layer material (grass, dirt, rock, sand) blended by slope and height, with
    normal and roughness maps. Source: ambientCG (CC0) 1K textures, ~2 MB each. Triplanar on steep rock.
    Custom Bevy `Material` with a WGSL shader; the heightmap already gives slope.
@@ -36,6 +38,9 @@ headless, screenshot diffs.
 
 ## Stage R2: sound
 
+*Done 2026-10-17* (`src/sound.rs`): every sound is synthesized at startup (gunshots, steps, impacts, explosions, RPM-pitched engine loops, wind, surf, rain), spatial, with volumes in `[sound]`. Drop a CC0 `.ogg` into `assets/sounds/` to replace any of them. Wall occlusion and per-surface step sets are not built.
+
+
 1. `bevy_audio` (built in) or `bevy_kira_audio` for mixing. Spatial emitters with distance roll-off and a
    low-pass "behind a wall" filter from a raycast.
 2. Free sources: freesound.org (CC0 filter), Sonniss GDC bundles (free for commercial use), Kenney audio.
@@ -46,6 +51,8 @@ headless, screenshot diffs.
 Effort: 1 cycle. Tests: emitter counts, pitch follows rpm, surface picks the right set.
 
 ## Stage R3: bodies and animation
+
+*Owned by the Character customization thread (its own Blender rig in `assets/models/character/`); this plan does not fetch rigs.*
 
 1. Player and soldiers become rigged humanoids: Quaternius Universal Base Characters or Mixamo-compatible
    CC0 rigs, with CC0 animation packs (idle, run, crouch, slide, jump, aim, die). Bevy's animation graph
@@ -59,6 +66,9 @@ Effort: 1 cycle. Tests: emitter counts, pitch follows rpm, surface picks the rig
 Effort: 2 cycles. Tests: animation state picks, ragdoll spawns on kill, driver pose matches lean.
 
 ## Stage R4: ballistics and damage
+
+*Done 2026-10-17* (`src/weapon.rs`, `src/health.rs`): projectile bullets with drop, drag and wind; wood, crates and thin metal let bullets through; head and leg zones; recoil that climbs and settles; aim down sights on right mouse; bleeding, capped regen and medkits at six sites. Body armour and limb slowdowns are not built.
+
 
 1. **Projectile bullets** for every weapon: each shot is a point with velocity, gravity and air drag
    (0.9 at 850 m/s for rifles, pistol at 350), stepped at 66 Hz with a raycast per step. Bullet drop
@@ -77,6 +87,9 @@ recoil returns to zero, bleed ends on bandage.
 
 ## Stage R5: smarter soldiers
 
+*Done 2026-10-17* (`src/targets.rs`): soldiers hear gunshots, call their squad, and run to cover that hides them from the threat when hit. Formations, flanking and bot drivers are not built.
+
+
 1. **Senses**: vision cone with distance falloff and lighting, hearing of gunshots and engines through
    the audio emitters, "last seen" already exists.
 2. **Cover**: bake cover points from the site walls and rocks (ray tests at build time), move cover to
@@ -91,6 +104,9 @@ formation.
 
 ## Stage R6: vehicles the rest of the way
 
+*Done 2026-10-17* (`src/roads.rs`, `src/vehicle/`): dirt roads from camp to every site, capped at a 15% grade; tarmac grip on roads, gravel off them; fuel, hull damage from crashes and bullets, wrecks that respawn, refuel and repair at camp. Punctures, cockpit and turrets are not built.
+
+
 1. Roads: splines between sites carved into the heightmap with a tarmac splat layer; tyres read the layer
    and switch between `TARMAC` and `GRAVEL` (both curves already ported).
 2. Damage: per-wheel puncture, engine health that caps torque, fuel that runs out, visible dents via
@@ -102,6 +118,9 @@ Effort: 1 to 2 cycles. Tests: tarmac grip exceeds gravel, puncture pulls to one 
 
 ## Stage R7: world and weather
 
+*Done 2026-10-17* (`src/world.rs`): 48-minute day with sun, moon and exposure, headlights and an F flashlight; clear, overcast, rain and fog with wet ground and rain streaks; wind that pushes bullets. Lit windows, night vision and the economy are not built.
+
+
 1. Day-night cycle on the sun with lit windows and vehicle headlights at night, flashlight and night vision
    as equipment.
 2. Weather states: clear, overcast, rain (particles, wet-surface roughness drop, puddles in the splat),
@@ -111,6 +130,9 @@ Effort: 1 to 2 cycles. Tests: tarmac grip exceeds gravel, puncture pulls to one 
 Effort: 1 to 2 cycles.
 
 ## Stage R8 (optional): netcode
+
+*Not built*, as planned.
+
 
 Still last and still optional. `lightyear` or `bevy_replicon` with server authority, client prediction of
 the TF2 controller and interpolation for everyone else. The headless test harness is the server already.

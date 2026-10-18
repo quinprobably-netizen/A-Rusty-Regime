@@ -3,10 +3,12 @@
 //! Kenney props, built with a small `Kit`.
 
 use avian3d::prelude::*;
+use bevy::ecs::system::EntityCommands;
 use bevy::prelude::*;
 use bevy::world_serialization::WorldAssetRoot;
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
+use crate::look::{SurfaceMaterial, Textures};
 use crate::targets::{self, TargetAssets};
 use crate::terrain::Heightmap;
 use crate::tuning::{Island, Tuning};
@@ -120,6 +122,16 @@ enum Mat {
     Crate,
     Barrel,
     Ball,
+    Medkit,
+}
+
+/// Energy a bullet loses going through a block of `mat` that is `thickness` m thin, if it can.
+fn cover(mat: Mat, thickness: f32) -> Option<f32> {
+    match mat {
+        Mat::Wood | Mat::Crate => Some((0.3 + thickness * 0.4).min(0.9)),
+        Mat::Metal if thickness < 0.5 => Some(0.55),
+        _ => None,
+    }
 }
 
 /// Everything a site builder needs, with one shared cube mesh and material set.
@@ -129,7 +141,9 @@ struct Kit<'w, 's, 'a> {
     server: &'a AssetServer,
     tuning: &'a Tuning,
     targets: Option<&'a TargetAssets>,
-    mats: [Handle<StandardMaterial>; 7],
+    mats: [Handle<StandardMaterial>; 8],
+    /// Textured concrete, wood and metal when the look is loaded.
+    surfaces: Option<[Handle<SurfaceMaterial>; 3]>,
     hm: &'a Heightmap,
 }
 
@@ -138,38 +152,58 @@ impl Kit<'_, '_, '_> {
         self.mats[m as usize].clone()
     }
 
-    /// Static box centered at `center`, turned `yaw` around Y.
+    /// A mesh with its material: the textured surface for stone, wood, crates and metal when
+    /// available, else the flat color.
+    fn surface(&mut self, mesh: Mesh, transform: Transform, mat: Mat) -> EntityCommands<'_> {
+        let mesh = Mesh3d(self.meshes.add(mesh));
+        let textured = self.surfaces.as_ref().and_then(|s| match mat {
+            Mat::Stone => Some(s[0].clone()),
+            Mat::Wood | Mat::Crate => Some(s[1].clone()),
+            Mat::Metal => Some(s[2].clone()),
+            _ => None,
+        });
+        match textured {
+            Some(h) => self.commands.spawn((mesh, MeshMaterial3d(h), transform)),
+            None => self.commands.spawn((mesh, MeshMaterial3d(self.mat(mat)), transform)),
+        }
+    }
+
+    /// Static box centered at `center`, turned `yaw` around Y. Wood and thin metal can be shot through.
     fn block(&mut self, size: Vec3, center: Vec3, yaw: f32, mat: Mat) {
-        self.commands.spawn((
-            Mesh3d(self.meshes.add(Cuboid::from_size(size))),
-            MeshMaterial3d(self.mat(mat)),
-            Transform::from_translation(center).with_rotation(Quat::from_rotation_y(yaw)),
-            RigidBody::Static,
-            Collider::cuboid(size.x, size.y, size.z),
-        ));
+        let mut e = self.surface(Cuboid::from_size(size).into(), Transform::from_translation(center).with_rotation(Quat::from_rotation_y(yaw)), mat);
+        e.insert((RigidBody::Static, Collider::cuboid(size.x, size.y, size.z)));
+        if let Some(cost) = cover(mat, size.min_element()) {
+            e.insert(crate::weapon::Penetrable { cost });
+        }
     }
 
     /// Static cylinder standing on `base`.
     fn cylinder(&mut self, radius: f32, height: f32, base: Vec3, mat: Mat) {
-        self.commands.spawn((
-            Mesh3d(self.meshes.add(Cylinder::new(radius, height))),
-            MeshMaterial3d(self.mat(mat)),
-            Transform::from_translation(base + Vec3::Y * height / 2.0),
-            RigidBody::Static,
-            Collider::cylinder(radius, height),
-        ));
+        self.surface(Cylinder::new(radius, height).into(), Transform::from_translation(base + Vec3::Y * height / 2.0), mat)
+            .insert((RigidBody::Static, Collider::cylinder(radius, height)));
     }
 
     /// Dynamic prop from a primitive mesh, centered at `center`.
     fn dynamic(&mut self, mesh: Mesh, collider: Collider, mass: f32, center: Vec3, mat: Mat) {
-        self.commands.spawn((
-            Mesh3d(self.meshes.add(mesh)),
-            MeshMaterial3d(self.mat(mat)),
-            Transform::from_translation(center),
-            RigidBody::Dynamic,
-            collider,
-            Mass(mass),
-        ));
+        let mut e = self.surface(mesh, Transform::from_translation(center), mat);
+        e.insert((RigidBody::Dynamic, collider, Mass(mass)));
+        if let Some(cost) = cover(mat, 0.5) {
+            e.insert(crate::weapon::Penetrable { cost });
+        }
+    }
+
+    /// A medkit (white box, red cross) on the ground at `pos`.
+    fn medkit(&mut self, pos: Vec3) {
+        let box_ = self.meshes.add(Cuboid::new(0.5, 0.3, 0.4));
+        let bar = self.meshes.add(Cuboid::new(0.3, 0.02, 0.08));
+        let bar2 = self.meshes.add(Cuboid::new(0.08, 0.02, 0.3));
+        let (white, red) = (self.mat(Mat::Medkit), self.mat(Mat::Barrel));
+        self.commands
+            .spawn((Name::new("Medkit"), crate::loot::Medkit { down: 0.0 }, Mesh3d(box_), MeshMaterial3d(white), Transform::from_translation(pos + Vec3::Y * 0.15), Visibility::default()))
+            .with_children(|k| {
+                k.spawn((Mesh3d(bar), MeshMaterial3d(red.clone()), Transform::from_xyz(0.0, 0.16, 0.0)));
+                k.spawn((Mesh3d(bar2), MeshMaterial3d(red), Transform::from_xyz(0.0, 0.16, 0.0)));
+            });
     }
 
     /// Kenney arena prop whose origin is at its base, standing at `base`.
@@ -209,11 +243,7 @@ impl Kit<'_, '_, '_> {
     /// A cache worth `value` lying at `pos` (its base).
     fn loot(&mut self, pos: Vec3, value: u32, key: Option<usize>) {
         let mat = if key.is_some() { Mat::Goal } else { Mat::Crate };
-        self.commands.spawn((
-            crate::loot::bundle(pos, value, key),
-            Mesh3d(self.meshes.add(Cuboid::new(0.7, 0.5, 0.5))),
-            MeshMaterial3d(self.mat(mat)),
-        ));
+        self.surface(Cuboid::new(0.7, 0.5, 0.5).into(), Transform::default(), mat).insert(crate::loot::bundle(pos, value, key));
     }
 
     /// A cache on the ground at island coordinates `(x, z)`.
@@ -256,6 +286,7 @@ pub fn spawn_sites(
     mut materials: ResMut<Assets<StandardMaterial>>,
     vehicles: Option<Res<crate::vehicle::VehicleAssets>>,
     heightmap: Res<Heightmap>,
+    textures: Option<Res<Textures>>,
 ) {
     let mats = [
         Color::srgb(0.55, 0.52, 0.48),
@@ -265,9 +296,11 @@ pub fn spawn_sites(
         Color::srgb(0.65, 0.48, 0.28),
         Color::srgb(0.7, 0.2, 0.2),
         Color::srgb(0.9, 0.8, 0.2),
+        Color::srgb(0.95, 0.95, 0.95),
     ]
     .map(|c| materials.add(StandardMaterial { base_color: c, perceptual_roughness: 0.9, ..default() }));
-    let mut kit = Kit { commands: &mut commands, meshes: &mut meshes, server: &server, tuning: &tuning, targets: targets.as_deref(), mats, hm: &heightmap };
+    let surfaces = textures.as_ref().map(|t| [t.concrete.clone(), t.wood.clone(), t.metal.clone()]);
+    let mut kit = Kit { commands: &mut commands, meshes: &mut meshes, server: &server, tuning: &tuning, targets: targets.as_deref(), mats, surfaces, hm: &heightmap };
     let s = &sites.0;
     base_camp(&mut kit, &s[BASE_CAMP]);
     radio_tower(&mut kit, &s[TOWER]);
@@ -322,6 +355,8 @@ fn base_camp(k: &mut Kit, p: &Placed) {
     // Wardrobe locker: stand next to it and press E.
     k.block(Vec3::new(1.2, 2.2, 0.7), o + Vec3::new(0.0, 1.1, -12.0), 0.0, Mat::Wood);
     k.commands.spawn((crate::wardrobe::Locker, Transform::from_translation(o + Vec3::new(0.0, 1.0, -12.0))));
+    k.medkit(o + Vec3::new(3.0, 0.0, -5.0));
+    k.medkit(o + Vec3::new(-3.0, 0.0, -5.0));
     k.prop("weapon-rack", o + Vec3::new(-5.0, 0.0, -8.0), 2.0, 0.3, Collider::cuboid(1.6, 0.94, 0.6), 0.47, false);
     k.prop("weapon-rack", o + Vec3::new(5.0, 0.0, -8.0), 2.0, -0.3, Collider::cuboid(1.6, 0.94, 0.6), 0.47, false);
     for i in 0..4 {
@@ -363,6 +398,7 @@ fn base_camp(k: &mut Kit, p: &Placed) {
 /// crossbars to wall-jump between, drones circling the top.
 fn radio_tower(k: &mut Kit, p: &Placed) {
     let o = p.origin();
+    k.medkit(o + Vec3::new(2.5, 0.0, 3.5));
     k.block(Vec3::new(6.0, 3.0, 6.0), o + Vec3::new(0.0, 1.5, 9.0), 0.0, Mat::Metal);
     for (x, z) in [(-3.0, -3.0), (3.0, -3.0), (3.0, 3.0), (-3.0, 3.0)] {
         k.block(Vec3::new(0.6, 40.0, 0.6), o + Vec3::new(x, 20.0, z), 0.0, Mat::Metal);
@@ -392,6 +428,7 @@ fn radio_tower(k: &mut Kit, p: &Placed) {
 /// the arena's mantle tower and wall-jump chimney inside, four soldiers.
 fn fort(k: &mut Kit, p: &Placed) {
     let o = p.origin();
+    k.medkit(o + Vec3::new(2.5, 0.0, 3.5));
     k.block(Vec3::new(72.0, 8.0, 1.0), o + Vec3::new(0.0, 4.0, -36.0), 0.0, Mat::Stone);
     k.block(Vec3::new(72.0, 8.0, 1.0), o + Vec3::new(0.0, 4.0, 36.0), 0.0, Mat::Stone);
     k.block(Vec3::new(1.0, 8.0, 72.0), o + Vec3::new(36.0, 4.0, 0.0), 0.0, Mat::Stone);
@@ -431,6 +468,7 @@ fn fort(k: &mut Kit, p: &Placed) {
 /// walking each ring.
 fn quarry(k: &mut Kit, p: &Placed) {
     let pit = p.origin();
+    k.medkit(pit + Vec3::new(3.0, 0.0, 3.0));
     let rim = pit.y + 18.0;
     k.loot(pit, 100, Some(0));
     for (x, z, y) in [(40.0, 0.0, rim - 12.0), (-40.0, 10.0, rim - 12.0), (0.0, -58.0, rim - 6.0)] {
@@ -457,6 +495,7 @@ fn quarry(k: &mut Kit, p: &Placed) {
 /// Broken colonnade, statues, and the wall-run gap between two platforms.
 fn ruins(k: &mut Kit, p: &Placed) {
     let o = p.origin();
+    k.medkit(o + Vec3::new(2.5, 0.0, 3.5));
     for (x, z) in [(-11.0, 0.0), (11.0, 0.0), (0.0, -24.0)] {
         k.loot(o + Vec3::new(x, if z == 0.0 { 3.0 } else { 0.0 }, z), 30, None);
     }
@@ -487,6 +526,7 @@ fn ruins(k: &mut Kit, p: &Placed) {
 /// A tower on the coast with a spiral of ledges to mantle up, drones around it.
 fn lighthouse(k: &mut Kit, p: &Placed) {
     let o = p.origin();
+    k.medkit(o + Vec3::new(2.5, 0.0, 3.5));
     k.cylinder(3.0, 24.0, o, Mat::Stone);
     k.cylinder(4.5, 0.5, o + Vec3::Y * 24.0, Mat::Goal);
     k.loot(o + Vec3::new(2.0, 24.5, 1.0), 80, None);

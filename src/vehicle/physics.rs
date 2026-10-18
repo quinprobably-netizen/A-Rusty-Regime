@@ -15,8 +15,7 @@ pub struct TyreCurve {
 }
 
 impl TyreCurve {
-    /// Regolith's tarmac curve, for roads later.
-    #[allow(dead_code)]
+    /// Regolith's tarmac curve, used on the roads.
     pub const TARMAC: TyreCurve = TyreCurve { kp: 0.10, ap: 0.12, c: 1.42, b: 1.9952384 };
     /// Regolith's gravel curve: softer, with a longer, flatter peak. The island's grass and sand use it.
     pub const GRAVEL: TyreCurve = TyreCurve { kp: 0.16, ap: 0.19, c: 1.25, b: 3.0776835 };
