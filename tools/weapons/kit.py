@@ -459,8 +459,9 @@ def hole_through(name, c, r, axis="x", length=0.06, segs=16):
 
 # ---------------------------------------------------------------------------------- wear bake
 
-def bake_wear(gun, objs):
-    """Unwrap every part into one atlas and bake colour, edge wear and cavity dirt into it."""
+def bake_wear(gun, objs, scale=1.0):
+    """Unwrap every part into one atlas and bake colour, edge wear and cavity dirt into it. `scale`
+    grows the wear, dirt and occlusion sizes for bigger models (characters use 8)."""
     scene = gun.scene
     scene.render.engine = "CYCLES"
     scene.cycles.device = "CPU"
@@ -477,9 +478,9 @@ def bake_wear(gun, objs):
     bpy.ops.object.mode_set(mode="OBJECT")
 
     img = bpy.data.images.new(f"{gun.id}_color", TEX, TEX, alpha=False)
-    mats = {m for o in objs for m in o.data.materials}
+    mats = {m for o in objs for m in o.data.materials if m is not None}
     for m in mats:
-        _bake_tree(m, img)
+        _bake_tree(m, img, scale)
     scene.render.bake.margin = 6
     scene.render.bake.use_clear = True
     bpy.ops.object.bake(type="EMIT")
@@ -491,7 +492,7 @@ def bake_wear(gun, objs):
         _final_tree(m, img)
 
 
-def _bake_tree(m, img):
+def _bake_tree(m, img, scale=1.0):
     base, wear, _, _, amount, _ = PALETTE[m["kind"]]
     nt = m.node_tree
     nt.nodes.clear()
@@ -503,7 +504,7 @@ def _bake_tree(m, img):
     geo = N("ShaderNodeNewGeometry")
     bev = N("ShaderNodeBevel")
     bev.samples = 8
-    bev.inputs["Radius"].default_value = 0.0012
+    bev.inputs["Radius"].default_value = 0.0012 * scale
     dot = N("ShaderNodeVectorMath")
     dot.operation = "DOT_PRODUCT"
     L(bev.outputs[0], dot.inputs[0])
@@ -513,7 +514,7 @@ def _bake_tree(m, img):
     edge.inputs["From Max"].default_value = 0.93
     L(dot.outputs["Value"], edge.inputs["Value"])
     noise = N("ShaderNodeTexNoise")
-    noise.inputs["Scale"].default_value = 260.0
+    noise.inputs["Scale"].default_value = 260.0 / scale
     noise.inputs["Detail"].default_value = 6.0
     L(geo.outputs["Position"], noise.inputs["Vector"])
     chip = N("ShaderNodeMath")
@@ -536,7 +537,7 @@ def _bake_tree(m, img):
     L(amt.outputs[0], mix.inputs[0])
     # Big soft blotches so flat panels are not one flat colour.
     grime = N("ShaderNodeTexNoise")
-    grime.inputs["Scale"].default_value = 18.0
+    grime.inputs["Scale"].default_value = 18.0 / scale
     grime.inputs["Detail"].default_value = 3.0
     L(geo.outputs["Position"], grime.inputs["Vector"])
     gmap = N("ShaderNodeMapRange")
@@ -544,7 +545,7 @@ def _bake_tree(m, img):
     gmap.inputs["To Max"].default_value = 1.06
     L(grime.outputs["Fac"], gmap.inputs["Value"])
     ao = N("ShaderNodeAmbientOcclusion")
-    ao.inputs["Distance"].default_value = 0.012
+    ao.inputs["Distance"].default_value = 0.012 * scale
     ao.samples = 8
     amap = N("ShaderNodeMapRange")
     amap.inputs["To Min"].default_value = 0.45
