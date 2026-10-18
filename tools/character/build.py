@@ -245,7 +245,7 @@ def body(geo):
 
 def head_hood(geo):
     def keep(c):
-        return not (c.y < -0.03 and c.z > 1.58 and c.z < 1.76)
+        return c.z > 1.53 and not (c.y < -0.03 and c.z > 1.58 and c.z < 1.76)
     sphere(geo, (0, 0.01, 1.67), 0.15, "primary", ["head"], rings=7, segs=12, keep=keep, scale=(1, 1.05, 1.1))
     # Hood draping down the back of the neck and over the shoulders.
     tube(geo, (0, 0.03, 1.55), (0, 0.06, 1.40), 0.13, 0.19, "primary", ["neck", "chest"], caps=False, sx=1.2)
@@ -357,6 +357,25 @@ def gear_launcher(geo):
     box(geo, (0.26, 0.0, 1.04), (0.10, 0.09, 0.02), "accent", ["forearm.L"])  # strap
 
 
+# The rifle lives in the right fist. Built in the rest pose around the hanging hand; the arm
+# poses below are solved so the muzzle points forward and the left palm sits under the handguard.
+GRIP = (-0.27, -0.03, 0.80)
+RIFLE_FWD = (0, -1, 0)
+RIFLE_UP = (0, 0, 1)
+HANDGUARD = (-0.27, -0.31, 0.86)  # where the left palm goes
+
+
+def weapon_rifle(geo):
+    b = ["hand.R"]
+    x, y, z = GRIP
+    box(geo, (x, y + 0.02, z + 0.10), (0.05, 0.44, 0.06), "metal", b)  # receiver
+    tube(geo, (x, y - 0.20, z + 0.11), (x, y - 0.56, z + 0.11), 0.013, 0.013, "metal", b, n=6)  # barrel
+    box(geo, (x, y - 0.29, z + 0.09), (0.046, 0.18, 0.05), "primary", b)  # handguard
+    box(geo, (x, y + 0.32, z + 0.07), (0.046, 0.18, 0.085), "primary", b, taper=0.85)  # stock
+    box(geo, (x, y - 0.10, z + 0.00), (0.034, 0.03, 0.14), "primary", b)  # magazine
+    box(geo, (x, y - 0.01, z + 0.145), (0.02, 0.10, 0.03), "metal", b)  # sight rail
+
+
 def gear_chalkbag(geo):
     box(geo, (-0.12, 0.14, 0.90), (0.10, 0.09, 0.12), "accent", ["hips"], taper=0.8)
     tube(geo, (-0.12, 0.14, 0.96), (-0.12, 0.14, 0.99), 0.055, 0.045, "primary", ["hips"], caps=False)
@@ -372,13 +391,142 @@ PARTS = {
     "feet.boots": feet_boots, "feet.sneakers": feet_sneakers,
     "back.rope": back_rope, "back.pack": back_pack,
     "gear.launcher": gear_launcher, "gear.chalkbag": gear_chalkbag,
+    "weapon.rifle": weapon_rifle,
 }
 
 OUTFITS = {
     "runner": ["body", "body.head", "head.hood", "face.mask", "torso.jacket", "torso.carrier", "hands.gloves",
-               "legs.cargo", "legs.kneepads", "feet.boots", "back.rope", "gear.launcher", "gear.chalkbag"],
-    "soldier": ["body", "body.head", "head.helmet", "torso.shirt", "torso.carrier", "legs.cargo", "feet.boots", "back.pack"],
+               "legs.cargo", "legs.kneepads", "feet.boots", "back.rope", "gear.launcher", "gear.chalkbag", "weapon.rifle"],
+    "soldier": ["body", "body.head", "head.helmet", "torso.shirt", "torso.carrier", "legs.cargo", "feet.boots", "back.pack", "weapon.rifle"],
 }
+
+# ---------------------------------------------------------------------------------- arm solver
+
+ARM_BONES = [b + side for b in ("upper_arm.", "forearm.", "hand.") for side in ("L", "R")]
+RIGHT_DOFS = [("upper_arm.R", 0, -140, 40), ("upper_arm.R", 1, -90, 90), ("upper_arm.R", 2, -40, 70),
+              ("forearm.R", 0, -150, 0), ("forearm.R", 1, -100, 100), ("hand.R", 0, -130, 60), ("hand.R", 1, -90, 90), ("hand.R", 2, -60, 60)]
+LEFT_DOFS = [("upper_arm.L", 0, -150, 40), ("upper_arm.L", 1, -90, 90), ("upper_arm.L", 2, -70, 40),
+             ("forearm.L", 0, -150, 0), ("forearm.L", 1, -100, 100), ("hand.L", 0, -50, 50), ("hand.L", 2, -40, 40)]
+
+
+def apply_pose(arm, pose):
+    for pb in arm.pose.bones:
+        pb.rotation_mode = "XYZ"  # pose bones default to quaternions, which would ignore the euler
+        rot = pose.get(pb.name, (0, 0, 0))
+        pb.rotation_euler = tuple(math.radians(a) for a in rot)
+        if pb.name == "hips":
+            pb.location = pose.get("hips.loc", (0, 0, 0))
+    bpy.context.view_layer.update()
+
+
+def attached(arm, bone, rest_point):
+    """A rest-space point glued to `bone`, in the current pose (armature space)."""
+    pb = arm.pose.bones[bone]
+    return (pb.matrix @ arm.data.bones[bone].matrix_local.inverted()) @ Vector(rest_point)
+
+
+def attached_dir(arm, bone, rest_dir):
+    pb = arm.pose.bones[bone]
+    return ((pb.matrix @ arm.data.bones[bone].matrix_local.inverted()).to_3x3() @ Vector(rest_dir)).normalized()
+
+
+def descend(arm, pose, dofs, cost, step=24.0):
+    """Coordinate descent on the listed (bone, axis, lo, hi) angles until the cost stops dropping."""
+    for b, _, _, _ in dofs:
+        pose.setdefault(b, (0, 0, 0))
+    apply_pose(arm, pose)
+    best = cost()
+    while step >= 0.5:
+        improved = False
+        for b, ax, lo, hi in dofs:
+            for delta in (step, -step):
+                old = pose[b]
+                new = list(old)
+                new[ax] = max(lo, min(hi, old[ax] + delta))
+                if new[ax] == old[ax]:
+                    continue
+                pose[b] = tuple(new)
+                apply_pose(arm, pose)
+                c = cost()
+                if c < best - 1e-7:
+                    best = c
+                    improved = True
+                    break
+                pose[b] = old
+        if not improved:
+            step *= 0.5
+    apply_pose(arm, pose)
+    return best
+
+
+def solve_rifle_arms(arm, base, grip, fwd, start=None):
+    """Arm angles that put the rifle grip at `grip` pointing along `fwd` (armature space) with the
+    left palm under the handguard, on top of the `base` body pose. Returns {bone: (rx, ry, rz)}."""
+    pose = {k: v for k, v in base.items() if k not in ARM_BONES}
+    pose.update(start or {"upper_arm.R": (-50, 0, 10), "forearm.R": (-100, 0, 0), "upper_arm.L": (-70, 0, -10), "forearm.L": (-70, 0, 0)})
+    grip, fwd = Vector(grip), Vector(fwd).normalized()
+
+    def right_cost():
+        g = attached(arm, "hand.R", GRIP)
+        d = attached_dir(arm, "hand.R", RIFLE_FWD)
+        up = attached_dir(arm, "hand.R", RIFLE_UP)
+        return (g - grip).length_squared * 60 + (1 - d.dot(fwd)) * 10 + (1 - up.z) * 4.0
+
+    def left_cost():
+        target = attached(arm, "hand.R", HANDGUARD)
+        palm = attached(arm, "hand.L", (0.27, -0.025, 0.80))
+        palm_in = attached_dir(arm, "hand.L", (1, 0, 0))  # palm faces inward at rest
+        return (palm - target).length_squared * 60 + (1 - palm_in.z) * 0.6
+
+    def multistart(dofs, cost, starts):
+        best, best_pose = None, None
+        for st in starts:
+            for b, v in st.items():
+                pose[b] = v
+            c = min(descend(arm, pose, dofs, cost) for _ in range(2))
+            if best is None or c < best:
+                best, best_pose = c, {b: pose[b] for b, *_ in dofs}
+        pose.update(best_pose)
+        apply_pose(arm, pose)
+        return best
+
+    right_starts = [{k: v for k, v in (start or {}).items() if k.endswith(".R")}] if start else []
+    right_starts += [{"upper_arm.R": (ua, 0, 10), "forearm.R": (fa, 0, 0), "hand.R": (0, 0, 0)}
+                     for ua in (-30, -60, -90) for fa in (-60, -100, -130)]
+    r = multistart(RIGHT_DOFS, right_cost, right_starts)
+    left_starts = [{k: v for k, v in (start or {}).items() if k.endswith(".L")}] if start else []
+    left_starts += [{"upper_arm.L": (ua, 0, rz), "forearm.L": (fa, 0, 0), "hand.L": (0, 0, 0)}
+                    for ua in (-40, -70, -100) for fa in (-40, -80) for rz in (-10, 20)]
+    l = multistart(LEFT_DOFS, left_cost, left_starts)
+    d, up = attached_dir(arm, "hand.R", RIFLE_FWD), attached_dir(arm, "hand.R", RIFLE_UP)
+    print(f"  aim {math.degrees(math.acos(max(-1, min(1, d.dot(fwd))))):.0f} deg off, roll up.z {up.z:.2f}")
+    print(f"  rifle arms: right {r:.4f} left {l:.4f} grip err {(attached(arm, 'hand.R', GRIP) - grip).length:.3f} m, palm err {(attached(arm, 'hand.L', (0.27, -0.025, 0.80)) - attached(arm, 'hand.R', HANDGUARD)).length:.3f} m")
+    return {b: pose[b] for b in ARM_BONES}
+
+
+# Rifle carries per body pose: (grip position, muzzle direction), armature space, -Y forward.
+CARRIES = {
+    "ready": ((-0.09, -0.22, 1.08), (0.0, -0.92, -0.40)),
+    "run": ((-0.07, -0.20, 1.16), (0.0, -0.96, -0.28)),
+    "sprint": ((-0.05, -0.17, 1.22), (0.15, -0.85, -0.50)),
+    "crouch": ((-0.09, -0.30, 0.74), (0.0, -0.95, -0.30)),
+    "slide": ((-0.09, -0.24, 0.60), (0.0, -0.90, 0.40)),
+}
+ARMS = {}
+
+
+def solve_carries(arm):
+    bases = {
+        "ready": clip_walk(0.0), "run": clip_run(0.0), "sprint": clip_sprint(0.0),
+        "crouch": clip_crouch(0.0), "slide": clip_slide(0.0),
+    }
+    prev = None
+    for name, (grip, fwd) in CARRIES.items():
+        print("solving", name)
+        ARMS[name] = solve_rifle_arms(arm, bases[name], grip, fwd, start=prev)
+        prev = dict(ARMS[name])
+    apply_pose(arm, {})
+
 
 # ---------------------------------------------------------------------------------------- animation
 
@@ -389,8 +537,9 @@ def S(t, phase=0.0):
     return math.sin(2 * math.pi * t + phase)
 
 
-def gait(t, leg, knee, arm, elbow, lean, bob):
-    """A walk/run cycle. Legs swing about local X: negative is forward, knees bend positive."""
+def gait(t, leg, knee, arm, elbow, lean, bob, carry=None):
+    """A walk/run cycle. Legs swing about local X: negative is forward, knees bend positive.
+    With `carry`, the arms hold the rifle in that carry instead of swinging."""
     p = {}
     for s, sign in (("L", 1), ("R", -1)):
         sw = S(t) * sign
@@ -399,6 +548,8 @@ def gait(t, leg, knee, arm, elbow, lean, bob):
         p["foot." + s] = (-12 * max(0.0, S(t, 2.2) * sign) + 6, 0, 0)
         p["upper_arm." + s] = (arm * sw, 0, 0)
         p["forearm." + s] = (-elbow - 10 * max(0.0, sw), 0, 0)
+    if carry and carry in ARMS:
+        p.update(ARMS[carry])
     p["spine"] = (lean, 0, -4 * S(t))
     p["chest"] = (lean * 0.5, 0, 6 * S(t))
     p["head"] = (-lean * 0.8, 0, 0)
@@ -407,69 +558,59 @@ def gait(t, leg, knee, arm, elbow, lean, bob):
     return p
 
 
+def with_arms(p, carry):
+    if carry in ARMS:
+        p.update(ARMS[carry])
+    return p
+
+
 def clip_idle(t):
     b = S(t * 0.5)
-    return {"chest": (2 * b, 0, 0), "head": (-1.5 * b, 0, 2 * S(t * 0.25)),
-            "upper_arm.L": (0, 0, 2 * b), "upper_arm.R": (0, 0, -2 * b),
-            "forearm.L": (-8, 0, 0), "forearm.R": (-8, 0, 0)}
+    return with_arms({"spine": (3, 0, 0), "chest": (2 * b, 0, 0), "head": (-1.5 * b, 0, 2 * S(t * 0.25))}, "ready")
 
 
 def clip_walk(t):
-    return gait(t, leg=24, knee=32, arm=18, elbow=15, lean=3, bob=0.02)
+    return gait(t, leg=24, knee=32, arm=18, elbow=15, lean=3, bob=0.02, carry="ready")
 
 
 def clip_run(t):
-    return gait(t, leg=42, knee=78, arm=34, elbow=70, lean=11, bob=0.04)
+    return gait(t, leg=42, knee=78, arm=34, elbow=70, lean=11, bob=0.04, carry="run")
 
 
 def clip_sprint(t):
-    return gait(t, leg=54, knee=95, arm=44, elbow=85, lean=17, bob=0.05)
+    return gait(t, leg=54, knee=95, arm=44, elbow=85, lean=17, bob=0.05, carry="sprint")
 
 
 def clip_jump(t):
     k = min(1.0, t * 3)
-    return {"upper_leg.L": (-35 * k, 0, 0), "upper_leg.R": (-20 * k, 0, 0),
-            "lower_leg.L": (55 * k, 0, 0), "lower_leg.R": (40 * k, 0, 0),
-            "upper_arm.L": (25, 0, -20), "upper_arm.R": (25, 0, 20),
-            "forearm.L": (-30, 0, 0), "forearm.R": (-30, 0, 0), "spine": (6, 0, 0)}
+    return with_arms({"upper_leg.L": (-35 * k, 0, 0), "upper_leg.R": (-20 * k, 0, 0),
+                      "lower_leg.L": (55 * k, 0, 0), "lower_leg.R": (40 * k, 0, 0), "spine": (6, 0, 0)}, "run")
 
 
 def clip_fall(t):
-    b = S(t)
-    return {"upper_leg.L": (-10, 0, 0), "upper_leg.R": (10, 0, 0),
-            "lower_leg.L": (25, 0, 0), "lower_leg.R": (30, 0, 0),
-            "upper_arm.L": (-20 + 4 * b, 0, -45), "upper_arm.R": (-20 - 4 * b, 0, 45),
-            "forearm.L": (-25, 0, 0), "forearm.R": (-25, 0, 0), "spine": (-5, 0, 0)}
+    return with_arms({"upper_leg.L": (-10, 0, 0), "upper_leg.R": (10, 0, 0),
+                      "lower_leg.L": (25, 0, 0), "lower_leg.R": (30, 0, 0), "spine": (-5, 0, 0)}, "ready")
 
 
 def clip_crouch(t):
     b = S(t * 0.5)
-    return {"hips.loc": (0, -0.34, 0), "upper_leg.L": (-72, 0, -6), "upper_leg.R": (-72, 0, 6),
-            "lower_leg.L": (108, 0, 0), "lower_leg.R": (108, 0, 0), "foot.L": (-30, 0, 0), "foot.R": (-30, 0, 0),
-            "spine": (24 + b, 0, 0), "chest": (6, 0, 0), "head": (-22, 0, 0),
-            "upper_arm.L": (-25, 0, 0), "upper_arm.R": (-25, 0, 0), "forearm.L": (-45, 0, 0), "forearm.R": (-45, 0, 0)}
+    return with_arms({"hips.loc": (0, -0.34, 0), "upper_leg.L": (-72, 0, -6), "upper_leg.R": (-72, 0, 6),
+                      "lower_leg.L": (108, 0, 0), "lower_leg.R": (108, 0, 0), "foot.L": (-30, 0, 0), "foot.R": (-30, 0, 0),
+                      "spine": (24 + b, 0, 0), "chest": (6, 0, 0), "head": (-12, 0, 0)}, "crouch")
 
 
 def clip_slide(t):
-    b = S(t * 0.5)
-    return {"hips.loc": (0, -0.50, 0), "hips": (-20, 0, 0),
-            "upper_leg.L": (-70, 0, -8), "upper_leg.R": (-45, 0, 8), "lower_leg.L": (15, 0, 0), "lower_leg.R": (70, 0, 0),
-            "foot.L": (-20, 0, 0), "foot.R": (-10, 0, 0), "spine": (12, 0, 0), "chest": (4, 0, 0), "head": (-18, 0, 0),
-            "upper_arm.L": (-40 + 3 * b, 0, -25), "upper_arm.R": (20, 0, 30), "forearm.L": (-35, 0, 0), "forearm.R": (-60, 0, 0)}
+    return with_arms({"hips.loc": (0, -0.50, 0), "hips": (-20, 0, 0),
+                      "upper_leg.L": (-70, 0, -8), "upper_leg.R": (-45, 0, 8), "lower_leg.L": (15, 0, 0), "lower_leg.R": (70, 0, 0),
+                      "foot.L": (-20, 0, 0), "foot.R": (-10, 0, 0), "spine": (12, 0, 0), "chest": (4, 0, 0), "head": (-10, 0, 0)}, "slide")
 
 
 def wallrun(t, side):
-    # Running along a wall on `side` (+1 left, -1 right): body tilts away from it, inner arm reaches to it.
-    p = gait(t, leg=38, knee=70, arm=20, elbow=60, lean=8, bob=0.02)
-    inner = "L" if side > 0 else "R"
-    outer = "R" if side > 0 else "L"
+    # Running along a wall on `side` (+1 left, -1 right): body tilts away from it, rifle kept in both hands.
+    p = gait(t, leg=38, knee=70, arm=20, elbow=60, lean=8, bob=0.02, carry="run")
     p["hips"] = (0, 0, -14 * side)
     p["spine"] = (8, 0, -6 * side)
     p["head"] = (-6, 0, 10 * side)
-    p["upper_arm." + inner] = (-30, 0, -80 * side)
-    p["forearm." + inner] = (-20, 0, 0)
-    p["upper_arm." + outer] = (-25, 0, 20 * side)
-    p["forearm." + outer] = (-85, 0, 0)
     return p
 
 
@@ -482,23 +623,26 @@ def clip_wallrun_r(t):
 
 
 def clip_mantle(t):
-    # Hands on the ledge, pull up, then a knee comes over. Not looped; played at the mantle's speed.
+    # Left hand on the ledge, right keeps the rifle; pull up, then a knee comes over. Played at the mantle's speed.
     k = min(1.0, t * 2.0)
     step = max(0.0, (t - 0.5) * 2.0)
-    return {"upper_arm.L": (-165 + 60 * k, 0, -15), "upper_arm.R": (-165 + 60 * k, 0, 15),
-            "forearm.L": (-20 - 50 * k, 0, 0), "forearm.R": (-20 - 50 * k, 0, 0),
-            "upper_leg.L": (-20 - 70 * step, 0, -5), "upper_leg.R": (-10 - 20 * k, 0, 5),
-            "lower_leg.L": (30 + 60 * step, 0, 0), "lower_leg.R": (40, 0, 0),
-            "spine": (25 - 10 * k, 0, 0), "chest": (10, 0, 0), "head": (-30 + 15 * k, 0, 0)}
+    p = with_arms({"upper_leg.L": (-20 - 70 * step, 0, -5), "upper_leg.R": (-10 - 20 * k, 0, 5),
+                   "lower_leg.L": (30 + 60 * step, 0, 0), "lower_leg.R": (40, 0, 0),
+                   "spine": (25 - 10 * k, 0, 0), "chest": (10, 0, 0), "head": (-18 + 10 * k, 0, 0)}, "run")
+    p["upper_arm.L"] = (-165 + 60 * k, 0, -15)
+    p["forearm.L"] = (-20 - 50 * k, 0, 0)
+    p["hand.L"] = (0, 0, 0)
+    return p
 
 
 def clip_grapple(t):
-    # Left arm out along the rope, body stretched behind it, legs trailing.
-    b = S(t * 0.5)
-    return {"upper_arm.L": (-150, 0, -10), "forearm.L": (-10, 0, 0), "hand.L": (-20, 0, 0),
-            "upper_arm.R": (-35 + 3 * b, 0, 35), "forearm.R": (-70, 0, 0),
-            "upper_leg.L": (15, 0, -6), "upper_leg.R": (-5, 0, 6), "lower_leg.L": (35, 0, 0), "lower_leg.R": (55, 0, 0),
-            "spine": (18, 0, 0), "chest": (8, 0, 0), "head": (-24, 0, 0)}
+    # Left arm out along the rope, right hand keeps the rifle, legs trailing.
+    p = with_arms({"upper_leg.L": (15, 0, -6), "upper_leg.R": (-5, 0, 6), "lower_leg.L": (35, 0, 0), "lower_leg.R": (55, 0, 0),
+                   "spine": (18, 0, 0), "chest": (8, 0, 0), "head": (-14, 0, 0)}, "run")
+    p["upper_arm.L"] = (-150, 0, -10)
+    p["forearm.L"] = (-10, 0, 0)
+    p["hand.L"] = (-20, 0, 0)
+    return p
 
 
 CLIPS = {
@@ -551,7 +695,7 @@ def bake_clips(arm):
 
 # ----------------------------------------------------------------------------------------- preview
 
-def render_preview(arm, parts, outfit, clip, frame, path, cam=(1.9, -2.9, 1.25)):
+def render_preview(arm, parts, outfit, clip, frame, path, cam=(1.9, -2.9, 1.25), look_at=(0, 0, 0.95), lens=55):
     scene = bpy.context.scene
     for name, obj in parts.items():
         obj.hide_render = name not in OUTFITS[outfit]
@@ -596,8 +740,9 @@ def render_preview(arm, parts, outfit, clip, frame, path, cam=(1.9, -2.9, 1.25))
         scene.world.node_tree.nodes["Background"].inputs["Color"].default_value = (0.55, 0.65, 0.8, 1)
         scene.world.node_tree.nodes["Background"].inputs["Strength"].default_value = 0.8
     cam_obj = bpy.data.objects["preview_cam"]
+    cam_obj.data.lens = lens
     cam_obj.location = cam
-    direction = Vector((0, 0, 0.95)) - Vector(cam)
+    direction = Vector(look_at) - Vector(cam)
     cam_obj.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
     bpy.ops.render.render(write_still=True)
     for track in arm.animation_data.nla_tracks:
@@ -613,6 +758,7 @@ def build():
     scene = bpy.context.scene
     scene.render.fps = FPS
     arm = build_armature()
+    solve_carries(arm)
     parts = {}
     for name, fn in PARTS.items():
         geo = Geo()
@@ -639,6 +785,9 @@ def build():
         render_preview(arm, parts, "soldier", "idle", 0, os.path.join(SHOTS, "character-soldier.png"))
         render_preview(arm, parts, "runner", "grapple", 0, os.path.join(SHOTS, "character-runner-grapple.png"), cam=(2.4, -2.2, 1.1))
         render_preview(arm, parts, "runner", "wallrun_l", 5, os.path.join(SHOTS, "character-runner-wallrun.png"), cam=(0.5, -3.2, 1.2))
+        render_preview(arm, parts, "soldier", "walk", 6, os.path.join(SHOTS, "character-soldier-walk.png"), cam=(2.0, -2.6, 1.3))
+        render_preview(arm, parts, "runner", "crouch", 0, os.path.join(SHOTS, "character-runner-crouch.png"), cam=(1.6, -1.6, 1.0), look_at=(0, 0, 0.9), lens=70)
+        render_preview(arm, parts, "runner", "slide", 12, os.path.join(SHOTS, "character-runner-slide.png"), cam=(1.8, -1.4, 0.9), look_at=(0, 0, 0.6), lens=60)
 
 
 def check():

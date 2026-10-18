@@ -21,7 +21,7 @@ const DATA_PATH: &str = "assets/characters.toml";
 const DEFAULT_DATA: &str = include_str!("../assets/characters.toml");
 
 /// Every toggleable node in the glb, as `slot.style`. `build.py --check` keeps the file in step.
-pub const PARTS: [&str; 21] = [
+pub const PARTS: [&str; 22] = [
     "body", "body.head",
     "head.hood", "head.beanie", "head.cap", "head.helmet",
     "face.mask", "face.goggles",
@@ -31,18 +31,22 @@ pub const PARTS: [&str; 21] = [
     "feet.boots", "feet.sneakers",
     "back.rope", "back.pack",
     "gear.launcher", "gear.chalkbag",
+    "weapon.rifle",
 ];
 const ALWAYS: [&str; 2] = ["body", "body.head"];
-pub const SLOTS: [&str; 8] = ["head", "face", "torso", "hands", "legs", "feet", "back", "gear"];
+pub const SLOTS: [&str; 9] = ["head", "face", "torso", "hands", "legs", "feet", "back", "gear", "weapon"];
+/// Slots the wardrobe lets the player change; the weapon follows the class.
+pub const WEARABLE: [&str; 8] = ["head", "face", "torso", "hands", "legs", "feet", "back", "gear"];
 
 /// The styles the model has for `slot`, in glb order.
 pub fn styles_for(slot: &str) -> Vec<&'static str> {
     PARTS.iter().filter_map(|p| p.strip_prefix(slot).and_then(|r| r.strip_prefix('.'))).filter(|_| slot != "body").collect()
 }
 
-/// Parts around the head. The player's own go on the shadow-only layer so they never fill the screen.
+/// Parts around the head, plus the held weapon (the first-person viewmodel stands in for it).
+/// The player's own go on the shadow-only layer so they never fill the screen.
 pub fn is_head_part(name: &str) -> bool {
-    name == "body.head" || name.starts_with("head.") || name.starts_with("face.")
+    name == "body.head" || name.starts_with("head.") || name.starts_with("face.") || name.starts_with("weapon.")
 }
 
 /// Animation clips, in the order they sit in the glb.
@@ -103,6 +107,7 @@ pub struct OutfitDef {
     pub feet: Option<Styles>,
     pub back: Option<Styles>,
     pub gear: Option<Styles>,
+    pub weapon: Option<Styles>,
     pub primary: String,
     pub secondary: String,
     pub accent: String,
@@ -119,6 +124,7 @@ impl OutfitDef {
             "feet" => self.feet.as_ref(),
             "back" => self.back.as_ref(),
             "gear" => self.gear.as_ref(),
+            "weapon" => self.weapon.as_ref(),
             _ => None,
         }
     }
@@ -133,6 +139,7 @@ impl OutfitDef {
             "feet" => &mut self.feet,
             "back" => &mut self.back,
             "gear" => &mut self.gear,
+            "weapon" => &mut self.weapon,
             _ => return,
         };
         *field = styles;
@@ -448,6 +455,8 @@ mod tests {
     fn styles_per_slot() {
         assert_eq!(styles_for("head"), vec!["hood", "beanie", "cap", "helmet"]);
         assert_eq!(styles_for("hands"), vec!["gloves", "bare"]);
+        assert_eq!(styles_for("weapon"), vec!["rifle"]);
+        assert!(is_head_part("weapon.rifle") && !is_head_part("torso.jacket"));
         assert!(styles_for("body").is_empty());
         let mut o = OutfitDef::default();
         o.set_slot("feet", Some(Styles::One("boots".into())));

@@ -165,7 +165,7 @@ fn spawn_hud(mut commands: Commands) {
         Node { position_type: PositionType::Absolute, bottom: Val::Px(46.0), left: Val::Percent(50.0), margin: UiRect::left(Val::Px(-120.0)), ..default() },
     ));
     commands.spawn((
-        Text::new("Click: lock mouse / fire   WASD / left stick: move   Space / A: jump   Ctrl / B: crouch & slide\n1-4, wheel, Q / d-pad, RB-LB, Y: weapons   Space in the air: double jump   F / mouse 4: grapple   R / Select: respawn   F5: reload tuning"),
+        Text::new("Click: lock mouse / fire   WASD / left stick: move   Space / A: jump   Ctrl / B: crouch & slide\n1-4, wheel, Q / d-pad, RB-LB, Y: weapons   Space in the air: double jump   G / mouse 4: grapple   R / Select: respawn   F5: reload tuning"),
         TextFont { font_size: FontSize::Px(14.0), ..default() },
         TextColor(Color::srgba(1.0, 1.0, 1.0, 0.6)),
         Node {

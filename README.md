@@ -17,7 +17,7 @@ First build takes a while. Linux needs `libasound2-dev libudev-dev libwayland-de
 | Move | WASD | Left stick (analog) |
 | Look | Mouse (click to lock, Esc to release) | Right stick |
 | Jump / wall jump / double jump | Space | A / Cross |
-| Grapple (fire, press again to let go) | F or mouse 4 | L3 |
+| Grapple (fire, press again to let go) | G or mouse 4 | L3 |
 | Wardrobe (at the camp locker) | E, then Tab, arrows, 1 2 3 | |
 | Crouch / slide | Ctrl, Shift or C | B / Circle, L3 or LT |
 | Fire | Left mouse | RT |
@@ -34,7 +34,7 @@ First build takes a while. Linux needs `libasound2-dev libudev-dev libwayland-de
 - **Source/TF2 core** at 66 ticks/s: ground friction and acceleration, air strafing (30u air cap), bunny hopping (jump on the landing tick to skip friction), crouch-jumping (legs tuck up in the air), ramp sliding and surfing on steep slopes, stair stepping.
 - **Parkour**: wall run (run along a wall in the air while holding forward), wall jump (jump off a wall, alternate walls to climb), mantle (push into a ledge up to 1.5 m above your feet), slide (crouch while running, faster downhill).
 - **Double jump**: one extra jump in the air, which can bend your momentum toward where you push. It comes back when you touch ground, a wall, a ledge or a grapple anchor.
-- **Grapple** (the pilot class ability): F fires a hook at anything within 30 m. You are pulled toward it, the pull bends toward where you look, gravity keeps working so looking below the anchor swings you. Press again or jump to let go and keep all your speed; jumping off adds a boost. It runs on a power meter like Titanfall 2's, tuned under `[grapple]` to be nearly free.
+- **Grapple** (the pilot class ability): G fires a hook at anything within 30 m. You are pulled toward it, the pull bends toward where you look, gravity keeps working so looking below the anchor swings you. Press again or jump to let go and keep all your speed; jumping off adds a boost. It runs on a power meter like Titanfall 2's, tuned under `[grapple]` to be nearly free.
 - **Rocket jumps**: rockets knock you and props around. Aim at your feet and jump.
 
 ## Character, outfits and classes

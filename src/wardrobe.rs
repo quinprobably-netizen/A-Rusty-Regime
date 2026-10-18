@@ -7,7 +7,7 @@ use bevy::prelude::*;
 
 use crate::abilities::Class;
 use crate::body::Body;
-use crate::character::{Characters, OutfitDef, Rig, SLOTS, Styles, styles_for};
+use crate::character::{Characters, OutfitDef, Rig, Styles, WEARABLE, styles_for};
 use crate::controller::Player;
 use crate::input::PlayerInput;
 use crate::loot::{Save, SaveFile};
@@ -129,10 +129,10 @@ fn edit(keys: Res<ButtonInput<KeyCode>>, characters: Res<Characters>, class: Res
         return;
     }
     let mut outfit = wardrobe.outfit.clone().unwrap_or_else(|| class_outfit(&characters, &class));
-    let slot = SLOTS[wardrobe.slot];
+    let slot = WEARABLE[wardrobe.slot];
     let mut changed = false;
     if keys.just_pressed(KeyCode::Tab) {
-        wardrobe.slot = (wardrobe.slot + 1) % SLOTS.len();
+        wardrobe.slot = (wardrobe.slot + 1) % WEARABLE.len();
     }
     for (key, dir) in [(KeyCode::ArrowRight, 1), (KeyCode::ArrowLeft, -1)] {
         if keys.just_pressed(key) {
@@ -187,7 +187,7 @@ fn show_ui(wardrobe: Res<Wardrobe>, characters: Res<Characters>, class: Res<Clas
     **vis = Visibility::Inherited;
     let outfit = wardrobe.outfit.clone().unwrap_or_else(|| class_outfit(&characters, &class));
     let mut lines = vec!["WARDROBE   Tab: next slot   Left/Right: style   1/2/3: colours   E: done".to_string()];
-    for (i, slot) in SLOTS.iter().enumerate() {
+    for (i, slot) in WEARABLE.iter().enumerate() {
         let worn = outfit.slot(slot).map_or("none".to_string(), |s| s.list().join(" + "));
         lines.push(format!("{} {slot}: {worn}", if i == wardrobe.slot { ">" } else { " " }));
     }

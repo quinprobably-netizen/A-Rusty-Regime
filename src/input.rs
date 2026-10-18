@@ -28,7 +28,7 @@ pub struct PlayerInput {
     pub weapon_last: bool,
     /// Enter or leave a vehicle (E / X), latched like `jump_pressed`.
     pub interact_pressed: bool,
-    /// Use the class ability (F / mouse 4 / LB), latched like `jump_pressed`.
+    /// Use the class ability (G / mouse 4 / L3), latched like `jump_pressed`.
     pub ability_pressed: bool,
 }
 
@@ -114,7 +114,7 @@ fn gather(
     let mut weapon_step = 0;
     let mut weapon_last = keys.just_pressed(KeyCode::KeyQ);
     let mut interact = keys.just_pressed(KeyCode::KeyE);
-    let mut ability = keys.just_pressed(KeyCode::KeyF) || mouse.just_pressed(MouseButton::Back);
+    let mut ability = keys.just_pressed(KeyCode::KeyG) || mouse.just_pressed(MouseButton::Back);
 
     let mut look = Vec2::ZERO;
     if cursor.grab_mode != CursorGrabMode::None {

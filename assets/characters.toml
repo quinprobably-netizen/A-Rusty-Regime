@@ -1,10 +1,10 @@
 # Outfits and classes. Edit and press F5 in game.
 #
-# Slots: head, face, torso, hands, legs, feet, back, gear. A slot takes one style or a list (base
+# Slots: head, face, torso, hands, legs, feet, back, gear, weapon (held in the right hand, not in the wardrobe). A slot takes one style or a list (base
 # layer first, overlays after). Styles are the part names in character.glb without the slot prefix:
 #   head: hood beanie cap helmet     face: mask goggles        torso: jacket shirt carrier
 #   hands: gloves bare               legs: cargo kneepads      feet: boots sneakers
-#   back: rope pack                  gear: launcher chalkbag
+#   back: rope pack                  gear: launcher chalkbag   weapon: rifle
 # Colours tint the cloth materials: primary (main cloth), secondary (trousers, second cloth), accent (straps, gear).
 
 [outfit.runner]
@@ -16,6 +16,7 @@ legs = ["cargo", "kneepads"]
 feet = "boots"
 back = "rope"
 gear = ["launcher", "chalkbag"]
+weapon = "rifle"
 primary = "#2b2f33"
 secondary = "#4a5a48"
 accent = "#d98b2b"
@@ -26,6 +27,7 @@ torso = ["shirt", "carrier"]
 legs = "cargo"
 feet = "boots"
 back = "pack"
+weapon = "rifle"
 primary = "#4c5a3a"
 secondary = "#3a3a3a"
 accent = "#8a7a50"
