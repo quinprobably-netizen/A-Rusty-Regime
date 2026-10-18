@@ -46,6 +46,11 @@ A/D, Enter picks, Esc backs out; the d-pad, A and B do the same on a pad; the mo
 (with `RUST_REGIME_SCREENSHOT` it skips the title unless set). Design notes:
 `docs/superpowers/specs/2026-10-18-menus-design.md`.
 
+## HUD
+Compass tape with the objective marked, health plate bottom left, movement readout (or vehicle
+dials) bottom centre, weapon plate with slot pips, fitted parts and heat bottom right, and a
+crosshair that opens with the gun's real spread. The Esc hint fades after a few seconds.
+
 ## Movement
 - **Source/TF2 core** at 66 ticks/s: ground friction and acceleration, air strafing (30u air cap), bunny hopping (jump on the landing tick to skip friction), crouch-jumping (legs tuck up in the air), ramp sliding and surfing on steep slopes, stair stepping.
 - **Parkour**: wall run (run along a wall in the air while holding forward), wall jump (jump off a wall, alternate walls to climb), mantle (push into a ledge up to 1.5 m above your feet), slide (crouch while running, faster downhill).

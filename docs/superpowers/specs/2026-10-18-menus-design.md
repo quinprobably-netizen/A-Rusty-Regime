@@ -25,3 +25,13 @@ Rifle, shotgun and pistol each have four slots (optic, muzzle, grip, stock) with
 Parts are multipliers on the `Gun` tuning (spread, recoil, cooldown, velocity, damage) applied
 when firing; primitive meshes (scope, suppressor, grip, stock pad) appear on the viewmodel. Stat
 bars: damage, rate, accuracy, control, range. The loadout saves in `save.toml`.
+
+## HUD
+Same look as the menus. Top centre: a compass tape (N/E/S/W, ticks every 15 degrees) with an amber
+notch for the heading and an amber mark where the objective is, the objective line and distance
+under it. Top right: hits/kills, the haul, the world clock. Bottom left: health plate (number, tag
+HP / BLEEDING / CRITICAL / RESPAWNING, bar that turns amber then red). Bottom centre: movement
+state (AIR / SLIDE / WALLRUN / MANTLE / CROUCH) over the speed in m/s and u/s; while driving the
+vehicle name, gear and hull with km/h, rpm and fuel bars. Bottom right: weapon slot pips, weapon
+name, fitted gunsmith parts and the heat bar. Crosshair: four lines that open with the real spread
+(heat, movement, crouch, ADS), amber when aiming, red on a hit; grapple power bar beneath it.
