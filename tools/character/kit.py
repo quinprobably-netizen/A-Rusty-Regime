@@ -818,12 +818,13 @@ def dominant(obj):
 
 
 HEAD_GROUP = {"head", "neck"}
-MESHES = ("mesh.body", "mesh.head", "fp.arms")
+MESHES = ("mesh.body", "mesh.head", "mesh.arms")
 
 
 def split(whole):
-    """Cut the joined character into `body`, `head` (what the player's own camera must not see) and
-    `fp.arms` (a copy of the arms for the first-person view)."""
+    """Cut the joined character into `mesh.body`, `mesh.head` (what the player's own camera must not
+    see) and `mesh.arms` (hidden on the player's own body; a second instance of the model shows only
+    these as the first-person arms)."""
     dom = dominant(whole)
     head_faces = {p.index for p in whole.data.polygons if sum(dom[i] in HEAD_GROUP for i in p.vertices) * 2 > len(p.vertices)}
     arm_faces = {p.index for p in whole.data.polygons if all(dom[i] in ARM_BONES for i in p.vertices)}
@@ -842,9 +843,9 @@ def split(whole):
         bm.to_mesh(me)
         bm.free()
         return o
-    part("mesh.body", lambda i: i not in head_faces)
+    part("mesh.body", lambda i: i not in head_faces and i not in arm_faces)
     part("mesh.head", lambda i: i in head_faces)
-    part("fp.arms", lambda i: i in arm_faces)
+    part("mesh.arms", lambda i: i in arm_faces and i not in head_faces)
     bpy.data.objects.remove(whole, do_unlink=True)
 
 
@@ -1193,8 +1194,8 @@ def preview(path, clip="idle", frame=0, cam=(1.9, -2.9, 1.25), look=None, lens=5
     if gun:
         dummy_gun(arm)
     for o in bpy.data.objects:
-        if o.name == "fp.arms":
-            o.hide_render = not show_fp
+        if o.name == "mesh.arms":
+            o.hide_render = False
         if show_fp and o.name in ("mesh.body", "mesh.head"):
             o.hide_render = True
     if arm.animation_data:
@@ -1243,7 +1244,7 @@ def preview(path, clip="idle", frame=0, cam=(1.9, -2.9, 1.25), look=None, lens=5
 # ------------------------------------------------------------------------------------------ check
 
 def check(path, budget=(25000, 75000)):
-    """Verify a character glb: the shared bone names, every clip, body/head/fp.arms skinned meshes,
+    """Verify a character glb: the shared bone names, every clip, body/head/arms skinned meshes,
     the triangle budget."""
     j, _ = hs.read_glb(path)
     names = {n.get("name", "") for n in j["nodes"]}
@@ -1260,7 +1261,7 @@ def check(path, budget=(25000, 75000)):
 
     def tri(mesh):
         return sum(j["accessors"][p["indices"]]["count"] // 3 for p in j["meshes"][mesh]["primitives"])
-    total = sum(tri(n["mesh"]) for n in j["nodes"] if "mesh" in n and n.get("name") in MESHES[:2])
+    total = sum(tri(n["mesh"]) for n in j["nodes"] if "mesh" in n and n.get("name") in MESHES)
     if not budget[0] <= total <= budget[1]:
         problems.append(f"{total} triangles, want {budget[0]}..{budget[1]}")
     return problems, {"tris": total, "kb": os.path.getsize(path) // 1024}

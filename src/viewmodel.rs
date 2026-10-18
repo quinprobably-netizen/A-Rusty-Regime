@@ -40,6 +40,13 @@ pub struct ViewModel {
     flash: f32,
 }
 
+impl ViewModel {
+    /// How far the gunsmith has turned the weapon to the camera, 0 in play to 1.
+    pub fn presented(&self) -> f32 {
+        self.showcase
+    }
+}
+
 /// The clips every weapon model carries, by glTF animation name.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Clip {
@@ -64,8 +71,8 @@ impl Clip {
 }
 
 #[derive(Component)]
-struct WeaponModel {
-    index: usize,
+pub(crate) struct WeaponModel {
+    pub(crate) index: usize,
     gltf: Handle<Gltf>,
     ready: bool,
     rig: Option<Rig>,
@@ -209,7 +216,7 @@ fn hook_up(
 }
 
 /// `e`'s transform relative to `root`, from local transforms (works before propagation).
-fn model_space(mut e: Entity, root: Entity, parents: &Query<&ChildOf>, transforms: &Query<&Transform>) -> Transform {
+pub(crate) fn model_space(mut e: Entity, root: Entity, parents: &Query<&ChildOf>, transforms: &Query<&Transform>) -> Transform {
     let mut acc = Transform::IDENTITY;
     while e != root {
         let Ok(tf) = transforms.get(e) else { break };

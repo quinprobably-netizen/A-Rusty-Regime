@@ -97,7 +97,6 @@ impl Target {
 /// glTF handles for target models; absent in headless tests.
 #[derive(Resource)]
 pub struct TargetAssets {
-    character: Handle<bevy::world_serialization::WorldAsset>,
     drone: Handle<bevy::world_serialization::WorldAsset>,
 }
 
@@ -106,7 +105,6 @@ pub fn load_assets(mut commands: Commands, server: Res<AssetServer>, materials: 
         return;
     }
     commands.insert_resource(TargetAssets {
-        character: server.load(GltfAssetLabel::Scene(0).from_asset(crate::character::MODEL)),
         drone: server.load(GltfAssetLabel::Scene(0).from_asset("models/fps/enemy-flying.glb")),
     });
 }
@@ -126,8 +124,8 @@ pub fn spawn_dummy(commands: &mut Commands, tuning: &Tuning, assets: Option<&Tar
         Transform::from_translation(home).with_rotation(Quat::from_rotation_y(yaw)),
         Visibility::default(),
     ));
-    if let Some(assets) = assets {
-        e.with_child(soldier_model(assets, Pose::Idle));
+    if assets.is_some() {
+        e.with_child(soldier_model(Team(1), Pose::Idle));
     }
 }
 
@@ -152,8 +150,8 @@ pub fn spawn_soldier_team(commands: &mut Commands, tuning: &Tuning, assets: Opti
         Transform::from_translation(home),
         Visibility::default(),
     ));
-    if let Some(assets) = assets {
-        e.with_child(soldier_model(assets, Pose::Walk));
+    if assets.is_some() {
+        e.with_child(soldier_model(team, Pose::Walk));
     }
 }
 
@@ -176,12 +174,11 @@ pub fn spawn_drone(commands: &mut Commands, tuning: &Tuning, assets: Option<&Tar
     }
 }
 
-/// Our character in the soldier outfit, feet at the bottom of the capsule, playing `pose`.
-fn soldier_model(assets: &TargetAssets, pose: Pose) -> impl Bundle {
+/// One of `team`'s characters with its loadout, feet at the bottom of the capsule, playing `pose`.
+fn soldier_model(team: Team, pose: Pose) -> impl Bundle {
     (
-        Rig::new("soldier"),
+        Rig::team(team.0),
         RigPose { pose, rate: 1.0 },
-        bevy::world_serialization::WorldAssetRoot(assets.character.clone()),
         Transform::from_xyz(0.0, -DUMMY_HEIGHT * 0.5, 0.0).with_scale(Vec3::splat(DUMMY_HEIGHT / crate::character::MODEL_HEIGHT)),
         Visibility::default(),
     )

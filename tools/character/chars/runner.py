@@ -180,4 +180,5 @@ def build():
 
 
 SPEC = {"build": build, "faction": "deserters", "budget": (25000, 75000),
+        "loadout": "smg",
         "colors": {"primary": "#141413", "secondary": "#D4A27F", "accent": "#D97757"}}

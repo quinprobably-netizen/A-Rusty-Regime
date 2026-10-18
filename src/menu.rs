@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::abilities::Class;
 use crate::camera::PlayerCamera;
-use crate::character::{Characters, OutfitDef, SHADOW_ONLY_LAYER, WEARABLE};
+use crate::character::{Characters, OutfitDef, SHADOW_ONLY_LAYER};
 use crate::gunsmith::{self, Loadout, PARTS, SLOTS, TUNE_MAX, TUNES};
 use crate::hud::HudRoot;
 use crate::loot::{Save, SaveFile};
@@ -286,8 +286,8 @@ enum Row {
     Slot(usize),
     /// The tuning slider under a fitted part.
     Tune(usize),
-    /// A wardrobe clothing slot (`WEARABLE` index).
-    Wear(usize),
+    /// The wardrobe's character picker.
+    Character,
     /// A wardrobe colour (primary, secondary, accent).
     Colour(usize),
 }
@@ -327,7 +327,7 @@ fn rows(panel: Panel, screen: Screen, tuned: [bool; 4]) -> Vec<Row> {
             rows.push(Row::Action("BACK", Action::Back));
         }
         Panel::Wardrobe => {
-            rows.extend((0..WEARABLE.len()).map(Row::Wear));
+            rows.push(Row::Character);
             rows.extend((0..3).map(Row::Colour));
             rows.push(Row::Action("BACK", Action::Back));
         }
@@ -660,14 +660,15 @@ fn act(
                 }
             }
         }
-        Row::Wear(slot) | Row::Colour(slot) => {
+        Row::Character | Row::Colour(_) => {
             if step != 0
                 && let Some(mut outfit) = closet.outfit()
+                && let Some(characters) = closet.characters.as_deref()
                 && let Some(w) = closet.wardrobe.as_mut()
             {
                 match row {
-                    Row::Wear(_) => wardrobe::cycle_style(&mut outfit, WEARABLE[slot], step),
-                    _ => wardrobe::cycle_colour(&mut outfit, slot),
+                    Row::Colour(c) => wardrobe::cycle_colour(&mut outfit, c),
+                    _ => wardrobe::cycle_character(characters, &mut outfit, step),
                 }
                 w.set(outfit.clone());
                 if let (Some(mut save), Some(file)) = (save, file) {
@@ -831,14 +832,14 @@ fn rebuild(
                 list.spawn(Node { display: Display::Grid, grid_template_columns: RepeatedGridTrack::px(3, 196.0), row_gap: Val::Px(8.0), column_gap: Val::Px(8.0), ..default() }).with_children(|grid| {
                     let mut index = 0;
                     for row in &rows {
-                        if let Row::Wear(_) | Row::Colour(_) = row {
-                            tile(grid, *row, index, index == menu.cursor, outfit.as_ref());
+                        if let Row::Character | Row::Colour(_) = row {
+                            tile(grid, *row, index, index == menu.cursor, outfit.as_ref(), closet.characters.as_deref());
                             index += 1;
                         }
                     }
                 });
                 list.spawn(Node { height: Val::Px(12.0), ..default() });
-                action_row(list, "BACK", rows.len() - 1 - 0, menu.cursor == WEARABLE.len() + 3, 22.0);
+                action_row(list, "BACK", rows.len() - 1, menu.cursor == rows.len() - 1, 22.0);
                 return;
             }
             let mut index = 0;
@@ -878,7 +879,7 @@ fn rebuild(
                         value_row(list, &format!("  TUNE  {l} / {r}"), &format!("{t:+}"), Some((t + TUNE_MAX) as f32 / (2 * TUNE_MAX) as f32), None, index, index == menu.cursor);
                         index += 1;
                     }
-                    Row::Wear(_) | Row::Colour(_) => {}
+                    Row::Character | Row::Colour(_) => {}
                 }
             }
             if menu.panel == Panel::Settings {
@@ -974,12 +975,15 @@ fn arrow(p: &mut ChildSpawnerCommands, index: usize, dir: i32, selected: bool) {
         .with_child(text(if dir < 0 { "<" } else { ">" }, 16.0, if selected { AMBER } else { DIM }));
 }
 
-/// A wardrobe tile: slot name, what is worn, or a colour swatch.
-fn tile(p: &mut ChildSpawnerCommands, row: Row, index: usize, selected: bool, outfit: Option<&OutfitDef>) {
+/// A wardrobe tile: the character worn, or a colour swatch.
+fn tile(p: &mut ChildSpawnerCommands, row: Row, index: usize, selected: bool, outfit: Option<&OutfitDef>, characters: Option<&Characters>) {
     let (name, worn, swatch) = match row {
-        Row::Wear(slot) => {
-            let worn = outfit.and_then(|o| o.slot(WEARABLE[slot]).map(|s| s.list().join(" + "))).unwrap_or_else(|| "none".into());
-            (WEARABLE[slot].to_uppercase(), worn.to_uppercase(), None)
+        Row::Character => {
+            let worn = match (outfit, characters) {
+                (Some(o), Some(c)) => c.label(&o.character),
+                _ => "none".into(),
+            };
+            ("CHARACTER".to_string(), worn.to_uppercase(), None)
         }
         Row::Colour(c) => {
             let hex = outfit.map(|o| [&o.primary, &o.secondary, &o.accent][c].clone()).unwrap_or_default();

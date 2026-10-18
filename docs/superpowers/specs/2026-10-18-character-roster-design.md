@@ -59,40 +59,42 @@ characters; the wardrobe picks a character and its three colours.
 - Skeleton, bone names and the 12 clip names stay exactly as they are, so movement, animation and
   gameplay code keep working. The clips are re-keyed only where new silhouettes need it.
 - The baked-in `weapon.rifle` part goes away. The third-person character holds the real weapon glb on
-  `prop_r_hand` in the existing two-hand carry pose (the fist is worn on the right hand).
-- `--check` verifies bones, clips, `fp.*` meshes and the triangle budget per character.
+  its `prop_hand.R` grip frame in the two-hand carry pose (the fist is worn on the right hand).
+- Each glb has three skinned meshes: `mesh.body`, `mesh.head` and `mesh.arms`. The player's own body
+  draws head and arms only into shadow maps.
+- `--check` verifies bones, clips, the three meshes and the triangle budget per character.
 
 ## First-person arms
 
-- Each character's own arms double as its first-person arms: the build copies the arm portion of the
-  model (vertices weighted to upper_arm, forearm, hand) into an `fp.arms` mesh, so the arms always
-  match who you are with no extra modelling.
-- The viewmodel spawns a second instance of the worn character on the viewmodel layer with only
-  `fp.arms` visible, shoulders anchored under the camera.
-- Every weapon gets `hand_r` and `hand_l` sockets in its build script, parented to the bone the hand
-  holds (left hand on the pump, foregrip or handguard), and is rebuilt. A two-bone IK in the game puts
-  each hand on its socket every frame, so the arms follow every existing weapon clip, including reloads.
-  Weapons without a sensible left-hand spot (pistol firing one-handed, fist) leave `hand_l` out and
-  the left arm drops to a rest pose.
+- Each character's own arms double as its first-person arms: the build splits the arm portion of the
+  model (vertices weighted to upper_arm, forearm, hand) into `mesh.arms`, so the arms always match
+  who you are with no extra modelling.
+- `src/arms.rs` spawns a second instance of the worn character under the camera with only `mesh.arms`
+  visible, shoulders anchored under the eye and turned slightly so the left shoulder leads.
+- Hand points live in code (`character::hands`), in each weapon's model space: the right fist's centre
+  and the support hand's spot with the bone it rides (the shotgun's pump, else the weapon root). So the
+  weapons did not need rebuilding. A two-bone IK puts each `prop_hand` grip frame on its point every
+  frame, so the arms follow every existing weapon clip, including reloads. Pistol, revolver and fist
+  have no support point and the left arm drops out of view.
 
 ## Game side
 
 - `assets/characters.toml`: one `[character.<id>]` per character with `faction`, colours and a bot
-  `loadout`; `[faction.<id>]` lists its characters. Classes point at a character instead of an outfit. Island soldier teams map to factions in the same file (team 0
-  Regime, team 1 Scrappers by default; 6v6 sides configurable), and each spawned soldier picks one of
-  its faction's characters.
+  `loadout`; `[faction.<id>]` lists its characters. Classes point at a character instead of an outfit. Soldier teams map to factions in the same file
+  (`[teams]`). Team 0 fights on the player's side, so it fields the Deserters; team 1 fields the
+  Regime, Scrappers and PMC. Each spawned soldier picks one of its team's characters and carries
+  that character's bot loadout.
 - Wardrobe: pick a character, then its three colours. Saved choices from the old slot system fall
   back to the class default.
-- Tests: every character in characters.toml has a glb with the shared bone and clip names, every
-  weapon has `hand_r`,
-  IK reaches its targets, faction mapping parses.
+- Tests: every character in characters.toml has a glb with the shared bone, mesh and clip names,
+  every weapon lands in the fist, the IK reaches its targets, the faction mapping parses.
 
 ## Build order
 
 1. Kit split: skeleton from proportions, clips, bake, export, checker, rebuilt Runner as the reference
    character (one person, everything else depends on it).
 2. The other eleven in parallel, one worker per faction.
-3. Weapon hand sockets and first-person arms.
+3. Hand points and first-person arms.
 4. Game wiring, tests, draft PR, refreshed `rust-regime-linux.tar.gz`.
 
 Out of scope: new clips (seated, death), ragdolls, facial animation, faction story missions,

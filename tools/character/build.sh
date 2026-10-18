@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Build the character glb (and preview renders) with headless Blender. Needs Python 3.11 for the bpy wheel.
+# Build the character glbs (and preview renders) with headless Blender. Needs Python 3.11 for the bpy wheel.
 set -e
 cd "$(dirname "$0")"
 PY=${PYTHON311:-python3.11}
