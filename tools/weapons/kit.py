@@ -295,6 +295,8 @@ def cut(target, *cutters, solver="EXACT"):
     mod = target.modifiers.new("cut", "BOOLEAN")
     mod.operation = "DIFFERENCE"
     mod.solver = solver
+    if solver == "EXACT":
+        mod.use_self = True  # joined cutters may overlap (slot + rounded ends)
     mod.object = cutter
     _apply(target, mod.name)
     bpy.data.objects.remove(cutter, do_unlink=True)
@@ -321,7 +323,13 @@ def _apply(obj, mod_name):
 
 
 def join(objs, name):
+    """Join parts into one object. Each part's own bevel is applied first, so a joined group keeps
+    every member's edge treatment instead of re-bevelling everything with the first one's."""
     objs = [o for o in objs if o is not None]
+    if len(objs) > 1 and name != "_cutter":
+        for o in objs:
+            apply_modifiers(o)
+            o["bevel"] = 0.0
     if len(objs) == 1:
         objs[0].name = name
         return objs[0]
@@ -337,6 +345,10 @@ def join(objs, name):
 def apply_modifiers(obj):
     """Bevel the hard edges and harden the normals, then bake that into the mesh."""
     w = obj.get("bevel", 0.0)
+    if w <= 0 and obj.type == "MESH" and not obj.get("shaded"):
+        # No bevel: smooth only across soft angles, so boxes stay crisp and cylinders stay round.
+        obj.data.set_sharp_from_angle(angle=math.radians(35))
+    obj["shaded"] = True
     if w > 0:
         b = obj.modifiers.new("bevel", "BEVEL")
         b.width = w
@@ -349,6 +361,7 @@ def apply_modifiers(obj):
         obj.modifiers.new("wn", "WEIGHTED_NORMAL").keep_sharp = True
     for m in list(obj.modifiers):
         _apply(obj, m.name)
+    obj["bevel"] = 0.0  # applied once; a later join or finish must not bevel it again
 
 
 # ---------------------------------------------------------------------------------- detail bits
@@ -370,7 +383,7 @@ def screw(at, axis="x", r=0.0022, material="steel", head=0.0012):
     sgn = -1 if axis.startswith("-") else 1
     a = {"x": Vector((1, 0, 0)), "y": Vector((0, 1, 0)), "z": Vector((0, 0, 1))}[axis[-1]] * sgn
     at = Vector(at)
-    s = cyl("screw", at - a * head / 2, at + a * head / 2, r, material, segs=14, bevel=0.0002)
+    s = cyl("screw", at - a * head / 2, at + a * head / 2, r, material, segs=10, bevel=0.0002)
     hexa = cyl("hex", at + a * (head / 2 - 0.0006), at + a * (head / 2 + 0.001), r * 0.45, material, segs=6, bevel=0)
     return cut(s, hexa, solver="FLOAT")
 
@@ -418,6 +431,7 @@ def label(text, at, size, material, side=-1, depth=0.0003):
     cu.body = text
     cu.size = size
     cu.extrude = depth
+    cu.resolution_u = 3  # small raised lettering: coarse curves are plenty
     cu.align_x = "CENTER"
     cu.align_y = "CENTER"
     o = bpy.data.objects.new("label", cu)

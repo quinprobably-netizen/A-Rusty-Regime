@@ -81,6 +81,8 @@ struct Rig {
     muzzle: Option<Entity>,
     /// The optic rail's top in model space, for lining up aim-down-sights.
     optic: Option<Vec3>,
+    /// The harpoon's spear, hidden while it is out on the line.
+    spear: Option<Entity>,
 }
 
 /// The muzzle flash on a model: a small hot sphere shown for a few frames after each shot.
@@ -168,7 +170,7 @@ fn hook_up(
         let Some(gltf) = gltfs.get(&model.gltf) else { continue };
         let Some(player) = children.iter_descendants(root).find(|e| players.contains(*e)) else {
             warn!("weapon model {} has no animation player", WEAPONS[model.index].id());
-            model.rig = Some(Rig { player: root, clips: HashMap::new(), playing: Clip::Idle, parts: vec![], muzzle: None, optic: None });
+            model.rig = Some(Rig { player: root, clips: HashMap::new(), playing: Clip::Idle, parts: vec![], muzzle: None, optic: None, spear: None });
             continue;
         };
         let mut graph = AnimationGraph::new();
@@ -181,7 +183,7 @@ fn hook_up(
         }
         commands.entity(player).insert((AnimationGraphHandle(graphs.add(graph)), AnimationTransitions::new()));
         let mut parts = vec![];
-        let (mut muzzle, mut optic) = (None, None);
+        let (mut muzzle, mut optic, mut spear) = (None, None, None);
         for e in children.iter_descendants(root) {
             let Ok(name) = names.get(e) else { continue };
             for (slot, meshes) in MESHES.iter().enumerate() {
@@ -191,6 +193,7 @@ fn hook_up(
             }
             match name.as_str() {
                 "muzzle" => muzzle = Some(e),
+                "mesh.spear" => spear = Some(e),
                 "optic" => optic = Some(model_space(e, root, &parents, &transforms).translation),
                 _ => {}
             }
@@ -201,7 +204,7 @@ fn hook_up(
                 commands.entity(m).with_child((Flash, Mesh3d(fx.mesh.clone()), MeshMaterial3d(fx.mat.clone()), Transform::default(), Visibility::Hidden));
             }
         }
-        model.rig = Some(Rig { player, clips: nodes, playing: Clip::Idle, parts, muzzle, optic });
+        model.rig = Some(Rig { player, clips: nodes, playing: Clip::Idle, parts, muzzle, optic, spear });
     }
 }
 
@@ -346,10 +349,20 @@ fn play_clips(
 }
 
 /// Show exactly the fitted part per slot on the current gunsmith weapon.
-fn show_parts(loadout: Res<Loadout>, models: Query<&WeaponModel>, mut vis: Query<&mut Visibility>) {
+fn show_parts(loadout: Res<Loadout>, arsenal: Res<Arsenal>, models: Query<&WeaponModel>, mut vis: Query<&mut Visibility>) {
     for model in &models {
         let Some(rig) = &model.rig else { continue };
         let kind = WEAPONS[model.index];
+        // After a shot the spear is gone until the reload brings it back in.
+        if let Some(e) = rig.spear
+            && let Ok(mut v) = vis.get_mut(e)
+        {
+            let out = arsenal.spent[model.index] > 0 && !(arsenal.current == model.index && arsenal.reload > 0.0);
+            let want = if out { Visibility::Hidden } else { Visibility::Inherited };
+            if *v != want {
+                *v = want;
+            }
+        }
         for &(e, slot, part) in &rig.parts {
             let fitted = customizable(kind) && loadout.part(kind, slot) == part;
             let want = if fitted { Visibility::Inherited } else { Visibility::Hidden };

@@ -143,4 +143,4 @@ def mag_drop(axis, t_out, t_in, t_seat, drop=0.25):
     """Mag track: pull out along `axis` (unit (y, z) toward the mag's bottom), fall, swap, seat."""
     ay, az = axis
     return [(0, (0, 0, 0), (0, 0, 0)), (t_out, (0, ay * 0.02, az * 0.02), (0, 0, 0)), (t_out + 0.18, (0, ay * drop, az * drop), (-25, 0, 0)),
-            (t_out + 0.181, (0, ay * 0.14, az * 0.14), (0, 0, 0)), (t_in, (0, ay * 0.03, az * 0.03), (0, 0, 0)), (t_seat, (0, 0, 0), (0, 0, 0))]
+            (t_out + 0.18 + 2 / 60, (0, ay * 0.14, az * 0.14), (0, 0, 0)), (t_in, (0, ay * 0.03, az * 0.03), (0, 0, 0)), (t_seat, (0, 0, 0), (0, 0, 0))]

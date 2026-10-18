@@ -46,8 +46,8 @@ def build():
                             (-0.012, -0.028), (-0.016, -0.012)], 0.012, "steel", bevel=0.0009)
     guard = cut(guard, prism("gh", [(-0.004, -0.007), (0.031, -0.007), (0.033, -0.012), (0.031, -0.028), (0.004, -0.029), (-0.008, -0.024),
                                     (-0.008, -0.009)], 0.03, "steel", bevel=0))
-    guard = cut(guard, *slots("gs", 0.038, 0.038, 1, -0.03, -0.012, -0.007, 0.007))
-    grip = prism("grip", [(-0.066, 0.0), (-0.022, 0.0), (-0.032, -0.06), (-0.052, -0.108), (-0.096, -0.108), (-0.086, -0.045), (-0.083, -0.004)],
+    guard = cut(guard, block("gs", (0, 0.0385, -0.021), (0.014, 0.002, 0.016), "steel", bevel=0))
+    grip = prism("grip", [(-0.066, 0.0), (-0.022, 0.0), (-0.026, -0.012), (-0.058, -0.108), (-0.099, -0.108), (-0.089, -0.06), (-0.084, -0.004)],
                  0.029, "steel", bevel=0.0012)
     beaver = prism("beaver", [(-0.083, 0.013), (-0.074, 0.006), (-0.083, -0.004), (-0.099, 0.002), (-0.104, 0.008), (-0.098, 0.012)],
                    0.022, "steel", bevel=0.0012, segs=3)
@@ -60,12 +60,18 @@ def build():
     # Grip panels: stippled, two screws a side, a red medallion on the left.
     for side in (-1, 1):
         x = side * 0.0158
-        panel = prism("panel", [(-0.066, -0.008), (-0.034, -0.008), (-0.044, -0.06), (-0.054, -0.098), (-0.088, -0.098), (-0.080, -0.04),
-                                (-0.077, -0.01)], 0.004, "black", x=x, bevel=0.0007)
-        panel = cut(panel, *dimples("st", -0.082, -0.042, -0.03, -0.09, x + side * 0.002, 7, 8, r=0.0011, side=side))
-        g.add(join([panel, screw((x + side * 0.0022, -0.054, -0.016), "x" if side > 0 else "-x", 0.0024),
-                    screw((x + side * 0.0022, -0.07, -0.088), "x" if side > 0 else "-x", 0.0024)], "panel"), "root")
-    g.add(cyl("medal", (-0.0182, -0.065, -0.05), (-0.0172, -0.065, -0.05), 0.005, "red", segs=20), "root")
+        panel = prism("panel", [(-0.066, -0.01), (-0.033, -0.01), (-0.061, -0.098), (-0.093, -0.098), (-0.085, -0.045),
+                                (-0.080, -0.012)], 0.004, "black", x=x, bevel=0.0007)
+        # Stippling in rows that follow the grip's rake.
+        st = []
+        for j in range(8):
+            dz = j * 0.0085
+            shift = -0.325 * dz + (0.0025 if j % 2 else 0.0)
+            st += dimples("st", -0.079 + shift, -0.047 + shift, -0.03 - dz, -0.03 - dz, x + side * 0.002, 7, 1, r=0.0011, side=side)
+        panel = cut(panel, *st)
+        g.add(join([panel, screw((x + side * 0.0022, -0.058, -0.02), "x" if side > 0 else "-x", 0.0024),
+                    screw((x + side * 0.0022, -0.081, -0.09), "x" if side > 0 else "-x", 0.0024)], "panel"), "root")
+    g.add(cyl("medal", (-0.0182, -0.07, -0.054), (-0.0172, -0.07, -0.054), 0.005, "red", segs=20), "root")
     # Slide stop (rides the slide as it locks back) and the skeleton hammer.
     stop = prism("stop", [(-0.004, 0.014), (0.03, 0.014), (0.032, 0.018), (0.0, 0.02)], 0.003, "steel", x=-0.0128, bevel=0.0003)
     g.add(join([stop, cyl("stopknob", (-0.0145, 0.026, 0.017), (-0.0128, 0.026, 0.017), 0.003, "steel", segs=14)], "stop"), "stop")
@@ -78,9 +84,9 @@ def build():
     g.add(join([trig, block("bow", (0, -0.01, -0.004), (0.004, 0.036, 0.003), "bright", bevel=0.0002)], "trigger"), "trigger")
     # Magazine: body follows the grip angle so it can drop out; base pad, witness holes, top round.
     ax = (-math.sin(math.radians(18)), -math.cos(math.radians(18)))
-    mag = prism("mag", [(-0.064, 0.0), (-0.034, 0.0), (-0.052, -0.1), (-0.084, -0.1)], 0.016, "steel", bevel=0.0005)
+    mag = prism("mag", [(-0.064, 0.0), (-0.034, 0.0), (-0.064, -0.1), (-0.094, -0.1)], 0.016, "steel", bevel=0.0005)
     mag = cut(mag, *[hole_through("wh", (-0.0, -0.05 - 0.016 * i * 0.31, -0.03 - i * 0.016), 0.0018, "x") for i in range(4)])
-    pad = prism("pad", [(-0.054, -0.104), (-0.096, -0.104), (-0.1, -0.116), (-0.05, -0.116)], 0.027, "black", bevel=0.0018, segs=3)
+    pad = prism("pad", [(-0.058, -0.104), (-0.1, -0.104), (-0.103, -0.116), (-0.055, -0.116)], 0.027, "black", bevel=0.0018, segs=3)
     rnd = cyl("round", (0, -0.062, 0.006), (0, -0.04, 0.006), 0.0058, "brass", segs=18)
     tip = cyl("tip", (0, -0.04, 0.006), (0, -0.034, 0.006), 0.0058, "copper", r1=0.003, segs=18)
     g.add(join([mag, pad, rnd, tip], "mag"), "mag")
