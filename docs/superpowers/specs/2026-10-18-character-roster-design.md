@@ -35,38 +35,40 @@ the gunsmith. Bots get a default loadout per faction (listed for bots only).
 | PMC | Juggernaut | Full heavy armour with the corporate logo | rocket |
 | PMC | Handler | Drone operator with a wrist tablet | smg |
 
-The player's default is the Runner (class `pilot`). The wardrobe can wear any character and still mix
-single slots and colours, so a Deserter can wear a stolen Regime helmet.
+The player's default is the Runner (class `pilot`). Every character has its own body (Q's call): its
+own proportions and build, modelled as one piece with its gear. So parts no longer mix between
+characters; the wardrobe picks a character and its three colours.
 
 ## Model pipeline
 
-- Same shape as the weapon kit: `tools/character/kit.py` (skeleton, shared body, part helpers, bake,
-  export, checker) plus one module per faction, `tools/character/factions/<faction>.py`, each building
-  that faction's parts. `tools/character/build.sh [factions] [--no-bake] [--preview] [--check]`.
-  The current 810-line `build.py` is split into this; its clips and arm solver move to the kit.
-- One file, `assets/models/character/character.glb`, as today: the shared 22-bone skeleton, a new
-  higher-detail base body (one shared athletic build, 1.80 m), and every part as
-  `<slot>.<style>` skinned to it. New styles are named for their character (`head.acolyte`,
-  `torso.zealot`, `hands.bruiser` ...). The old styles are dropped.
+- Same shape as the weapon kit: `tools/character/kit.py` (skeleton builder, body helpers, part
+  helpers, clips, arm solver, bake, export, checker) plus one module per character,
+  `tools/character/chars/<id>.py`. `tools/character/build.sh [ids] [--no-bake] [--preview] [--check]`.
+  The current 810-line `build.py` is split into this.
+- One file per character, `assets/models/character/<id>.glb`: its own body and gear, skinned to a
+  22-bone skeleton with the same bone names as today. Each character sets its own proportions (bone
+  lengths, height 1.65-2.05 m, bulk); the kit builds the skeleton from those and keys the 12 clips on
+  it, so every character runs the same animations. The gameplay capsule and hitbox stay the same for
+  everyone. The old `character.glb` stays only until the game is switched over.
 - Faces: stylised hard-surface heads, not sculpted portraits. Tattoos, ports and scars come from the
   bake and small modelled inserts.
-- Detail budget: 30-70k triangles per complete character. One baked 2048 texture per faction.
+- Detail budget: 30-70k triangles per complete character. One baked 2048 texture per character.
 - Tinting stays: cloth regions are baked near-white with wear and dirt, and the game multiplies the
-  outfit's `primary`, `secondary`, `accent` colours over them, so wardrobe colours keep working.
+  character's `primary`, `secondary`, `accent` colours over them, so wardrobe colours keep working.
   Fixed materials (metal, brass, glass, emissive slits) carry their own colour.
 - Skeleton, bone names and the 12 clip names stay exactly as they are, so movement, animation and
   gameplay code keep working. The clips are re-keyed only where new silhouettes need it.
 - The baked-in `weapon.rifle` part goes away. The third-person character holds the real weapon glb on
   `prop_r_hand` in the existing two-hand carry pose (the fist is worn on the right hand).
-- `--check` verifies bones, clips, every part named in characters.toml, triangle budget per character.
+- `--check` verifies bones, clips, `fp.*` meshes and the triangle budget per character.
 
 ## First-person arms
 
-- Each character's arm parts double as its first-person arms: the build splits the arm portion of
-  every torso and hands part (vertices weighted to upper_arm, forearm, hand) into `fp.<slot>.<style>`
-  meshes, so the arms always match what you wear with no extra modelling.
-- The viewmodel spawns a second character instance on the viewmodel layer with only the `fp.*` parts
-  of the current outfit visible, shoulders anchored under the camera.
+- Each character's own arms double as its first-person arms: the build copies the arm portion of the
+  model (vertices weighted to upper_arm, forearm, hand) into an `fp.arms` mesh, so the arms always
+  match who you are with no extra modelling.
+- The viewmodel spawns a second instance of the worn character on the viewmodel layer with only
+  `fp.arms` visible, shoulders anchored under the camera.
 - Every weapon gets `hand_r` and `hand_l` sockets in its build script, parented to the bone the hand
   holds (left hand on the pump, foregrip or handguard), and is rebuilt. A two-bone IK in the game puts
   each hand on its socket every frame, so the arms follow every existing weapon clip, including reloads.
@@ -75,18 +77,21 @@ single slots and colours, so a Deserter can wear a stolen Regime helmet.
 
 ## Game side
 
-- `assets/characters.toml`: one `[outfit.<character>]` per character plus `faction` and a bot `loadout`;
-  `[faction.<id>]` lists its characters. Island soldier teams map to factions in the same file (team 0
+- `assets/characters.toml`: one `[character.<id>]` per character with `faction`, colours and a bot
+  `loadout`; `[faction.<id>]` lists its characters. Classes point at a character instead of an outfit. Island soldier teams map to factions in the same file (team 0
   Regime, team 1 Scrappers by default; 6v6 sides configurable), and each spawned soldier picks one of
   its faction's characters.
-- Wardrobe: a character picker on top of the existing slot and colour editing.
-- Tests: baked outfits match the model, every outfit's parts exist, every weapon has `hand_r`,
+- Wardrobe: pick a character, then its three colours. Saved choices from the old slot system fall
+  back to the class default.
+- Tests: every character in characters.toml has a glb with the shared bone and clip names, every
+  weapon has `hand_r`,
   IK reaches its targets, faction mapping parses.
 
 ## Build order
 
-1. Kit split and new base body (one person, everything else depends on it).
-2. Four factions in parallel, one worker per faction file.
+1. Kit split: skeleton from proportions, clips, bake, export, checker, rebuilt Runner as the reference
+   character (one person, everything else depends on it).
+2. The other eleven in parallel, one worker per faction.
 3. Weapon hand sockets and first-person arms.
 4. Game wiring, tests, draft PR, refreshed `rust-regime-linux.tar.gz`.
 
