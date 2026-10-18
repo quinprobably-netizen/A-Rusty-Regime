@@ -45,6 +45,8 @@ fn follow(
     aim: Option<Res<crate::weapon::Aim>>,
     vehicles: Query<(&Transform, &Vehicle), Without<Player>>,
     heightmap: Option<Res<Heightmap>>,
+    menu: Option<Res<crate::menu::Menu>>,
+    real: Res<Time<Real>>,
 ) {
     let (p, player_tf, driving) = &mut *player;
     let (mut tf, mut cam, mut projection) = camera.into_inner();
@@ -78,6 +80,18 @@ fn follow(
         }
         tf.translation = eye;
         tf.rotation = Transform::from_translation(eye).looking_at(target, Vec3::Y).rotation;
+        cam.roll = 0.0;
+    }
+
+    // Wardrobe: stand in front of the player, a little to their left so they fill the
+    // centre-right of the screen beside the slot tiles, and drift slowly.
+    if menu.as_ref().is_some_and(|m| m.showcase() == crate::menu::Showcase::Body) {
+        let sway = (real.elapsed_secs() * 0.4).sin() * 0.15;
+        let (fwd, right) = view.flat_basis();
+        let chest = body + Vec3::Y * 1.0;
+        let eye = chest + fwd * 2.4 - right * (0.55 + sway) + Vec3::Y * 0.2;
+        tf.translation = eye;
+        tf.rotation = Transform::from_translation(eye).looking_to(-fwd, Vec3::Y).rotation;
         cam.roll = 0.0;
     }
 

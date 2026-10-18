@@ -24,6 +24,9 @@ pub struct ViewModel {
     kick: f32,
     kick_vel: f32,
     bob: f32,
+    /// 0 in play, 1 presented to the camera by the gunsmith.
+    showcase: f32,
+    spin: f32,
 }
 
 #[derive(Component)]
@@ -36,6 +39,8 @@ pub struct Tint(pub Color);
 const REST: Vec3 = Vec3::new(0.3, -0.27, -0.55);
 /// Where the gun sits when aiming down sights: centered and raised to the eye.
 const AIMED: Vec3 = Vec3::new(0.0, -0.16, -0.42);
+/// Where the gun sits in the gunsmith: right of centre, turned to show its side.
+const SHOWCASE: Vec3 = Vec3::new(0.22, -0.02, -0.95);
 
 fn spawn(
     mut commands: Commands,
@@ -128,12 +133,25 @@ fn animate(
     arsenal: Res<Arsenal>,
     mut fired: MessageReader<WeaponFired>,
     player: Single<&Player>,
-    mut vm: Single<(&mut Transform, &mut ViewModel)>,
+    mut vm: Single<(&mut Transform, &mut ViewModel, &mut Visibility), Without<WeaponModel>>,
     mut models: Query<(&WeaponModel, &mut Visibility)>,
-
-    aim: Option<Res<crate::weapon::Aim>>,) {
+    aim: Option<Res<crate::weapon::Aim>>,
+    menu: Option<Res<crate::menu::Menu>>,
+    real: Res<Time<Real>>,
+) {
     let dt = time.delta_secs();
-    let (tf, vm) = &mut *vm;
+    let (tf, vm, vis) = &mut *vm;
+    // Menus pause game time, so the presentation runs on real time.
+    let showcase = menu.as_ref().map_or(crate::menu::Showcase::None, |m| m.showcase());
+    let want = if showcase == crate::menu::Showcase::Gun { 1.0 } else { 0.0 };
+    vm.showcase += (want - vm.showcase) * (1.0 - (-8.0 * real.delta_secs()).exp());
+    vm.spin += real.delta_secs();
+    // Out of sight on the title and pause screens, unless the gunsmith is showing it.
+    let in_game = menu.as_ref().is_none_or(|m| m.playing);
+    let want_vis = if in_game || showcase == crate::menu::Showcase::Gun { Visibility::Inherited } else { Visibility::Hidden };
+    if **vis != want_vis {
+        **vis = want_vis;
+    }
 
     for f in fired.read() {
         vm.kick_vel += f.kick * 3.0;
@@ -154,8 +172,11 @@ fn animate(
 
     let ads = aim.as_ref().map_or(0.0, |a| a.level);
     let rest = REST.lerp(AIMED, ads);
-    tf.translation = rest + bob * (1.0 - 0.8 * ads) + lower + Vec3::Z * vm.kick * 0.06;
-    tf.rotation = Quat::from_rotation_x(vm.kick * 0.12);
+    let play_pos = rest + bob * (1.0 - 0.8 * ads) + lower + Vec3::Z * vm.kick * 0.06;
+    let play_rot = Quat::from_rotation_x(vm.kick * 0.12);
+    let show_rot = Quat::from_rotation_y(1.25 + 0.3 * (vm.spin * 0.7).sin()) * Quat::from_rotation_x(0.08);
+    tf.translation = play_pos.lerp(SHOWCASE, vm.showcase);
+    tf.rotation = play_rot.slerp(show_rot, vm.showcase);
 
     for (model, mut vis) in &mut models {
         *vis = if model.0 == arsenal.current { Visibility::Inherited } else { Visibility::Hidden };

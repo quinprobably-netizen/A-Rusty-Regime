@@ -33,6 +33,14 @@ pub struct Wardrobe {
     applied: bool,
 }
 
+impl Wardrobe {
+    /// Wear `outfit` from now on (the menu's wardrobe edits it).
+    pub fn set(&mut self, outfit: OutfitDef) {
+        self.outfit = Some(outfit);
+        self.applied = false;
+    }
+}
+
 #[derive(Component)]
 struct WardrobeText;
 
@@ -80,7 +88,8 @@ pub fn cycle_colour(outfit: &mut OutfitDef, which: usize) {
     *field = PALETTE[at].into();
 }
 
-fn class_outfit(characters: &Characters, class: &Class) -> OutfitDef {
+/// The outfit the player's class wears by default.
+pub fn class_outfit(characters: &Characters, class: &Class) -> OutfitDef {
     characters
         .class
         .get(&class.0)

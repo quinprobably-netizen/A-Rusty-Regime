@@ -905,7 +905,7 @@ fn loot_is_carried_banked_on_extraction_and_lost_on_death() {
 fn save_round_trips_through_a_file() {
     let path = std::env::temp_dir().join(format!("rust-regime-save-{}.toml", std::process::id()));
     let file = SaveFile(Some(path.clone()));
-    let s = Save { banked: 1234, runs: 7, deaths: 2, missions_done: 3, outfit: None };
+    let s = Save { banked: 1234, runs: 7, deaths: 2, missions_done: 3, outfit: None, loadout: None };
     file.write(&s);
     assert_eq!(file.load(), s);
     std::fs::remove_file(&path).ok();
@@ -1480,4 +1480,72 @@ fn a_crosswind_pushes_bullets_sideways() {
     let mut q = app.world_mut().query::<&Bullet>();
     let b = q.single(app.world()).expect("a bullet in the air");
     assert!(b.velocity.x > 0.3, "drifting downwind: {}", b.velocity);
+}
+
+// ------------------------------------------------------------------------------------ menus
+
+/// Press and release a key over two frames, like a real tap.
+fn tap(app: &mut App, key: KeyCode) {
+    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(key);
+    app.update();
+    let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+    keys.release(key);
+    keys.clear();
+    app.update();
+}
+
+#[test]
+fn menus_stop_time_and_esc_pauses() {
+    use crate::menu::{MenuPlugin, Screen};
+    let mut app = build_app(Tuning::default());
+    app.add_plugins((bevy::state::app::StatesPlugin, crate::gunsmith::GunsmithPlugin, MenuPlugin))
+        .init_resource::<ButtonInput<KeyCode>>()
+        .init_resource::<ButtonInput<MouseButton>>();
+    app.finish();
+    app.update();
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Title);
+    run(&mut app, 1.0);
+    assert!(app.world().resource::<Time<Virtual>>().is_paused(), "the title screen holds the clock");
+    let (_, _, state) = player(&mut app);
+    assert_ne!(state, MoveState::Ground, "nothing moved: the player has not even landed");
+
+    // Enter: PLAY is the first row.
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Playing);
+    run(&mut app, 1.0);
+    assert!(!app.world().resource::<Time<Virtual>>().is_paused());
+    assert_eq!(player(&mut app).2, MoveState::Ground, "time runs again and the player lands");
+
+    // Esc pauses, Esc again resumes.
+    tap(&mut app, KeyCode::Escape);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Paused);
+    assert!(app.world().resource::<Time<Virtual>>().is_paused());
+    tap(&mut app, KeyCode::Escape);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Playing);
+}
+
+#[test]
+fn gunsmith_parts_change_the_gun_and_persist() {
+    use crate::gunsmith::{Loadout, PARTS, SLOTS};
+    let t = Tuning::default();
+    let mut loadout = Loadout::default();
+    assert_eq!(loadout.gun(WeaponKind::Rifle, &t.rifle).spread_degrees, t.rifle.spread_degrees, "bare gun is the tuning");
+    loadout.cycle(WeaponKind::Rifle, 1, 2); // suppressor
+    let gun = loadout.gun(WeaponKind::Rifle, &t.rifle);
+    assert!(gun.velocity < t.rifle.velocity && gun.recoil_up < t.rifle.recoil_up);
+    assert_eq!(loadout.gun(WeaponKind::Pistol, &t.pistol).velocity, t.pistol.velocity, "other guns untouched");
+    loadout.cycle_tune(WeaponKind::Rifle, 1, 9);
+    assert_eq!(loadout.tuning(WeaponKind::Rifle, 1), 4, "tuning clamps");
+    let tuned = loadout.gun(WeaponKind::Rifle, &t.rifle);
+    assert!(tuned.recoil_up < gun.recoil_up && tuned.velocity < gun.velocity, "muzzle tuned toward control trades velocity");
+    loadout.cycle(WeaponKind::Rifle, 1, 1);
+    assert_eq!(loadout.part(WeaponKind::Rifle, 1), 0, "wraps back to bare");
+    assert_eq!(loadout.gun(WeaponKind::Rifle, &t.rifle).velocity, t.rifle.velocity, "a bare slot ignores its tuning");
+    for slot in 0..SLOTS.len() {
+        assert_eq!(PARTS[slot].len(), 3);
+    }
+    let save = Save { loadout: Some(loadout), ..default() };
+    let text = toml::to_string(&save).unwrap();
+    let back: Save = toml::from_str(&text).unwrap();
+    assert_eq!(back.loadout, Some(loadout));
 }

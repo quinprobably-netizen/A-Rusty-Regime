@@ -99,6 +99,8 @@ pub struct Save {
     pub missions_done: usize,
     /// Clothes picked at the camp wardrobe, over the class default.
     pub outfit: Option<crate::character::OutfitDef>,
+    /// Gunsmith parts fitted to each weapon.
+    pub loadout: Option<crate::gunsmith::Loadout>,
 }
 
 /// What you carry right now.

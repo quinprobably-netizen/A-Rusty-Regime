@@ -25,6 +25,8 @@ mod veg;
 mod sound;
 mod roads;
 mod world;
+mod menu;
+mod gunsmith;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -62,7 +64,7 @@ fn main() {
             mission::MissionPlugin,
             sound::SoundPlugin,
         ))
-        .add_plugins((abilities::AbilitiesPlugin, wardrobe::WardrobePlugin))
+        .add_plugins((abilities::AbilitiesPlugin, wardrobe::WardrobePlugin, gunsmith::GunsmithPlugin, menu::MenuPlugin))
         .add_plugins(level_plugin())
         .add_systems(Update, dev_screenshot.run_if(|| std::env::var_os("RUST_REGIME_SCREENSHOT").is_some()))
         .run();

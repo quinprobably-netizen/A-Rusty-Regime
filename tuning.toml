@@ -77,7 +77,7 @@ stick_look_curve = 2.0      # higher = finer aim near the center of the stick
 invert_y = false
 fov_degrees = 75
 ads_fov = 0.7               # field of view multiplier aiming down sights (right mouse)
-ads_time = 0.15.0          # vertical FOV (about 106 horizontal at 16:9)
+ads_time = 0.15             # seconds to settle into the aimed view
 wallrun_tilt_degrees = 12.0
 rumble = true
 

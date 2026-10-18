@@ -323,10 +323,11 @@ struct ClockText;
 fn spawn_hud(mut commands: Commands) {
     commands.spawn((
         ClockText,
+        crate::hud::HudRoot,
         Text::new(""),
-        TextFont { font_size: FontSize::Px(16.0), ..default() },
-        TextColor(Color::srgba(1.0, 1.0, 1.0, 0.7)),
-        Node { position_type: PositionType::Absolute, top: Val::Px(58.0), right: Val::Px(24.0), ..default() },
+        TextFont { font_size: FontSize::Px(14.0), ..default() },
+        TextColor(Color::srgba(1.0, 1.0, 1.0, 0.55)),
+        Node { position_type: PositionType::Absolute, top: Val::Px(54.0), right: Val::Px(24.0), ..default() },
     ));
 }
 

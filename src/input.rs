@@ -94,7 +94,13 @@ fn gather(
     mut input: ResMut<PlayerInput>,
     mut view: ResMut<ViewAngles>,
     aim: Option<Res<crate::weapon::Aim>>,
+    screen: Option<Res<State<crate::menu::Screen>>>,
 ) {
+    // A menu is up: nothing reaches the player, and a held key is not a latched press later.
+    if screen.is_some_and(|s| *s.get() != crate::menu::Screen::Playing) {
+        *input = PlayerInput::default();
+        return;
+    }
     let t = &*tuning;
     let dt = time.delta_secs();
 
@@ -204,15 +210,13 @@ fn gather(
 fn grab_cursor(
     mut cursor: Single<&mut CursorOptions>,
     mouse: Res<ButtonInput<MouseButton>>,
-    keys: Res<ButtonInput<KeyCode>>,
+    screen: Option<Res<State<crate::menu::Screen>>>,
 ) {
-    if mouse.just_pressed(MouseButton::Left) {
+    // Esc is the menu's (see `menu`), which releases the cursor itself.
+    let playing = screen.is_none_or(|s| *s.get() == crate::menu::Screen::Playing);
+    if playing && mouse.just_pressed(MouseButton::Left) {
         cursor.grab_mode = CursorGrabMode::Locked;
         cursor.visible = false;
-    }
-    if keys.just_pressed(KeyCode::Escape) {
-        cursor.grab_mode = CursorGrabMode::None;
-        cursor.visible = true;
     }
 }
 

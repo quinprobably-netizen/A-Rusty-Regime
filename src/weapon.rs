@@ -16,6 +16,7 @@ impl Plugin for WeaponPlugin {
             .add_message::<Damage>()
             .add_message::<WeaponFired>()
             .init_resource::<Arsenal>()
+            .init_resource::<crate::gunsmith::Loadout>()
             .add_systems(Startup, load_assets)
             .init_resource::<Recoil>()
             .init_resource::<Aim>()
@@ -43,13 +44,9 @@ impl WeaponKind {
             WeaponKind::Pistol => "PISTOL",
         }
     }
-    fn gun(self, t: &Tuning) -> Option<&Gun> {
-        match self {
-            WeaponKind::RocketLauncher => None,
-            WeaponKind::Rifle => Some(&t.rifle),
-            WeaponKind::Shotgun => Some(&t.shotgun),
-            WeaponKind::Pistol => Some(&t.pistol),
-        }
+    /// The gun's tuning with the gunsmith's parts fitted; `None` for the rocket launcher.
+    fn gun(self, t: &Tuning, loadout: &crate::gunsmith::Loadout) -> Option<Gun> {
+        t.gun(self).map(|g| loadout.gun(self, g))
     }
 }
 
@@ -259,6 +256,7 @@ fn fire(
     view: Res<ViewAngles>,
     fx: Option<Res<FxAssets>>,
     mut arsenal: ResMut<Arsenal>,
+    loadout: Res<crate::gunsmith::Loadout>,
     mut recoil: ResMut<Recoil>,
     aim_level: Res<Aim>,
     player: Single<(Entity, &Player, &Transform)>,
@@ -276,7 +274,7 @@ fn fire(
         return;
     }
     let kind = arsenal.kind();
-    let automatic = kind.gun(t).is_none_or(|g| g.automatic);
+    let automatic = kind.gun(t, &loadout).is_none_or(|g| g.automatic);
     let wants_fire = if automatic { input.fire_held } else { fire_pressed };
     if !wants_fire || arsenal.cooldown > 0.0 {
         return;
@@ -290,7 +288,7 @@ fn fire(
     // Where tracers start: roughly the viewmodel's muzzle.
     let muzzle = eye + aim * Vec3::new(0.2, -0.15, -0.6);
 
-    let Some(gun) = kind.gun(t) else {
+    let Some(gun) = kind.gun(t, &loadout) else {
         arsenal.cooldown = t.rocket_cooldown;
         let start = eye + forward * 0.3;
         let mut e = commands.spawn((
@@ -323,7 +321,7 @@ fn fire(
         let angle = next_unit(&mut seed) * std::f32::consts::TAU;
         let r = next_unit(&mut seed).sqrt() * spread;
         let dir = aim * Quat::from_euler(EulerRot::YXZ, r * angle.cos(), r * angle.sin(), 0.0) * Vec3::NEG_Z;
-        spawn_bullet(&mut commands, fx.as_deref(), muzzle, dir.normalize(), gun, player_entity);
+        spawn_bullet(&mut commands, fx.as_deref(), muzzle, dir.normalize(), &gun, player_entity);
     }
     fired.write(WeaponFired { kick: gun.kick });
     rumble.write(Rumble { strength: (0.15 * gun.kick).min(0.6), seconds: 0.08 });

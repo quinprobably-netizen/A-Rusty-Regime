@@ -553,12 +553,30 @@ impl Plugin for TuningPlugin {
 }
 
 pub fn load() -> Tuning {
-    match std::fs::read_to_string(PATH) {
+    let mut tuning = match std::fs::read_to_string(PATH) {
         Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
             warn!("{PATH} is invalid, using defaults: {e}");
             Tuning::default()
         }),
         Err(_) => Tuning::default(),
+    };
+    // What the settings menu saved wins over the file, so F5 keeps the player's choices.
+    if let Some(settings) = crate::menu::Settings::load() {
+        settings.apply(&mut tuning);
+    }
+    tuning
+}
+
+impl Tuning {
+    /// The hitscan gun's table, or `None` for the rocket launcher.
+    pub fn gun(&self, kind: crate::weapon::WeaponKind) -> Option<&Gun> {
+        use crate::weapon::WeaponKind::*;
+        match kind {
+            RocketLauncher => None,
+            Rifle => Some(&self.rifle),
+            Shotgun => Some(&self.shotgun),
+            Pistol => Some(&self.pistol),
+        }
     }
 }
 
