@@ -818,13 +818,13 @@ fn rebuild(
         });
 
         // Rows.
-        let top = if menu.panel == Panel::Main && screen == Screen::Title { 190.0 } else { 150.0 };
+        let top = if menu.panel == Panel::Main && screen == Screen::Title { 190.0 } else { 140.0 };
         let width = match menu.panel {
             Panel::Main => 360.0,
             Panel::Wardrobe => 620.0,
             _ => 560.0,
         };
-        p.spawn(Node { position_type: PositionType::Absolute, left: Val::Px(LEFT), top: Val::Px(top), bottom: Val::Px(64.0), width: Val::Px(width), flex_direction: FlexDirection::Column, row_gap: Val::Px(4.0), overflow: Overflow::clip_y(), ..default() }).with_children(|list| {
+        p.spawn(Node { position_type: PositionType::Absolute, left: Val::Px(LEFT), top: Val::Px(top), bottom: Val::Px(44.0), width: Val::Px(width), flex_direction: FlexDirection::Column, row_gap: Val::Px(2.0), overflow: Overflow::clip_y(), ..default() }).with_children(|list| {
             if menu.panel == Panel::Wardrobe {
                 list.spawn(Node { display: Display::Grid, grid_template_columns: RepeatedGridTrack::px(3, 196.0), row_gap: Val::Px(8.0), column_gap: Val::Px(8.0), ..default() }).with_children(|grid| {
                     let mut index = 0;
@@ -843,12 +843,12 @@ fn rebuild(
             for row in &rows {
                 match *row {
                     Row::Section(name) => {
-                        list.spawn((text(name, 14.0, AMBER), Node { margin: UiRect::top(Val::Px(14.0)), ..default() }));
+                        list.spawn((text(name, 13.0, AMBER), Node { margin: UiRect::top(Val::Px(8.0)), ..default() }));
                     }
                     Row::Action(label, _) => {
                         let big = menu.panel == Panel::Main;
                         if !big {
-                            list.spawn(Node { height: Val::Px(12.0), ..default() });
+                            list.spawn(Node { height: Val::Px(6.0), ..default() });
                         }
                         action_row(list, label, index, index == menu.cursor, if big { 40.0 } else { 22.0 });
                         index += 1;
@@ -880,7 +880,7 @@ fn rebuild(
                 }
             }
             if menu.panel == Panel::Settings {
-                list.spawn((text("* takes effect after a restart.  Saved to settings.toml.", 13.0, DIM), Node { margin: UiRect::top(Val::Px(10.0)), ..default() }));
+                list.spawn((text("* takes effect after a restart.  Saved to settings.toml.", 12.0, DIM), Node { margin: UiRect::top(Val::Px(4.0)), ..default() }));
             }
             if menu.panel == Panel::Controls {
                 let lines: Vec<String> = CONTROLS.iter().map(|(a, k, g)| format!("{a:<32}{k:<20}{g}")).collect();
@@ -890,7 +890,7 @@ fn rebuild(
 
         // Gunsmith stat bars, bottom right.
         if let (Panel::Gunsmith, Some(base), Some(fitted)) = (menu.panel, &base, &fitted) {
-            p.spawn((Node { width: Val::Px(360.0), padding: UiRect::all(Val::Px(16.0)), row_gap: Val::Px(8.0), border: UiRect::all(Val::Px(1.0)), ..abs(None, Some(LEFT), None, Some(96.0)) }, BackgroundColor(PANEL), BorderColor::all(FAINT))).with_children(|s| {
+            p.spawn((Node { width: Val::Px(360.0), padding: UiRect::all(Val::Px(16.0)), row_gap: Val::Px(8.0), border: UiRect::all(Val::Px(1.0)), ..abs(None, Some(LEFT), Some(56.0), None) }, BackgroundColor(PANEL), BorderColor::all(FAINT))).with_children(|s| {
                 s.spawn(text(format!("{}  STATS", kind.name()), 14.0, AMBER));
                 for ((name, b), (_, f)) in gunsmith::stats(base).into_iter().zip(gunsmith::stats(fitted)) {
                     s.spawn(Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: Val::Px(12.0), ..default() }).with_children(|r| {
@@ -906,7 +906,6 @@ fn rebuild(
         }
 
         // Version, then the hint bar along the bottom.
-        p.spawn((abs(Some(LEFT), None, None, Some(52.0)), text("v0.1  ISLAND HUB", 12.0, DIM)));
         p.spawn((Node { position_type: PositionType::Absolute, left: Val::Px(0.0), right: Val::Px(0.0), bottom: Val::Px(0.0), height: Val::Px(40.0), padding: UiRect::left(Val::Px(LEFT)), flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: Val::Px(28.0), ..default() }, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)))).with_children(|bar| {
             let hints: &[(&str, &str)] = match menu.panel {
                 Panel::Main if screen == Screen::Paused => &[("ENTER / A", "SELECT"), ("ESC / B", "RESUME")],
@@ -922,6 +921,7 @@ fn rebuild(
                     c.spawn(text(*what, 13.0, DIM));
                 });
             }
+            bar.spawn((text("v0.1  ISLAND HUB", 12.0, DIM), Node { margin: UiRect::left(Val::Auto).with_right(Val::Px(LEFT)), ..default() }));
         });
     });
 }
@@ -942,13 +942,13 @@ fn value_row(p: &mut ChildSpawnerCommands, label: &str, value: &str, fill: Optio
     p.spawn((
         Button,
         RowId(index),
-        Node { flex_direction: FlexDirection::Column, padding: UiRect::axes(Val::Px(14.0), Val::Px(5.0)), border: UiRect::left(Val::Px(4.0)), ..default() },
+        Node { flex_direction: FlexDirection::Column, padding: UiRect::axes(Val::Px(14.0), Val::Px(2.0)), border: UiRect::left(Val::Px(4.0)), ..default() },
         BorderColor::all(if selected { AMBER } else { Color::NONE }),
         BackgroundColor(if selected { Color::srgba(1.0, 1.0, 1.0, 0.06) } else { Color::NONE }),
     ))
     .with_children(|row| {
         row.spawn(Node { flex_direction: FlexDirection::Row, justify_content: JustifyContent::SpaceBetween, align_items: AlignItems::Center, width: Val::Percent(100.0), ..default() }).with_children(|r| {
-            r.spawn(text(label, 19.0, if selected { WHITE } else { DIM }));
+            r.spawn(text(label, 17.0, if selected { WHITE } else { DIM }));
             r.spawn(Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: Val::Px(10.0), ..default() }).with_children(|v| {
                 arrow(v, index, -1, selected);
                 if let Some(fill) = fill {

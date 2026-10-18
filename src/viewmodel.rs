@@ -40,7 +40,7 @@ const REST: Vec3 = Vec3::new(0.3, -0.27, -0.55);
 /// Where the gun sits when aiming down sights: centered and raised to the eye.
 const AIMED: Vec3 = Vec3::new(0.0, -0.16, -0.42);
 /// Where the gun sits in the gunsmith: right of centre, turned to show its side.
-const SHOWCASE: Vec3 = Vec3::new(0.32, -0.08, -0.62);
+const SHOWCASE: Vec3 = Vec3::new(0.22, -0.02, -0.95);
 
 fn spawn(
     mut commands: Commands,
@@ -174,7 +174,7 @@ fn animate(
     let rest = REST.lerp(AIMED, ads);
     let play_pos = rest + bob * (1.0 - 0.8 * ads) + lower + Vec3::Z * vm.kick * 0.06;
     let play_rot = Quat::from_rotation_x(vm.kick * 0.12);
-    let show_rot = Quat::from_rotation_y(1.1 + 0.25 * (vm.spin * 0.7).sin()) * Quat::from_rotation_x(0.1);
+    let show_rot = Quat::from_rotation_y(1.25 + 0.3 * (vm.spin * 0.7).sin()) * Quat::from_rotation_x(0.08);
     tf.translation = play_pos.lerp(SHOWCASE, vm.showcase);
     tf.rotation = play_rot.slerp(show_rot, vm.showcase);
 
