@@ -12,7 +12,7 @@ built in code with headless Blender, free and reproducible.
 |---|---|---|
 | Regime | Hyper-militaristic death cult that worships the Algorithm | Bone-white polymer plate etched with black code "scripture", uplink antennas worn like halos, glowing sensor slits. Grunts are faceless; elites show augmented faces. |
 | Scrappers | Luddite tinkerers, repulsed by the Regime's ideas | Analog and handmade only: leather, brass gauges, riveted steel frames, hand-painted symbols. No screens, no chips, nothing glowing. |
-| Deserters | Ex-cult parkour pilots who broke away (the player's side) | Regime plate with the uplinks torn out and the code scratched off and repainted, faces showing again, climbing and parkour gear. |
+| Deserters | Ex-cult parkour pilots who broke away (the player's side) | Regime plate with the uplinks torn out and the code scratched off and repainted, faces showing again, climbing and parkour gear. Palette (Q's ask): Anthropic-style warm colours, near-black slate `#141413` primary, clay orange `#D97757` accent, cream `#F0EEE6` and kraft `#D4A27F` secondaries. Colours only, no logos. |
 | PMC | Corporate contractors who sell to every side | Slick branded tactical kit: plate carriers, sponsor patches, corporate logo, headsets, clean colour blocking. |
 
 ## Characters
