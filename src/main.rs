@@ -1,15 +1,30 @@
+mod abilities;
 mod body;
+mod character;
 mod camera;
 mod controller;
+mod health;
 mod hud;
 mod input;
+mod island;
 mod level;
 mod targets;
+mod terrain;
 mod tuning;
 mod viewmodel;
+mod wardrobe;
 mod weapon;
 #[cfg(test)]
 mod tests;
+mod vehicle;
+mod loot;
+mod mission;
+mod bots;
+mod look;
+mod veg;
+mod sound;
+mod roads;
+mod world;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -35,15 +50,36 @@ fn main() {
             input::InputPlugin,
             controller::ControllerPlugin,
             camera::CameraPlugin,
+            character::CharacterPlugin,
             body::BodyPlugin,
             weapon::WeaponPlugin,
+            health::HealthPlugin,
             viewmodel::ViewModelPlugin,
             targets::TargetsPlugin,
             hud::HudPlugin,
-            level::LevelPlugin,
+            vehicle::VehiclePlugin,
+            loot::LootPlugin,
+            mission::MissionPlugin,
+            sound::SoundPlugin,
         ))
+        .add_plugins((abilities::AbilitiesPlugin, wardrobe::WardrobePlugin))
+        .add_plugins(level_plugin())
         .add_systems(Update, dev_screenshot.run_if(|| std::env::var_os("RUST_REGIME_SCREENSHOT").is_some()))
         .run();
+}
+
+/// `RUST_REGIME_LEVEL=arena` runs the old walled arena; anything else is the island.
+fn level_plugin() -> bevy::app::PluginGroupBuilder {
+    use bevy::app::PluginGroup;
+    struct Level(bool);
+    impl PluginGroup for Level {
+        fn build(self) -> bevy::app::PluginGroupBuilder {
+            let group = bevy::app::PluginGroupBuilder::start::<Self>();
+            let group = if self.0 { group.add(level::LevelPlugin) } else { group.add(terrain::TerrainPlugin).add(look::LookPlugin).add(veg::VegPlugin).add(world::WorldPlugin) };
+            if std::env::var("RUST_REGIME_MODE").is_ok_and(|m| m == "6v6") { group.add(bots::MatchPlugin) } else { group }
+        }
+    }
+    Level(std::env::var("RUST_REGIME_LEVEL").is_ok_and(|v| v == "arena")).build()
 }
 
 /// Dev aid: `RUST_REGIME_SCREENSHOT=shot.png` saves a frame after a few
@@ -55,9 +91,16 @@ fn dev_screenshot(
     mut arsenal: ResMut<weapon::Arsenal>,
     mut view: ResMut<input::ViewAngles>,
     mut player: Single<(&mut controller::Player, &mut Transform)>,
+    heightmap: Option<Res<terrain::Heightmap>>,
+    vehicles: Query<(&Transform, &vehicle::Vehicle, Option<&Children>), Without<controller::Player>>,
 ) {
     use bevy::render::view::screenshot::{Screenshot, save_to_disk};
     *frames += 1;
+    if *frames == 150 {
+        for (tf, v, children) in &vehicles {
+            info!("{} at {} up {} grounded {} parts {}", v.spec.name, tf.translation, tf.rotation * Vec3::Y, v.grounded_wheels(), children.map_or(0, |c| c.len()));
+        }
+    }
     // Optional "slot,yaw_degrees,x,z,pitch_degrees" to pick a weapon, spot and look direction.
     if *frames == 1 && let Ok(spec) = std::env::var("RUST_REGIME_SCREENSHOT_VIEW") {
         let mut parts = spec.split(',').filter_map(|v| v.trim().parse::<f32>().ok());
@@ -70,7 +113,8 @@ fn dev_screenshot(
         }
         if let (Some(x), Some(z)) = (parts.next(), parts.next()) {
             let (p, tf) = &mut *player;
-            tf.translation = Vec3::new(x, 1.0, z);
+            let y = heightmap.as_ref().map_or(0.0, |hm| hm.height_at(x, z)) + 1.0;
+            tf.translation = Vec3::new(x, y, z);
             p.prev_pos = tf.translation;
         }
         if let Some(pitch) = parts.next() {

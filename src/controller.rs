@@ -13,6 +13,20 @@ use crate::tuning::Tuning;
 
 pub const SKIN: f32 = 0.015;
 pub const SPAWN: Vec3 = Vec3::new(0.0, 1.0, 10.0);
+
+/// Where the player starts and the height below which they are sent back
+/// there. The arena uses the defaults; the island inserts its own.
+#[derive(Resource, Clone, Copy, Debug)]
+pub struct WorldBounds {
+    pub spawn: Vec3,
+    pub kill_y: f32,
+}
+
+impl Default for WorldBounds {
+    fn default() -> Self {
+        Self { spawn: SPAWN, kill_y: -30.0 }
+    }
+}
 const GROUND_PROBE: f32 = 0.06;
 const MAX_WALL_NORMAL_Y: f32 = 0.3;
 
@@ -47,6 +61,8 @@ pub struct Player {
     pub eye_shift: f32,
     /// While positive the player can't be grounded (keeps rocket jumps airborne).
     pub knockback_lock: f32,
+    /// Air jumps left before touching ground, a wall, a ledge or a grapple anchor again.
+    pub air_jumps_left: u32,
     jump_buffer: f32,
     slide_cooldown: f32,
     wallrun_time: f32,
@@ -83,19 +99,19 @@ pub struct ControllerPlugin;
 
 impl Plugin for ControllerPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_player).add_systems(
+        app.init_resource::<WorldBounds>().add_systems(Startup, spawn_player).add_systems(
             FixedUpdate,
             (player_tick, sync_hull).chain().in_set(ControllerSet),
         );
     }
 }
 
-fn spawn_player(mut commands: Commands, tuning: Res<Tuning>) {
+fn spawn_player(mut commands: Commands, tuning: Res<Tuning>, bounds: Res<WorldBounds>) {
     commands.spawn((
         Name::new("Player"),
-        Player { prev_pos: SPAWN, ..default() },
+        Player { prev_pos: bounds.spawn, ..default() },
         HullCrouched(false),
-        Transform::from_translation(SPAWN),
+        Transform::from_translation(bounds.spawn),
         RigidBody::Kinematic,
         hull(&tuning, false),
     ));
@@ -275,12 +291,13 @@ impl Space<'_, '_, '_> {
 // The tick
 
 fn player_tick(
+    bounds: Res<WorldBounds>,
     time: Res<Time>,
     tuning: Res<Tuning>,
     mut input: ResMut<PlayerInput>,
     view: Res<ViewAngles>,
     spatial: SpatialQuery,
-    mut players: Query<(Entity, &mut Player, &mut Transform)>,
+    mut players: Query<(Entity, &mut Player, &mut Transform, Has<crate::vehicle::Driving>)>,
     mut bodies: Query<(&RigidBody, &mut LinearVelocity, &ComputedMass), Without<Player>>,
 ) {
     let t = &*tuning;
@@ -291,14 +308,17 @@ fn player_tick(
     let jump_pressed = std::mem::take(&mut input.jump_pressed);
     let reset = std::mem::take(&mut input.reset_pressed);
 
-    for (entity, mut p, mut tf) in &mut players {
+    for (entity, mut p, mut tf, driving) in &mut players {
+        if driving {
+            continue;
+        }
         let space = Space { query: &spatial, filter: SpatialQueryFilter::from_excluded_entities([entity]) };
         let mut pos = tf.translation;
         p.prev_pos = pos;
 
-        if reset || pos.y < -30.0 {
-            *p = Player { prev_pos: SPAWN, crouched: p.crouched, ..default() };
-            tf.translation = SPAWN;
+        if reset || pos.y < bounds.kill_y {
+            *p = Player { prev_pos: bounds.spawn, crouched: p.crouched, ..default() };
+            tf.translation = bounds.spawn;
             continue;
         }
 
@@ -335,6 +355,7 @@ fn player_tick(
                     p.state = MoveState::Ground;
                     p.last_wall = None;
                 }
+                p.air_jumps_left = t.air_jumps;
                 pos.y -= h.distance - SKIN;
             }
             None => {
@@ -360,6 +381,8 @@ fn player_tick(
                 };
                 if let Some(n) = wall.filter(|n| p.wall_cooldown <= 0.0 && p.last_wall.is_none_or(|l| l.dot(*n) < 0.7)) {
                     wall_jump(&mut p, n, t);
+                } else if p.air_jumps_left > 0 && p.state == MoveState::Air {
+                    air_jump(&mut p, wish_dir, t);
                 }
             }
         }
@@ -412,6 +435,7 @@ fn player_tick(
         } else {
             update_wallrun(&space, &mut p, &shape, pos, &mut vel, input.movement, input.crouch_held, t);
             if p.state == MoveState::WallRun {
+                p.air_jumps_left = t.air_jumps;
                 p.wallrun_time += dt;
                 let n = p.wall_normal;
                 vel = clip_velocity(vel, n);
@@ -425,6 +449,7 @@ fn player_tick(
                 if input.movement.y > 0.5 {
                     if let Some(m) = try_mantle(&space, &p, &shape, pos, forward, vel, t) {
                         p.mantle = Some(m);
+                        p.air_jumps_left = t.air_jumps;
                         p.state = MoveState::Mantle;
                         p.velocity = Vec3::ZERO;
                         tf.translation = pos;
@@ -469,6 +494,25 @@ fn jump(p: &mut Player, t: &Tuning) {
     }
     p.velocity.y = p.velocity.y.max(0.0) + t.jump_speed;
     p.state = MoveState::Air;
+}
+
+/// Double jump: a fresh hop in the air that can bend momentum toward where you want to go.
+pub fn air_jump_velocity(v: Vec3, wish_dir: Vec3, t: &Tuning) -> Vec3 {
+    let flat = v.with_y(0.0);
+    let speed = flat.length();
+    let flat = if wish_dir.length_squared() > 0.0 && speed > 0.01 {
+        // Turn the direction, keep the speed.
+        (flat / speed).lerp(wish_dir, t.air_jump_redirect).normalize_or_zero() * speed
+    } else {
+        flat
+    };
+    flat.with_y(v.y.max(0.0) + t.air_jump_speed)
+}
+
+fn air_jump(p: &mut Player, wish_dir: Vec3, t: &Tuning) {
+    p.jump_buffer = 0.0;
+    p.air_jumps_left -= 1;
+    p.velocity = air_jump_velocity(p.velocity, wish_dir, t);
 }
 
 fn wall_jump(p: &mut Player, n: Vec3, t: &Tuning) {

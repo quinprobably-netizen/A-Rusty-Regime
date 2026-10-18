@@ -2,7 +2,9 @@ use bevy::prelude::*;
 
 use crate::controller::{MoveState, Player};
 use crate::input::ViewAngles;
+use crate::terrain::Heightmap;
 use crate::tuning::Tuning;
+use crate::vehicle::{Driving, Vehicle};
 
 /// First-person camera. Interpolates between fixed ticks so 66 Hz physics
 /// looks smooth at any frame rate, and smooths crouch height and wall-run tilt.
@@ -38,10 +40,13 @@ fn follow(
     fixed: Res<Time<Fixed>>,
     view: Res<ViewAngles>,
     tuning: Res<Tuning>,
-    mut player: Single<(&mut Player, &Transform)>,
-    camera: Single<(&mut Transform, &mut PlayerCamera, &mut Projection), Without<Player>>,
+    mut player: Single<(&mut Player, &Transform, Option<&Driving>)>,
+    camera: Single<(&mut Transform, &mut PlayerCamera, &mut Projection), (Without<Player>, Without<Vehicle>)>,
+    aim: Option<Res<crate::weapon::Aim>>,
+    vehicles: Query<(&Transform, &Vehicle), Without<Player>>,
+    heightmap: Option<Res<Heightmap>>,
 ) {
-    let (p, player_tf) = &mut *player;
+    let (p, player_tf, driving) = &mut *player;
     let (mut tf, mut cam, mut projection) = camera.into_inner();
     let dt = time.delta_secs();
 
@@ -60,7 +65,24 @@ fn follow(
     tf.translation = body + Vec3::Y * (p.eye_offset(&tuning) + cam.eye_correction);
     tf.rotation = Quat::from_euler(EulerRot::YXZ, view.yaw, view.pitch, cam.roll);
 
+    // Driving: orbit behind the vehicle, never below the ground.
+    if let Some(Driving(v)) = driving
+        && let Ok((vtf, vehicle)) = vehicles.get(*v)
+    {
+        let (dist, height) = vehicle.spec.cam;
+        let look = Quat::from_euler(EulerRot::YXZ, view.yaw, view.pitch, 0.0);
+        let target = vtf.translation + Vec3::Y * height * 0.4;
+        let mut eye = target - look * Vec3::NEG_Z * dist + Vec3::Y * height * 0.6;
+        if let Some(hm) = &heightmap {
+            eye.y = eye.y.max(hm.height_at(eye.x, eye.z) + 0.7);
+        }
+        tf.translation = eye;
+        tf.rotation = Transform::from_translation(eye).looking_at(target, Vec3::Y).rotation;
+        cam.roll = 0.0;
+    }
+
     if let Projection::Perspective(persp) = &mut *projection {
-        persp.fov = tuning.fov_degrees.to_radians();
+        let ads = aim.as_ref().map_or(0.0, |a| a.level);
+        persp.fov = tuning.fov_degrees.to_radians() * (1.0 - ads * (1.0 - tuning.ads_fov));
     }
 }

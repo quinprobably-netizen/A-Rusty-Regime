@@ -20,7 +20,7 @@ impl Plugin for ViewModelPlugin {
 }
 
 #[derive(Component, Default)]
-struct ViewModel {
+pub struct ViewModel {
     kick: f32,
     kick_vel: f32,
     bob: f32,
@@ -34,6 +34,8 @@ struct WeaponModel(usize);
 pub struct Tint(pub Color);
 
 const REST: Vec3 = Vec3::new(0.3, -0.27, -0.55);
+/// Where the gun sits when aiming down sights: centered and raised to the eye.
+const AIMED: Vec3 = Vec3::new(0.0, -0.16, -0.42);
 
 fn spawn(
     mut commands: Commands,
@@ -128,7 +130,8 @@ fn animate(
     player: Single<&Player>,
     mut vm: Single<(&mut Transform, &mut ViewModel)>,
     mut models: Query<(&WeaponModel, &mut Visibility)>,
-) {
+
+    aim: Option<Res<crate::weapon::Aim>>,) {
     let dt = time.delta_secs();
     let (tf, vm) = &mut *vm;
 
@@ -149,7 +152,9 @@ fn animate(
 
     let lower = Vec3::NEG_Y * 0.35 * (arsenal.switch_time / SWITCH_TIME).clamp(0.0, 1.0);
 
-    tf.translation = REST + bob + lower + Vec3::Z * vm.kick * 0.06;
+    let ads = aim.as_ref().map_or(0.0, |a| a.level);
+    let rest = REST.lerp(AIMED, ads);
+    tf.translation = rest + bob * (1.0 - 0.8 * ads) + lower + Vec3::Z * vm.kick * 0.06;
     tf.rotation = Quat::from_rotation_x(vm.kick * 0.12);
 
     for (model, mut vis) in &mut models {
