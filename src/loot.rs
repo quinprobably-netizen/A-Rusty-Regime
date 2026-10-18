@@ -97,6 +97,8 @@ pub struct Save {
     pub runs: u32,
     pub deaths: u32,
     pub missions_done: usize,
+    /// Clothes picked at the camp wardrobe, over the class default.
+    pub outfit: Option<crate::character::OutfitDef>,
 }
 
 /// What you carry right now.

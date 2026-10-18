@@ -40,7 +40,8 @@ fn build_app(tuning: Tuning) -> App {
         .insert_resource(SaveFile(None))
         .init_resource::<PlayerInput>()
         .init_resource::<ViewAngles>()
-        .add_plugins((ControllerPlugin, WeaponPlugin, TargetsPlugin, HealthPlugin, VehiclePlugin, LootPlugin, MissionPlugin));
+        .insert_resource(crate::character::Characters::load())
+        .add_plugins((ControllerPlugin, WeaponPlugin, TargetsPlugin, HealthPlugin, VehiclePlugin, LootPlugin, MissionPlugin, crate::abilities::AbilitiesPlugin));
     app.world_mut().spawn((RigidBody::Static, Collider::cuboid(200.0, 1.0, 200.0), Transform::from_xyz(0.0, -0.5, 0.0)));
     app
 }
@@ -403,15 +404,18 @@ fn rocket_damages_targets() {
 fn body_pose_follows_movement() {
     use crate::body::{Pose, playback_rate, pose_for};
     let max = 7.5;
-    assert_eq!(pose_for(MoveState::Ground, false, 0.0, 0.0, max), Pose::Idle);
-    assert_eq!(pose_for(MoveState::Ground, false, 2.0, 0.0, max), Pose::Walk);
-    assert_eq!(pose_for(MoveState::Ground, false, 7.0, 0.0, max), Pose::Sprint);
-    assert_eq!(pose_for(MoveState::Ground, true, 2.0, 0.0, max), Pose::Crouch);
-    assert_eq!(pose_for(MoveState::Slide, true, 8.0, 0.0, max), Pose::Crouch);
-    assert_eq!(pose_for(MoveState::Air, false, 5.0, 4.0, max), Pose::Jump);
-    assert_eq!(pose_for(MoveState::Air, false, 5.0, -4.0, max), Pose::Fall);
-    assert_eq!(pose_for(MoveState::WallRun, false, 8.0, 1.0, max), Pose::Sprint);
-    assert_eq!(pose_for(MoveState::Mantle, false, 0.0, 0.0, max), Pose::Jump);
+    assert_eq!(pose_for(MoveState::Ground, false, 0.0, 0.0, max, 0.0, false), Pose::Idle);
+    assert_eq!(pose_for(MoveState::Ground, false, 2.0, 0.0, max, 0.0, false), Pose::Walk);
+    assert_eq!(pose_for(MoveState::Ground, false, 5.0, 0.0, max, 0.0, false), Pose::Run);
+    assert_eq!(pose_for(MoveState::Ground, false, 7.0, 0.0, max, 0.0, false), Pose::Sprint);
+    assert_eq!(pose_for(MoveState::Ground, true, 2.0, 0.0, max, 0.0, false), Pose::Crouch);
+    assert_eq!(pose_for(MoveState::Slide, true, 8.0, 0.0, max, 0.0, false), Pose::Slide);
+    assert_eq!(pose_for(MoveState::Air, false, 5.0, 4.0, max, 0.0, false), Pose::Jump);
+    assert_eq!(pose_for(MoveState::Air, false, 5.0, -4.0, max, 0.0, false), Pose::Fall);
+    assert_eq!(pose_for(MoveState::Air, false, 5.0, -4.0, max, 0.0, true), Pose::Grapple);
+    assert_eq!(pose_for(MoveState::WallRun, false, 8.0, 1.0, max, 1.0, false), Pose::WallRunL);
+    assert_eq!(pose_for(MoveState::WallRun, false, 8.0, 1.0, max, -1.0, false), Pose::WallRunR);
+    assert_eq!(pose_for(MoveState::Mantle, false, 0.0, 0.0, max, 0.0, false), Pose::Mantle);
     // Feet speed up with the run and never stall.
     assert!(playback_rate(Pose::Sprint, 7.5, max) > playback_rate(Pose::Sprint, 5.5, max));
     assert!(playback_rate(Pose::Walk, 0.3, max) >= 0.7);
@@ -901,7 +905,7 @@ fn loot_is_carried_banked_on_extraction_and_lost_on_death() {
 fn save_round_trips_through_a_file() {
     let path = std::env::temp_dir().join(format!("rust-regime-save-{}.toml", std::process::id()));
     let file = SaveFile(Some(path.clone()));
-    let s = Save { banked: 1234, runs: 7, deaths: 2, missions_done: 3 };
+    let s = Save { banked: 1234, runs: 7, deaths: 2, missions_done: 3, outfit: None };
     file.write(&s);
     assert_eq!(file.load(), s);
     std::fs::remove_file(&path).ok();
@@ -1030,6 +1034,97 @@ fn match_mode_spawns_two_teams_and_scores() {
     app.world_mut().resource_mut::<Messages<Damage>>().write(Damage { entity: red_bot, amount: 1000.0, impulse: Vec3::ZERO });
     run(&mut app, 0.1);
     assert_eq!(app.world().resource::<crate::bots::MatchState>().score, [1, 0]);
+}
+
+// ---------------------------------------------------------------------------
+// Double jump and grapple
+
+#[test]
+fn double_jump_once_per_flight() {
+    let mut app = make_app(Tuning::default());
+    set_player(&mut app, Vec3::new(0.0, 0.95, 0.0), Vec3::ZERO);
+    run(&mut app, 0.3); // land
+    input(&mut app).jump_pressed = true;
+    run(&mut app, 0.25);
+    let (_, v1, state) = player(&mut app);
+    assert_eq!(state, MoveState::Air);
+    // Second press in the air: a fresh hop.
+    input(&mut app).jump_pressed = true;
+    app.update();
+    let (_, v2, _) = player(&mut app);
+    assert!(v2.y > v1.y + 2.0, "air jump adds height {v1} -> {v2}");
+    // Third press does nothing until we land again.
+    run(&mut app, 0.2);
+    let (_, before, _) = player(&mut app);
+    input(&mut app).jump_pressed = true;
+    app.update();
+    let (_, after, _) = player(&mut app);
+    assert!(after.y < before.y, "no third jump {before} -> {after}");
+    run(&mut app, 1.5);
+    assert_eq!(player(&mut app).2, MoveState::Ground);
+    input(&mut app).jump_pressed = true;
+    run(&mut app, 0.2);
+    input(&mut app).jump_pressed = true;
+    app.update();
+    assert!(player(&mut app).1.y > 5.0, "air jump is back after landing");
+}
+
+#[test]
+fn air_jump_redirects_momentum() {
+    let t = Tuning::default();
+    let v = controller::air_jump_velocity(Vec3::new(0.0, -2.0, -8.0), Vec3::X, &t);
+    assert!((v.y - t.air_jump_speed).abs() < 1e-5);
+    assert!(v.x > 4.0 && v.z > -5.0, "bent toward +x: {v}");
+    assert!((v.xz().length() - 8.0).abs() < 1e-4, "speed kept: {v}");
+}
+
+#[test]
+fn grapple_pulls_toward_the_anchor_and_lets_go() {
+    use crate::abilities::GrappleState;
+    let mut app = make_app(Tuning::default());
+    // A tall wall 15 m ahead; look up at it so the pull lifts us off the ground.
+    wall(&mut app, Vec3::new(10.0, 20.0, 1.0), Vec3::new(0.0, 10.0, -15.0));
+    set_player(&mut app, Vec3::new(0.0, 0.95, 0.0), Vec3::ZERO);
+    app.world_mut().resource_mut::<ViewAngles>().pitch = 0.45;
+    run(&mut app, 0.3);
+    input(&mut app).ability_pressed = true;
+    app.update();
+    let state = app.world().resource::<GrappleState>();
+    assert!(state.enabled, "pilot class has the grapple");
+    let hook = state.hook.expect("hooked the wall");
+    assert!((hook.anchor.z - -14.5).abs() < 0.2, "anchor on the wall face {}", hook.anchor);
+    run(&mut app, 0.6);
+    let (pos, vel, _) = player(&mut app);
+    assert!(pos.z < -3.0 && vel.z < -8.0 && pos.y > 2.0, "pulled up toward the wall: {pos} {vel}");
+    let power = app.world().resource::<GrappleState>().power;
+    assert!(power < Tuning::default().grapple.power_max, "pulling uses power");
+    // Press again: let go, keep the speed.
+    input(&mut app).ability_pressed = true;
+    app.update();
+    assert!(app.world().resource::<GrappleState>().hook.is_none());
+    let (_, after, state) = player(&mut app);
+    assert_eq!(state, MoveState::Air);
+    assert!(after.z < -8.0, "speed kept after release {after}");
+    run(&mut app, 2.0);
+    assert!(app.world().resource::<GrappleState>().power > power, "power refills");
+}
+
+#[test]
+fn grapple_needs_the_class_and_a_target_in_range() {
+    use crate::abilities::{Class, GrappleState};
+    let mut app = make_app(Tuning::default());
+    set_player(&mut app, Vec3::new(0.0, 0.95, 0.0), Vec3::ZERO);
+    run(&mut app, 0.3);
+    // Nothing within range straight ahead: no hook.
+    input(&mut app).ability_pressed = true;
+    app.update();
+    assert!(app.world().resource::<GrappleState>().hook.is_none());
+    // A grunt has no grapple.
+    let mut app = build_app(Tuning::default());
+    app.insert_resource(Class("grunt".into()));
+    app.finish();
+    app.update();
+    assert!(!app.world().resource::<GrappleState>().enabled);
 }
 
 #[test]

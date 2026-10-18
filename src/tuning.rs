@@ -51,6 +51,12 @@ pub struct Tuning {
     pub wall_jump_up: f32,
     pub wall_reach: f32,
 
+    // Air jump (double jump): extra jumps after leaving the ground, reset on ground, wall, mantle, grapple
+    pub air_jumps: u32,
+    pub air_jump_speed: f32,
+    /// 0 keeps momentum, 1 fully redirects horizontal speed to the wish direction.
+    pub air_jump_redirect: f32,
+
     // Mantle
     pub mantle_min_height: f32,
     pub mantle_max_height: f32,
@@ -87,6 +93,7 @@ pub struct Tuning {
     pub vehicle: VehicleTuning,
     pub loot: LootTuning,
     pub r#match: MatchTuning,
+    pub grapple: GrappleTuning,
     pub graphics: Graphics,
     pub sound: Sound,
     pub world: WorldTuning,
@@ -145,6 +152,9 @@ impl Default for Tuning {
             wall_jump_out: 6.0,
             wall_jump_up: 6.5,
             wall_reach: 0.3,
+            air_jumps: 1,
+            air_jump_speed: 6.35,
+            air_jump_redirect: 0.6,
 
             mantle_min_height: 0.45,
             mantle_max_height: 1.5,
@@ -221,6 +231,7 @@ impl Default for Tuning {
             vehicle: VehicleTuning::default(),
             loot: LootTuning::default(),
             r#match: MatchTuning::default(),
+            grapple: GrappleTuning::default(),
             graphics: Graphics::default(),
             sound: Sound::default(),
             world: WorldTuning::default(),
@@ -396,6 +407,48 @@ pub struct MatchTuning {
 impl Default for MatchTuning {
     fn default() -> Self {
         Self { kills_to_win: 30, bots_per_team: 6 }
+    }
+}
+
+/// The grapple ability (table `[grapple]`). Titanfall 2 ships 50 power to fire of 100, 50/s while
+/// pulling and a 28 m rope; we keep the meter but make it nearly free.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct GrappleTuning {
+    pub range: f32,
+    pub power_max: f32,
+    pub power_to_fire: f32,
+    /// Per second while pulling.
+    pub power_use_rate: f32,
+    /// Per second while not pulling.
+    pub power_regen: f32,
+    pub pull_accel: f32,
+    pub pull_max_speed: f32,
+    /// Pull direction blends from the rope toward the look direction by this much.
+    pub look_steer: f32,
+    /// m/s added along the velocity when you jump off the rope.
+    pub release_boost: f32,
+    /// Let go this close to the anchor.
+    pub arrive_distance: f32,
+    /// How much of gravity the taut rope carries while you are pulled (0 none, 1 all).
+    pub gravity_cancel: f32,
+}
+
+impl Default for GrappleTuning {
+    fn default() -> Self {
+        Self {
+            range: 30.0,
+            power_max: 100.0,
+            power_to_fire: 10.0,
+            power_use_rate: 10.0,
+            power_regen: 60.0,
+            pull_accel: 55.0,
+            pull_max_speed: 22.0,
+            look_steer: 0.6,
+            release_boost: 2.0,
+            arrive_distance: 1.5,
+            gravity_cancel: 0.8,
+        }
     }
 }
 

@@ -352,6 +352,9 @@ fn base_camp(k: &mut Kit, p: &Placed) {
         k.column(o + Vec3::new(a.cos() * 12.0, 0.0, a.sin() * 12.0), i % 3 == 2);
     }
     k.prop("trophy", o, 2.0, 0.0, Collider::cylinder(0.5, 0.96), 0.48, false);
+    // Wardrobe locker: stand next to it and press E.
+    k.block(Vec3::new(1.2, 2.2, 0.7), o + Vec3::new(0.0, 1.1, -12.0), 0.0, Mat::Wood);
+    k.commands.spawn((crate::wardrobe::Locker, Transform::from_translation(o + Vec3::new(0.0, 1.0, -12.0))));
     k.medkit(o + Vec3::new(3.0, 0.0, -5.0));
     k.medkit(o + Vec3::new(-3.0, 0.0, -5.0));
     k.prop("weapon-rack", o + Vec3::new(-5.0, 0.0, -8.0), 2.0, 0.3, Collider::cuboid(1.6, 0.94, 0.6), 0.47, false);

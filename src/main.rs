@@ -1,4 +1,6 @@
+mod abilities;
 mod body;
+mod character;
 mod camera;
 mod controller;
 mod health;
@@ -10,6 +12,7 @@ mod targets;
 mod terrain;
 mod tuning;
 mod viewmodel;
+mod wardrobe;
 mod weapon;
 #[cfg(test)]
 mod tests;
@@ -47,6 +50,7 @@ fn main() {
             input::InputPlugin,
             controller::ControllerPlugin,
             camera::CameraPlugin,
+            character::CharacterPlugin,
             body::BodyPlugin,
             weapon::WeaponPlugin,
             health::HealthPlugin,
@@ -58,6 +62,7 @@ fn main() {
             mission::MissionPlugin,
             sound::SoundPlugin,
         ))
+        .add_plugins((abilities::AbilitiesPlugin, wardrobe::WardrobePlugin))
         .add_plugins(level_plugin())
         .add_systems(Update, dev_screenshot.run_if(|| std::env::var_os("RUST_REGIME_SCREENSHOT").is_some()))
         .run();

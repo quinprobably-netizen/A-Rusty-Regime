@@ -14,7 +14,7 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<PlayerHealth>().add_systems(Startup, spawn_hud).add_systems(Update, (update_hud, update_weapon_hud, update_health_hud, update_objective_hud));
+        app.init_resource::<PlayerHealth>().add_systems(Startup, spawn_hud).add_systems(Update, (update_hud, update_weapon_hud, update_health_hud, update_objective_hud, update_grapple_hud));
     }
 }
 
@@ -44,6 +44,12 @@ struct ObjectiveText;
 
 #[derive(Component)]
 struct HaulText;
+
+#[derive(Component)]
+struct GrappleBar;
+
+#[derive(Component)]
+struct GrappleFill;
 
 fn spawn_hud(mut commands: Commands) {
     commands.spawn((
@@ -108,6 +114,22 @@ fn spawn_hud(mut commands: Commands) {
         },
         BackgroundColor(Color::WHITE),
     ));
+    // Grapple power, a thin bar under the crosshair that only shows while charging or pulling.
+    commands
+        .spawn((
+            GrappleBar,
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Percent(50.0),
+                top: Val::Percent(50.0),
+                width: Val::Px(40.0),
+                height: Val::Px(3.0),
+                margin: UiRect { left: Val::Px(-20.0), top: Val::Px(14.0), ..default() },
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.35)),
+        ))
+        .with_child((GrappleFill, Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() }, BackgroundColor(Color::srgba(1.0, 0.75, 0.3, 0.9))));
     // Red overlay that flashes on a hit and stays while dead.
     commands.spawn((
         HitFlash,
@@ -143,7 +165,7 @@ fn spawn_hud(mut commands: Commands) {
         Node { position_type: PositionType::Absolute, bottom: Val::Px(46.0), left: Val::Percent(50.0), margin: UiRect::left(Val::Px(-120.0)), ..default() },
     ));
     commands.spawn((
-        Text::new("Click: lock mouse / fire   WASD / left stick: move   Space / A: jump   Ctrl / B: crouch & slide\n1-4, wheel, Q / d-pad, RB-LB, Y: weapons   R / Select: respawn   F5: reload tuning.toml"),
+        Text::new("Click: lock mouse / fire   WASD / left stick: move   Space / A: jump   Ctrl / B: crouch & slide\n1-4, wheel, Q / d-pad, RB-LB, Y: weapons   Space in the air: double jump   G / mouse 4: grapple   R / Select: respawn   F5: reload tuning"),
         TextFont { font_size: FontSize::Px(14.0), ..default() },
         TextColor(Color::srgba(1.0, 1.0, 1.0, 0.6)),
         Node {
@@ -270,4 +292,18 @@ fn update_health_hud(
     }
     *level = (*level - time.delta_secs() * 1.5).max(if health.alive() { 0.0 } else { 0.35 });
     flash.0 = Color::srgba(0.8, 0.0, 0.0, *level);
+}
+
+fn update_grapple_hud(
+    tuning: Res<Tuning>,
+    grapple: Option<Res<crate::abilities::GrappleState>>,
+    mut bar: Single<&mut Visibility, With<GrappleBar>>,
+    mut fill: Single<&mut Node, With<GrappleFill>>,
+) {
+    let Some(g) = grapple else {
+        **bar = Visibility::Hidden;
+        return;
+    };
+    fill.width = Val::Percent(100.0 * g.power / tuning.grapple.power_max.max(1.0));
+    **bar = if g.enabled && (g.hooked() || g.power < tuning.grapple.power_max) { Visibility::Inherited } else { Visibility::Hidden };
 }
