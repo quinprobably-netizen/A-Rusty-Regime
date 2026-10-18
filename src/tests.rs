@@ -1484,6 +1484,16 @@ fn a_crosswind_pushes_bullets_sideways() {
 
 // ------------------------------------------------------------------------------------ menus
 
+/// Press and release a key over two frames, like a real tap.
+fn tap(app: &mut App, key: KeyCode) {
+    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(key);
+    app.update();
+    let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+    keys.release(key);
+    keys.clear();
+    app.update();
+}
+
 #[test]
 fn menus_stop_time_and_esc_pauses() {
     use crate::menu::{MenuPlugin, Screen};
@@ -1500,26 +1510,17 @@ fn menus_stop_time_and_esc_pauses() {
     assert_ne!(state, MoveState::Ground, "nothing moved: the player has not even landed");
 
     // Enter: PLAY is the first row.
-    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::Enter);
-    app.update();
-    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().clear();
-    app.update();
+    tap(&mut app, KeyCode::Enter);
     assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Playing);
     run(&mut app, 1.0);
     assert!(!app.world().resource::<Time<Virtual>>().is_paused());
     assert_eq!(player(&mut app).2, MoveState::Ground, "time runs again and the player lands");
 
     // Esc pauses, Esc again resumes.
-    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::Escape);
-    app.update();
-    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().clear();
-    app.update();
+    tap(&mut app, KeyCode::Escape);
     assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Paused);
     assert!(app.world().resource::<Time<Virtual>>().is_paused());
-    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::Escape);
-    app.update();
-    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().clear();
-    app.update();
+    tap(&mut app, KeyCode::Escape);
     assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Playing);
 }
 
