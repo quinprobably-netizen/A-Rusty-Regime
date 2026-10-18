@@ -18,6 +18,11 @@ impl Plugin for HudPlugin {
     }
 }
 
+/// Every HUD element hangs off this, so menus can hide it in one go. Other modules put it on
+/// their own in-game text (the world clock) for the same reason.
+#[derive(Component)]
+pub struct HudRoot;
+
 #[derive(Component)]
 struct SpeedText;
 
@@ -52,7 +57,9 @@ struct GrappleBar;
 struct GrappleFill;
 
 fn spawn_hud(mut commands: Commands) {
+    let root = commands.spawn((HudRoot, Node { position_type: PositionType::Absolute, left: Val::Px(0.0), top: Val::Px(0.0), width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() })).id();
     commands.spawn((
+        ChildOf(root),
         SpeedText,
         Text::new(""),
         TextFont { font_size: FontSize::Px(22.0), ..default() },
@@ -64,6 +71,7 @@ fn spawn_hud(mut commands: Commands) {
         },
     ));
     commands.spawn((
+        ChildOf(root),
         WeaponText,
         Text::new(""),
         TextFont { font_size: FontSize::Px(22.0), ..default() },
@@ -75,6 +83,7 @@ fn spawn_hud(mut commands: Commands) {
         },
     ));
     commands.spawn((
+        ChildOf(root),
         ScoreText,
         Text::new(""),
         TextFont { font_size: FontSize::Px(18.0), ..default() },
@@ -87,6 +96,7 @@ fn spawn_hud(mut commands: Commands) {
         },
     ));
     commands.spawn((
+        ChildOf(root),
         ObjectiveText,
         Text::new(""),
         TextFont { font_size: FontSize::Px(20.0), ..default() },
@@ -95,6 +105,7 @@ fn spawn_hud(mut commands: Commands) {
         TextLayout { justify: Justify::Center, ..default() },
     ));
     commands.spawn((
+        ChildOf(root),
         HaulText,
         Text::new(""),
         TextFont { font_size: FontSize::Px(18.0), ..default() },
@@ -102,6 +113,7 @@ fn spawn_hud(mut commands: Commands) {
         Node { position_type: PositionType::Absolute, top: Val::Px(36.0), right: Val::Px(24.0), ..default() },
     ));
     commands.spawn((
+        ChildOf(root),
         Crosshair,
         Node {
             position_type: PositionType::Absolute,
@@ -117,6 +129,7 @@ fn spawn_hud(mut commands: Commands) {
     // Grapple power, a thin bar under the crosshair that only shows while charging or pulling.
     commands
         .spawn((
+            ChildOf(root),
             GrappleBar,
             Node {
                 position_type: PositionType::Absolute,
@@ -132,6 +145,7 @@ fn spawn_hud(mut commands: Commands) {
         .with_child((GrappleFill, Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() }, BackgroundColor(Color::srgba(1.0, 0.75, 0.3, 0.9))));
     // Red overlay that flashes on a hit and stays while dead.
     commands.spawn((
+        ChildOf(root),
         HitFlash,
         Node { position_type: PositionType::Absolute, left: Val::Px(0.0), top: Val::Px(0.0), width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
         BackgroundColor(Color::NONE),
@@ -140,6 +154,7 @@ fn spawn_hud(mut commands: Commands) {
     // Health bar, bottom center.
     commands
         .spawn((
+            ChildOf(root),
             Node {
                 position_type: PositionType::Absolute,
                 bottom: Val::Px(28.0),
@@ -159,13 +174,15 @@ fn spawn_hud(mut commands: Commands) {
             BackgroundColor(Color::srgb(0.85, 0.2, 0.15)),
         ));
     commands.spawn((
+        ChildOf(root),
         HealthText,
         Text::new("100"),
         TextFont { font_size: FontSize::Px(18.0), ..default() },
         Node { position_type: PositionType::Absolute, bottom: Val::Px(46.0), left: Val::Percent(50.0), margin: UiRect::left(Val::Px(-120.0)), ..default() },
     ));
     commands.spawn((
-        Text::new("Click: lock mouse / fire   WASD / left stick: move   Space / A: jump   Ctrl / B: crouch & slide\n1-4, wheel, Q / d-pad, RB-LB, Y: weapons   Space in the air: double jump   G / mouse 4: grapple   R / Select: respawn   F5: reload tuning"),
+        ChildOf(root),
+        Text::new("Esc: menu   Click: fire   WASD / left stick: move   Space / A: jump   Ctrl / B: crouch & slide\n1-4, wheel, Q / d-pad, RB-LB, Y: weapons   Space in the air: double jump   G / mouse 4: grapple   R / Select: respawn   F5: reload tuning"),
         TextFont { font_size: FontSize::Px(14.0), ..default() },
         TextColor(Color::srgba(1.0, 1.0, 1.0, 0.6)),
         Node {

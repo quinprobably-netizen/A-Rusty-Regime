@@ -15,7 +15,8 @@ First build takes a while. Linux needs `libasound2-dev libudev-dev libwayland-de
 | Action | Keyboard / mouse | Gamepad |
 |---|---|---|
 | Move | WASD | Left stick (analog) |
-| Look | Mouse (click to lock, Esc to release) | Right stick |
+| Look | Mouse (click to lock) | Right stick |
+| Menu / pause | Esc | Start |
 | Jump / wall jump / double jump | Space | A / Cross |
 | Grapple (fire, press again to let go) | G or mouse 4 | L3 |
 | Wardrobe (at the camp locker) | E, then Tab, arrows, 1 2 3 | |
@@ -31,6 +32,19 @@ First build takes a while. Linux needs `libasound2-dev libudev-dev libwayland-de
 | Handbrake | Space | A / Cross |
 | Respawn | R | Select / Back |
 | Reload `tuning.toml` | F5 | |
+
+## Menus
+The game boots to a title screen over the live island; Esc pauses (time stops, the cursor comes
+back). Both lists lead to the same screens: **Gunsmith** (four attachment slots per hitscan gun,
+parts change spread, recoil, rate, velocity and damage and show on the viewmodel; stat bars compare
+the bare gun), **Wardrobe** (the camp locker's slots as tiles, with the character shown from the
+front), **Settings** (mouse sensitivity, invert Y, FOV, five volumes, sky, bloom, ambient
+occlusion, anti-aliasing, shadow distance, grass, trees; saved to `settings.toml`, which lays over
+`tuning.toml` so F5 keeps your choices) and **Controls**. Navigate with W/S or arrows, adjust with
+A/D, Enter picks, Esc backs out; the d-pad, A and B do the same on a pad; the mouse works too.
+`RUST_REGIME_MENU=title|pause|settings|controls|gunsmith|wardrobe` opens straight into a screen
+(with `RUST_REGIME_SCREENSHOT` it skips the title unless set). Design notes:
+`docs/superpowers/specs/2026-10-18-menus-design.md`.
 
 ## Movement
 - **Source/TF2 core** at 66 ticks/s: ground friction and acceleration, air strafing (30u air cap), bunny hopping (jump on the landing tick to skip friction), crouch-jumping (legs tuck up in the air), ramp sliding and surfing on steep slopes, stair stepping.
