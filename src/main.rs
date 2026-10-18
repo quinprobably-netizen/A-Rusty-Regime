@@ -98,8 +98,10 @@ fn dev_screenshot(
     vehicles: Query<(&Transform, &vehicle::Vehicle, Option<&Children>), Without<controller::Player>>,
 ) {
     use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+    // `RUST_REGIME_SCREENSHOT_FRAME` waits longer for slow loads (default 150).
+    let at = std::env::var("RUST_REGIME_SCREENSHOT_FRAME").ok().and_then(|f| f.parse().ok()).unwrap_or(150u32);
     *frames += 1;
-    if *frames == 150 {
+    if *frames == at {
         for (tf, v, children) in &vehicles {
             info!("{} at {} up {} grounded {} parts {}", v.spec.name, tf.translation, tf.rotation * Vec3::Y, v.grounded_wheels(), children.map_or(0, |c| c.len()));
         }
@@ -124,11 +126,11 @@ fn dev_screenshot(
             view.pitch = pitch.to_radians();
         }
     }
-    if *frames == 150 {
+    if *frames == at {
         let path = std::env::var("RUST_REGIME_SCREENSHOT").unwrap_or_default();
         commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path));
     }
-    if *frames == 240 {
+    if *frames == at + 90 {
         exit.write(AppExit::Success);
     }
 }
