@@ -333,10 +333,10 @@ fn weapons(mut commands: Commands, s: Res<Sounds>, tuning: Res<Tuning>, arsenal:
         *n += 1;
         let speed = 0.95 + (*n % 5) as f32 * 0.025;
         let clip = match WEAPONS[arsenal.current] {
-            RocketLauncher => &s.rocket,
-            Rifle => &s.rifle,
-            Shotgun => &s.shotgun,
-            Pistol => &s.pistol,
+            RocketLauncher | Grenade | Harpoon => &s.rocket,
+            Rifle | Smg | Dmr => &s.rifle,
+            Shotgun | Fist => &s.shotgun,
+            Pistol | Revolver => &s.pistol,
         };
         oneshot(&mut commands, clip, tuning.sound.guns, speed);
     }

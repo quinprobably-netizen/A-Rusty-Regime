@@ -71,11 +71,20 @@ pub struct Tuning {
     pub prop_knockback: f32,
     pub prop_ref_mass: f32,
     pub push_strength: f32,
+    /// Rockets in the tube and seconds to reload it.
+    pub rocket_mag: u32,
+    pub rocket_reload: f32,
 
-    // Hitscan guns (tables `[rifle]`, `[shotgun]`, `[pistol]` in tuning.toml)
+    // Hitscan guns (tables `[rifle]`, `[shotgun]`, `[pistol]`, `[smg]`, `[dmr]`, `[revolver]`)
     pub rifle: Gun,
     pub shotgun: Gun,
     pub pistol: Gun,
+    pub smg: Gun,
+    pub dmr: Gun,
+    pub revolver: Gun,
+    pub grenade: GrenadeTuning,
+    pub harpoon: HarpoonTuning,
+    pub fist: FistTuning,
 
     // Shooting range targets
     pub target_health: f32,
@@ -168,6 +177,8 @@ impl Default for Tuning {
             prop_knockback: 14.0,
             prop_ref_mass: 40.0,
             push_strength: 0.6,
+            rocket_mag: 4,
+            rocket_reload: 1.4,
 
             rifle: Gun {
                 damage: 18.0,
@@ -184,6 +195,8 @@ impl Default for Tuning {
                 prop_impulse: 3.0,
                 automatic: true,
                 kick: 0.5,
+                mag: 30,
+                reload: 2.0,
             },
             shotgun: Gun {
                 damage: 9.0,
@@ -200,6 +213,8 @@ impl Default for Tuning {
                 prop_impulse: 2.5,
                 automatic: false,
                 kick: 2.0,
+                mag: 20,
+                reload: 2.6,
             },
             pistol: Gun {
                 damage: 25.0,
@@ -216,7 +231,66 @@ impl Default for Tuning {
                 prop_impulse: 4.0,
                 automatic: false,
                 kick: 0.8,
+                mag: 9,
+                reload: 1.5,
             },
+            smg: Gun {
+                damage: 12.0,
+                velocity: 400.0,
+                drag: 0.001,
+                recoil_up: 0.25,
+                recoil_side: 0.2,
+                heat_spread: 2.0,
+                ads_spread: 0.5,
+                cooldown: 0.06,
+                pellets: 1,
+                spread_degrees: 1.0,
+                range: 90.0,
+                prop_impulse: 2.0,
+                automatic: true,
+                kick: 0.35,
+                mag: 40,
+                reload: 1.8,
+            },
+            dmr: Gun {
+                damage: 45.0,
+                velocity: 900.0,
+                drag: 0.0005,
+                recoil_up: 1.6,
+                recoil_side: 0.3,
+                heat_spread: 3.0,
+                ads_spread: 0.25,
+                cooldown: 0.28,
+                pellets: 1,
+                spread_degrees: 0.15,
+                range: 300.0,
+                prop_impulse: 5.0,
+                automatic: false,
+                kick: 1.6,
+                mag: 20,
+                reload: 2.4,
+            },
+            revolver: Gun {
+                damage: 60.0,
+                velocity: 420.0,
+                drag: 0.001,
+                recoil_up: 3.0,
+                recoil_side: 0.5,
+                heat_spread: 1.5,
+                ads_spread: 0.5,
+                cooldown: 0.45,
+                pellets: 1,
+                spread_degrees: 0.25,
+                range: 160.0,
+                prop_impulse: 6.0,
+                automatic: false,
+                kick: 2.4,
+                mag: 6,
+                reload: 2.2,
+            },
+            grenade: GrenadeTuning::default(),
+            harpoon: HarpoonTuning::default(),
+            fist: FistTuning::default(),
 
             target_health: 100.0,
             headshot: 2.5,
@@ -274,6 +348,76 @@ pub struct Gun {
     pub prop_impulse: f32,
     pub automatic: bool,
     pub kick: f32,
+    /// Rounds per magazine and seconds to reload it.
+    pub mag: u32,
+    pub reload: f32,
+}
+
+/// The break-action grenade launcher: bouncy frags that burst on a fuse or on hitting a target.
+#[derive(Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct GrenadeTuning {
+    pub damage: f32,
+    pub radius: f32,
+    pub speed: f32,
+    /// Upward speed added at launch, for a lob.
+    pub lift: f32,
+    pub gravity: f32,
+    /// Speed kept per bounce.
+    pub bounce: f32,
+    pub fuse: f32,
+    pub self_knockback: f32,
+    pub cooldown: f32,
+    pub mag: u32,
+    pub reload: f32,
+}
+
+impl Default for GrenadeTuning {
+    fn default() -> Self {
+        Self { damage: 100.0, radius: 3.5, speed: 22.0, lift: 2.5, gravity: 12.0, bounce: 0.45, fuse: 2.2, self_knockback: 11.0, cooldown: 0.6, mag: 1, reload: 1.8 }
+    }
+}
+
+/// The harpoon: a fast spear that yanks you to the wall it hits, or yanks what it hits to you.
+#[derive(Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct HarpoonTuning {
+    pub damage: f32,
+    pub speed: f32,
+    pub gravity: f32,
+    /// Seconds the spear flies before it gives up.
+    pub life: f32,
+    /// Speed given to you toward the spear when it sticks in the world.
+    pub pull_player: f32,
+    /// Speed given to a prop or a falling body toward you.
+    pub pull_target: f32,
+    pub cooldown: f32,
+    pub mag: u32,
+    pub reload: f32,
+}
+
+impl Default for HarpoonTuning {
+    fn default() -> Self {
+        Self { damage: 45.0, speed: 70.0, gravity: 4.0, life: 1.2, pull_player: 17.0, pull_target: 14.0, cooldown: 0.4, mag: 1, reload: 1.6 }
+    }
+}
+
+/// The power fist: a short punch that knocks things away and, off any surface, launches you back.
+#[derive(Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct FistTuning {
+    pub damage: f32,
+    pub range: f32,
+    pub knockback: f32,
+    /// Speed you get away from whatever you punched.
+    pub launch: f32,
+    pub cooldown: f32,
+}
+
+impl Default for FistTuning {
+    fn default() -> Self {
+        Self { damage: 70.0, range: 2.4, knockback: 16.0, launch: 11.0, cooldown: 0.7 }
+    }
 }
 
 impl Default for Gun {
@@ -568,14 +712,17 @@ pub fn load() -> Tuning {
 }
 
 impl Tuning {
-    /// The hitscan gun's table, or `None` for the rocket launcher.
+    /// The hitscan gun's table, or `None` for the launchers, the harpoon and the fist.
     pub fn gun(&self, kind: crate::weapon::WeaponKind) -> Option<&Gun> {
         use crate::weapon::WeaponKind::*;
         match kind {
-            RocketLauncher => None,
             Rifle => Some(&self.rifle),
             Shotgun => Some(&self.shotgun),
             Pistol => Some(&self.pistol),
+            Smg => Some(&self.smg),
+            Dmr => Some(&self.dmr),
+            Revolver => Some(&self.revolver),
+            RocketLauncher | Grenade | Harpoon | Fist => None,
         }
     }
 }

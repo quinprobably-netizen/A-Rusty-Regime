@@ -56,6 +56,8 @@ mantle_time = 0.3
 rocket_damage = 90.0
 rocket_speed = 24.0
 rocket_cooldown = 0.8
+rocket_mag = 4               # rockets in the tube, TF2 style
+rocket_reload = 1.4
 blast_radius = 3.2
 self_knockback = 13.0
 prop_knockback = 14.0
@@ -98,8 +100,12 @@ recoil_up = 0.35            # degrees of view kick per shot
 recoil_side = 0.18
 heat_spread = 2.5           # spread multiplier at full heat
 ads_spread = 0.4            # spread multiplier aiming down sights (right mouse)
+mag = 30                    # rounds per magazine (R reloads, an empty gun reloads itself)
+reload = 2.0                # seconds
 
-[shotgun]                   # weapon 3
+[shotgun]                   # weapon 3: Breacher pump, 20-round drum
+mag = 20
+reload = 2.6
 damage = 9.0
 cooldown = 0.75
 pellets = 10
@@ -109,7 +115,9 @@ prop_impulse = 2.5
 automatic = false
 kick = 2.0
 
-[pistol]                    # weapon 4
+[pistol]                    # weapon 4: Smite
+mag = 9
+reload = 1.5
 damage = 25.0
 cooldown = 0.17
 pellets = 1
@@ -118,6 +126,88 @@ range = 150.0
 prop_impulse = 4.0
 automatic = false
 kick = 0.8
+
+[smg]                       # weapon 5: Stinger bullpup
+damage = 12.0
+velocity = 400
+drag = 0.001
+cooldown = 0.06
+spread_degrees = 1.0
+range = 90.0
+recoil_up = 0.25
+recoil_side = 0.2
+heat_spread = 2.0
+ads_spread = 0.5
+prop_impulse = 2.0
+automatic = true
+kick = 0.35
+mag = 40
+reload = 1.8
+
+[dmr]                       # weapon 6: Longshot marksman rifle; crouching cuts its recoil
+damage = 45.0
+velocity = 900
+drag = 0.0005
+cooldown = 0.28
+spread_degrees = 0.15
+range = 300.0
+recoil_up = 1.6
+recoil_side = 0.3
+heat_spread = 3.0
+ads_spread = 0.25
+prop_impulse = 5.0
+automatic = false
+kick = 1.6
+mag = 20
+reload = 2.4
+
+[revolver]                  # weapon 7: Warden top-break
+damage = 60.0
+velocity = 420
+drag = 0.001
+cooldown = 0.45
+spread_degrees = 0.25
+range = 160.0
+recoil_up = 3.0
+recoil_side = 0.5
+heat_spread = 1.5
+ads_spread = 0.5
+prop_impulse = 6.0
+automatic = false
+kick = 2.4
+mag = 6
+reload = 2.2
+
+[grenade]                   # weapon 8: Thumper, bouncy frags on a fuse, burst on a direct hit
+damage = 100.0
+radius = 3.5
+speed = 22.0
+lift = 2.5                  # upward m/s added for a lob
+gravity = 12.0
+bounce = 0.45               # speed kept per bounce
+fuse = 2.2
+self_knockback = 11.0       # grenade jumps work too, a bit weaker than rockets
+cooldown = 0.6
+mag = 1
+reload = 1.8
+
+[harpoon]                   # weapon 9: spear yanks you to the wall it hits, or yanks what it hits to you
+damage = 45.0
+speed = 70.0
+gravity = 4.0
+life = 1.2
+pull_player = 17.0
+pull_target = 14.0
+cooldown = 0.4
+mag = 1
+reload = 1.6
+
+[fist]                      # weapon 0: power fist, knocks things away; punch any surface to launch off it
+damage = 70.0
+range = 2.4
+knockback = 16.0
+launch = 11.0
+cooldown = 0.7
 
 [island]                    # the default level; RUST_REGIME_LEVEL=arena for the old arena
 seed = 7

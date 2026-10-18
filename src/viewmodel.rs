@@ -1,21 +1,31 @@
-//! First-person weapon models hanging off the camera: one child per weapon,
-//! only the current one visible. Recoil, movement bob and a lower/raise on swap.
+//! First-person weapon models hanging off the camera: one rigged glTF per weapon
+//! (`assets/models/weapons/<id>.glb`, built by `tools/weapons`), only the current one visible.
+//! Each model's own clips (idle, fire, reload, draw, inspect) move its slide, bolt, mag and so on;
+//! code adds recoil, bob and aim-down-sights on top, shows the fitted gunsmith parts and keeps
+//! `weapon::Muzzle` on the model's muzzle so tracers leave the barrel.
 
+use std::collections::HashMap;
+use std::time::Duration;
+
+use bevy::gltf::Gltf;
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAssetRoot, WorldInstanceReady};
 
 use crate::camera::PlayerCamera;
 use crate::controller::{MoveState, Player};
+use crate::gunsmith::{Loadout, MESHES, customizable};
+use crate::input::PlayerInput;
 use crate::tuning::Tuning;
-use crate::weapon::{Arsenal, WEAPONS, WeaponFired, WeaponKind, SWITCH_TIME};
+use crate::weapon::{Arsenal, Muzzle, WEAPONS, WeaponFired, WeaponKind, SWITCH_TIME};
 
 pub struct ViewModelPlugin;
 
 impl Plugin for ViewModelPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(PostStartup, spawn)
-            .add_systems(Update, animate)
-            .add_observer(apply_tint);
+            .add_systems(Update, (hook_up, animate, play_clips, show_parts, flash).chain())
+            .add_systems(PostUpdate, track_muzzle.after(TransformSystems::Propagate))
+            .add_observer(on_ready);
     }
 }
 
@@ -27,110 +37,191 @@ pub struct ViewModel {
     /// 0 in play, 1 presented to the camera by the gunsmith.
     showcase: f32,
     spin: f32,
+    flash: f32,
+}
+
+/// The clips every weapon model carries, by glTF animation name.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum Clip {
+    Idle,
+    Fire,
+    Reload,
+    Draw,
+    Inspect,
+}
+
+impl Clip {
+    const ALL: [Clip; 5] = [Clip::Idle, Clip::Fire, Clip::Reload, Clip::Draw, Clip::Inspect];
+    fn name(self) -> &'static str {
+        match self {
+            Clip::Idle => "idle",
+            Clip::Fire => "fire",
+            Clip::Reload => "reload",
+            Clip::Draw => "draw",
+            Clip::Inspect => "inspect",
+        }
+    }
 }
 
 #[derive(Component)]
-struct WeaponModel(usize);
+struct WeaponModel {
+    index: usize,
+    gltf: Handle<Gltf>,
+    ready: bool,
+    rig: Option<Rig>,
+}
 
-/// Multiply a glTF's materials by this color once it has spawned.
+/// What a spawned model exposes once its scene is in: the animation player, its clips with their
+/// lengths, the gunsmith part meshes, the muzzle and the sight line.
+struct Rig {
+    player: Entity,
+    clips: HashMap<Clip, (AnimationNodeIndex, f32)>,
+    playing: Clip,
+    parts: Vec<(Entity, usize, usize)>,
+    muzzle: Option<Entity>,
+    /// The optic rail's top in model space, for lining up aim-down-sights.
+    optic: Option<Vec3>,
+}
+
+/// The muzzle flash on a model: a small hot sphere shown for a few frames after each shot.
 #[derive(Component)]
-pub struct Tint(pub Color);
+struct Flash;
 
-const REST: Vec3 = Vec3::new(0.3, -0.27, -0.55);
-/// Where the gun sits when aiming down sights: centered and raised to the eye.
-const AIMED: Vec3 = Vec3::new(0.0, -0.16, -0.42);
+/// Where the trigger sits in front of the camera; each model's origin is its trigger.
+const REST: Vec3 = Vec3::new(0.16, -0.19, -0.36);
+/// Aimed: centred, close to the eye; x and y are replaced by the weapon's own sight line.
+const AIMED_DEPTH: f32 = -0.3;
 /// Where the gun sits in the gunsmith: right of centre, turned to show its side.
 const SHOWCASE: Vec3 = Vec3::new(0.22, -0.02, -0.95);
+/// Sight line above the optic rail for each optic part: flip-up irons, red dot, scope.
+const SIGHT_HEIGHT: [f32; 3] = [0.012, 0.021, 0.026];
 
-fn spawn(
-    mut commands: Commands,
-    server: Res<AssetServer>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    camera: Single<Entity, With<PlayerCamera>>,
-) {
-    // Kenney's blasters point down +Z with the grip at the origin; turn them to face -Z.
-    let gun_tf = |scale: Vec3, offset: Vec3| {
-        Transform::from_translation(offset).with_rotation(Quat::from_rotation_y(std::f32::consts::PI)).with_scale(scale)
-    };
-    let blaster = server.load(GltfAssetLabel::Scene(0).from_asset("models/fps/blaster.glb"));
-    let repeater = server.load(GltfAssetLabel::Scene(0).from_asset("models/fps/blaster-repeater.glb"));
-
-    let tube_mat = materials.add(Color::srgb(0.25, 0.26, 0.28));
-    let band_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.5, 0.1),
-        emissive: LinearRgba::rgb(2.0, 0.8, 0.1),
-        ..default()
-    });
-    let tube = meshes.add(Cylinder::new(0.045, 0.55));
-    let band = meshes.add(Cylinder::new(0.052, 0.05));
-    let grip = meshes.add(Cuboid::new(0.04, 0.12, 0.06));
-
-    commands.entity(*camera).with_children(|cam| {
-        cam.spawn((ViewModel::default(), Transform::from_translation(REST), Visibility::default()))
-            .with_children(|vm| {
-                for (i, kind) in WEAPONS.iter().enumerate() {
-                    let mut model = vm.spawn((WeaponModel(i), Transform::default(), Visibility::default()));
-                    match kind {
-                        WeaponKind::RocketLauncher => {
-                            model.with_children(|m| {
-                                let along_z = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
-                                m.spawn((
-                                    Mesh3d(tube.clone()),
-                                    MeshMaterial3d(tube_mat.clone()),
-                                    Transform::from_xyz(0.0, 0.0, -0.3).with_rotation(along_z),
-                                ));
-                                m.spawn((
-                                    Mesh3d(band.clone()),
-                                    MeshMaterial3d(band_mat.clone()),
-                                    Transform::from_xyz(0.0, 0.0, -0.55).with_rotation(along_z),
-                                ));
-                                m.spawn((
-                                    Mesh3d(grip.clone()),
-                                    MeshMaterial3d(tube_mat.clone()),
-                                    Transform::from_xyz(0.0, -0.09, -0.1),
-                                ));
-                            });
-                        }
-                        WeaponKind::Rifle => {
-                            model.insert((WorldAssetRoot(repeater.clone()), gun_tf(Vec3::splat(0.2), Vec3::new(0.0, -0.1, 0.1))));
-                        }
-                        WeaponKind::Shotgun => {
-                            model.insert((
-                                WorldAssetRoot(blaster.clone()),
-                                Tint(Color::srgb(0.75, 0.55, 0.4)),
-                                gun_tf(Vec3::new(0.22, 0.22, 0.3), Vec3::new(0.0, -0.11, 0.15)),
-                            ));
-                        }
-                        WeaponKind::Pistol => {
-                            model.insert((WorldAssetRoot(blaster.clone()), gun_tf(Vec3::splat(0.16), Vec3::new(0.0, -0.08, 0.1))));
-                        }
-                    }
-                }
-            });
-    });
+/// Per-weapon nudge from `REST` (the launchers ride higher on the shoulder, the fist sits low).
+fn hold(kind: WeaponKind) -> Vec3 {
+    match kind {
+        WeaponKind::RocketLauncher => Vec3::new(0.03, -0.05, 0.02),
+        WeaponKind::Pistol | WeaponKind::Revolver => Vec3::new(-0.01, 0.01, -0.04),
+        WeaponKind::Grenade => Vec3::new(0.0, -0.02, 0.0),
+        WeaponKind::Fist => Vec3::new(0.02, -0.06, -0.06),
+        _ => Vec3::ZERO,
+    }
 }
 
-fn apply_tint(
-    ready: On<WorldInstanceReady>,
-    tints: Query<&Tint>,
-    children: Query<&Children>,
-    mut handles: Query<&mut MeshMaterial3d<StandardMaterial>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    let Ok(tint) = tints.get(ready.entity) else { return };
-    for e in children.iter_descendants(ready.entity) {
-        let Ok(mut handle) = handles.get_mut(e) else { continue };
-        let Some(mut material) = materials.get(&handle.0).cloned() else { continue };
-        material.base_color = tint.0;
-        handle.0 = materials.add(material);
+fn spawn(mut commands: Commands, server: Res<AssetServer>, camera: Single<Entity, With<PlayerCamera>>, mut meshes: Option<ResMut<Assets<Mesh>>>, mut materials: Option<ResMut<Assets<StandardMaterial>>>) {
+    let flash = match (meshes.as_mut(), materials.as_mut()) {
+        (Some(meshes), Some(materials)) => Some((
+            meshes.add(Sphere::new(0.035)),
+            materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.75, 0.35), emissive: LinearRgba::rgb(30.0, 16.0, 4.0), unlit: true, ..default() }),
+        )),
+        _ => None,
+    };
+    commands.entity(*camera).with_children(|cam| {
+        cam.spawn((ViewModel::default(), Transform::from_translation(REST), Visibility::default())).with_children(|vm| {
+            for (index, kind) in WEAPONS.iter().enumerate() {
+                let path = format!("models/weapons/{}.glb", kind.id());
+                vm.spawn((
+                    WeaponModel { index, gltf: server.load(path.clone()), ready: false, rig: None },
+                    WorldAssetRoot(server.load(GltfAssetLabel::Scene(0).from_asset(path))),
+                    Transform::from_translation(hold(*kind)),
+                    Visibility::Hidden,
+                ));
+            }
+        });
+    });
+    if let Some((mesh, mat)) = flash {
+        commands.insert_resource(FlashAssets { mesh, mat });
     }
+}
+
+#[derive(Resource)]
+struct FlashAssets {
+    mesh: Handle<Mesh>,
+    mat: Handle<StandardMaterial>,
+}
+
+fn on_ready(ready: On<WorldInstanceReady>, mut models: Query<&mut WeaponModel>) {
+    if let Ok(mut model) = models.get_mut(ready.entity) {
+        model.ready = true;
+    }
+}
+
+/// Once a model's scene and glTF are in: give its animation player a graph of the five clips,
+/// find the part meshes and sockets, and put a flash on the muzzle.
+#[allow(clippy::too_many_arguments)]
+fn hook_up(
+    mut commands: Commands,
+    gltfs: Res<Assets<Gltf>>,
+    clips: Res<Assets<AnimationClip>>,
+    mut graphs: ResMut<Assets<AnimationGraph>>,
+    flash: Option<Res<FlashAssets>>,
+    mut models: Query<(Entity, &mut WeaponModel)>,
+    children: Query<&Children>,
+    parents: Query<&ChildOf>,
+    transforms: Query<&Transform>,
+    names: Query<&Name>,
+    players: Query<(), With<AnimationPlayer>>,
+) {
+    for (root, mut model) in &mut models {
+        if !model.ready || model.rig.is_some() {
+            continue;
+        }
+        let Some(gltf) = gltfs.get(&model.gltf) else { continue };
+        let Some(player) = children.iter_descendants(root).find(|e| players.contains(*e)) else {
+            warn!("weapon model {} has no animation player", WEAPONS[model.index].id());
+            model.rig = Some(Rig { player: root, clips: HashMap::new(), playing: Clip::Idle, parts: vec![], muzzle: None, optic: None });
+            continue;
+        };
+        let mut graph = AnimationGraph::new();
+        let mut nodes = HashMap::new();
+        for clip in Clip::ALL {
+            if let Some(handle) = gltf.named_animations.get(clip.name()) {
+                let length = clips.get(handle).map_or(1.0, |c| c.duration()).max(0.01);
+                nodes.insert(clip, (graph.add_clip(handle.clone(), 1.0, graph.root), length));
+            }
+        }
+        commands.entity(player).insert((AnimationGraphHandle(graphs.add(graph)), AnimationTransitions::new()));
+        let mut parts = vec![];
+        let (mut muzzle, mut optic) = (None, None);
+        for e in children.iter_descendants(root) {
+            let Ok(name) = names.get(e) else { continue };
+            for (slot, meshes) in MESHES.iter().enumerate() {
+                if let Some(part) = meshes.iter().position(|m| *m == name.as_str()) {
+                    parts.push((e, slot, part));
+                }
+            }
+            match name.as_str() {
+                "muzzle" => muzzle = Some(e),
+                "optic" => optic = Some(model_space(e, root, &parents, &transforms).translation),
+                _ => {}
+            }
+        }
+        if let (Some(m), Some(fx)) = (muzzle, &flash) {
+            let kind = WEAPONS[model.index];
+            if !matches!(kind, WeaponKind::Fist | WeaponKind::Harpoon) {
+                commands.entity(m).with_child((Flash, Mesh3d(fx.mesh.clone()), MeshMaterial3d(fx.mat.clone()), Transform::default(), Visibility::Hidden));
+            }
+        }
+        model.rig = Some(Rig { player, clips: nodes, playing: Clip::Idle, parts, muzzle, optic });
+    }
+}
+
+/// `e`'s transform relative to `root`, from local transforms (works before propagation).
+fn model_space(mut e: Entity, root: Entity, parents: &Query<&ChildOf>, transforms: &Query<&Transform>) -> Transform {
+    let mut acc = Transform::IDENTITY;
+    while e != root {
+        let Ok(tf) = transforms.get(e) else { break };
+        acc = *tf * acc;
+        let Ok(parent) = parents.get(e) else { break };
+        e = parent.parent();
+    }
+    acc
 }
 
 fn animate(
     time: Res<Time>,
     tuning: Res<Tuning>,
     arsenal: Res<Arsenal>,
+    loadout: Res<Loadout>,
     mut fired: MessageReader<WeaponFired>,
     player: Single<&Player>,
     mut vm: Single<(&mut Transform, &mut ViewModel, &mut Visibility), Without<WeaponModel>>,
@@ -154,8 +245,11 @@ fn animate(
     }
 
     for f in fired.read() {
-        vm.kick_vel += f.kick * 3.0;
+        // The model's fire clip carries most of the kick; the spring adds weight to it.
+        vm.kick_vel += f.kick * 1.5;
+        vm.flash = 0.04;
     }
+    vm.flash -= dt;
     // Damped spring back to rest.
     let accel = -160.0 * vm.kick - 16.0 * vm.kick_vel;
     vm.kick_vel += accel * dt;
@@ -168,17 +262,135 @@ fn animate(
     vm.bob += dt * speed * 1.7;
     let bob = Vec3::new(vm.bob.cos(), -(vm.bob * 2.0).sin().abs() * 0.6, 0.0) * 0.012 * amount;
 
-    let lower = Vec3::NEG_Y * 0.35 * (arsenal.switch_time / SWITCH_TIME).clamp(0.0, 1.0);
+    // Aimed: the current weapon's sight line on the screen centre.
+    let kind = arsenal.kind();
+    let sight = models.iter().find(|(m, _)| m.index == arsenal.current).and_then(|(m, _)| m.rig.as_ref()?.optic).map(|o| {
+        let optic = if customizable(kind) { loadout.part(kind, 0) } else { 0 };
+        hold(kind) + o + Vec3::Y * SIGHT_HEIGHT[optic]
+    });
+    let aimed = sight.map_or(Vec3::new(0.0, -0.08, AIMED_DEPTH), |s| Vec3::new(-s.x, -s.y, AIMED_DEPTH));
 
     let ads = aim.as_ref().map_or(0.0, |a| a.level);
-    let rest = REST.lerp(AIMED, ads);
-    let play_pos = rest + bob * (1.0 - 0.8 * ads) + lower + Vec3::Z * vm.kick * 0.06;
-    let play_rot = Quat::from_rotation_x(vm.kick * 0.12);
+    let rest = REST.lerp(aimed, ads);
+    let play_pos = rest + bob * (1.0 - 0.8 * ads) + Vec3::Z * vm.kick * 0.04;
+    let play_rot = Quat::from_rotation_x(vm.kick * 0.08);
     let show_rot = Quat::from_rotation_y(1.25 + 0.3 * (vm.spin * 0.7).sin()) * Quat::from_rotation_x(0.08);
     tf.translation = play_pos.lerp(SHOWCASE, vm.showcase);
     tf.rotation = play_rot.slerp(show_rot, vm.showcase);
 
     for (model, mut vis) in &mut models {
-        *vis = if model.0 == arsenal.current { Visibility::Inherited } else { Visibility::Hidden };
+        let want = if model.index == arsenal.current { Visibility::Inherited } else { Visibility::Hidden };
+        if *vis != want {
+            *vis = want;
+        }
+    }
+}
+
+/// Plays the current model's clips: draw on a swap, fire per shot (sped up to the fire rate),
+/// reload stretched to the reload time, inspect on V, idle the rest of the time.
+#[allow(clippy::too_many_arguments)]
+fn play_clips(
+    tuning: Res<Tuning>,
+    arsenal: Res<Arsenal>,
+    loadout: Res<Loadout>,
+    mut input: ResMut<PlayerInput>,
+    mut fired: MessageReader<WeaponFired>,
+    mut models: Query<&mut WeaponModel>,
+    mut anims: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
+    mut last: Local<Option<usize>>,
+    mut was_reloading: Local<bool>,
+) {
+    let shots = fired.read().count();
+    let inspect = std::mem::take(&mut input.inspect_pressed);
+    let kind = arsenal.kind();
+    let swapped = *last != Some(arsenal.current);
+    let reloading = arsenal.reload > 0.0;
+    let reload_started = reloading && !*was_reloading;
+    *was_reloading = reloading;
+    for mut model in &mut models {
+        if model.index != arsenal.current {
+            continue;
+        }
+        let Some(rig) = model.rig.as_mut() else { return };
+        let Ok((mut anim, mut transitions)) = anims.get_mut(rig.player) else { return };
+        *last = Some(arsenal.current);
+        let want = if swapped {
+            Some((Clip::Draw, SWITCH_TIME.max(0.2)))
+        } else if reload_started {
+            Some((Clip::Reload, kind.reload_time(&tuning)))
+        } else if shots > 0 {
+            Some((Clip::Fire, kind.cooldown(&tuning, &loadout)))
+        } else if inspect && rig.playing == Clip::Idle {
+            Some((Clip::Inspect, 0.0))
+        } else {
+            None
+        };
+        if let Some((clip, fit)) = want
+            && let Some(&(node, length)) = rig.clips.get(&clip)
+        {
+            // Never slower than authored; faster when the game's timing is shorter than the clip.
+            let speed = if fit > 0.0 { (length / fit).max(1.0) } else { 1.0 };
+            let speed = if clip == Clip::Reload && fit > 0.0 { length / fit } else { speed };
+            transitions.play(&mut anim, node, Duration::from_millis(if clip == Clip::Fire { 10 } else { 60 })).set_speed(speed);
+            rig.playing = clip;
+            continue;
+        }
+        let done = rig.clips.get(&rig.playing).is_none_or(|(node, _)| anim.animation(*node).is_none_or(|a| a.is_finished()));
+        if rig.playing != Clip::Idle && done || anim.playing_animations().next().is_none() {
+            if let Some(&(node, _)) = rig.clips.get(&Clip::Idle) {
+                transitions.play(&mut anim, node, Duration::from_millis(120)).repeat();
+            }
+            rig.playing = Clip::Idle;
+        }
+    }
+}
+
+/// Show exactly the fitted part per slot on the current gunsmith weapon.
+fn show_parts(loadout: Res<Loadout>, models: Query<&WeaponModel>, mut vis: Query<&mut Visibility>) {
+    for model in &models {
+        let Some(rig) = &model.rig else { continue };
+        let kind = WEAPONS[model.index];
+        for &(e, slot, part) in &rig.parts {
+            let fitted = customizable(kind) && loadout.part(kind, slot) == part;
+            let want = if fitted { Visibility::Inherited } else { Visibility::Hidden };
+            if let Ok(mut v) = vis.get_mut(e)
+                && *v != want
+            {
+                *v = want;
+            }
+        }
+    }
+}
+
+fn flash(vm: Single<&ViewModel>, mut flashes: Query<(&mut Visibility, &mut Transform), With<Flash>>, mut n: Local<u32>) {
+    let on = vm.flash > 0.0;
+    *n = n.wrapping_add(1);
+    for (mut v, mut tf) in &mut flashes {
+        let want = if on { Visibility::Inherited } else { Visibility::Hidden };
+        if *v != want {
+            *v = want;
+        }
+        if on {
+            // A different size and twist each shot so it never looks stamped.
+            tf.scale = Vec3::new(1.0, 1.0, 1.6) * (0.8 + (*n % 3) as f32 * 0.2);
+            tf.rotation = Quat::from_rotation_z(*n as f32 * 1.3);
+        }
+    }
+}
+
+/// Keep `Muzzle` on the current model's muzzle socket, in the camera's frame.
+fn track_muzzle(
+    arsenal: Res<Arsenal>,
+    mut muzzle: ResMut<Muzzle>,
+    models: Query<&WeaponModel>,
+    camera: Single<&GlobalTransform, With<PlayerCamera>>,
+    globals: Query<&GlobalTransform>,
+) {
+    let Some(rig) = models.iter().find(|m| m.index == arsenal.current).and_then(|m| m.rig.as_ref()) else { return };
+    let Some(Ok(at)) = rig.muzzle.map(|m| globals.get(m)) else { return };
+    let local = camera.affine().inverse().transform_point3(at.translation());
+    // Keep shots sane if the model is mid-swap or off in the gunsmith.
+    if local.z < -0.1 && local.length() < 2.0 {
+        muzzle.0 = local;
     }
 }

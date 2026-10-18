@@ -241,6 +241,7 @@ fn update_speed(
 
 fn update_weapon(
     arsenal: Res<Arsenal>,
+    tuning: Res<Tuning>,
     loadout: Res<Loadout>,
     recoil: Option<Res<Recoil>>,
     score: Res<Score>,
@@ -251,9 +252,19 @@ fn update_weapon(
     mut heat: Single<(&mut Node, &mut BackgroundColor), (With<HeatFill>, Without<SlotPip>)>,
 ) {
     let kind = arsenal.kind();
-    weapon_text.0 = kind.name().into();
-    parts_text.0 = if kind == WeaponKind::RocketLauncher {
-        "SPLASH   ROCKET JUMP READY".into()
+    weapon_text.0 = match arsenal.rounds(&tuning) {
+        _ if arsenal.reload > 0.0 => format!("{}   RELOADING", kind.name()),
+        Some((left, mag)) => format!("{}   {left} / {mag}", kind.name()),
+        None => kind.name().into(),
+    };
+    parts_text.0 = if !crate::gunsmith::customizable(kind) {
+        match kind {
+            WeaponKind::RocketLauncher => "SPLASH   ROCKET JUMP READY",
+            WeaponKind::Grenade => "BOUNCES   BURSTS ON A FUSE OR A HIT",
+            WeaponKind::Harpoon => "YANKS YOU TO WALLS   YANKS THINGS TO YOU",
+            _ => "PUNCH ANY SURFACE TO LAUNCH OFF IT",
+        }
+        .into()
     } else {
         let fitted: Vec<&str> = (0..SLOTS.len()).filter(|s| loadout.part(kind, *s) != 0).map(|s| PARTS[s][loadout.part(kind, s)].name).collect();
         if fitted.is_empty() { "NO PARTS".into() } else { fitted.join("   ") }

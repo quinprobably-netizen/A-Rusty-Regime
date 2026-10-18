@@ -308,7 +308,7 @@ fn weapon_switching() {
     input(&mut app).weapon_select = Some(2);
     app.update();
     assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::Shotgun);
-    input(&mut app).weapon_step = 2; // wraps around past the pistol
+    input(&mut app).weapon_step = 8; // wraps around past the power fist
     app.update();
     assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::RocketLauncher);
     input(&mut app).weapon_last = true;
@@ -1544,8 +1544,120 @@ fn gunsmith_parts_change_the_gun_and_persist() {
     for slot in 0..SLOTS.len() {
         assert_eq!(PARTS[slot].len(), 3);
     }
-    let save = Save { loadout: Some(loadout), ..default() };
+    let save = Save { loadout: Some(loadout.clone()), ..default() };
     let text = toml::to_string(&save).unwrap();
     let back: Save = toml::from_str(&text).unwrap();
     assert_eq!(back.loadout, Some(loadout));
+}
+
+#[test]
+fn magazines_run_dry_and_reload() {
+    let mut app = make_app(Tuning::default());
+    let t = Tuning::default();
+    select_weapon(&mut app, WeaponKind::Revolver);
+    for _ in 0..t.revolver.mag {
+        input(&mut app).fire_pressed = true;
+        run(&mut app, t.revolver.cooldown + 0.05);
+    }
+    let a = app.world().resource::<Arsenal>();
+    assert_eq!(a.shots, t.revolver.mag, "six shots from a six-shooter");
+    assert!(a.reload > 0.0, "an empty gun reloads itself");
+    input(&mut app).fire_pressed = true;
+    run(&mut app, 0.1);
+    assert_eq!(app.world().resource::<Arsenal>().shots, t.revolver.mag, "no shots while reloading");
+    run(&mut app, t.revolver.reload);
+    assert_eq!(app.world().resource::<Arsenal>().rounds(&t), Some((t.revolver.mag, t.revolver.mag)));
+    // R tops up a part-used magazine; swapping away cancels a reload.
+    input(&mut app).fire_pressed = true;
+    run(&mut app, 0.6);
+    input(&mut app).reload_pressed = true;
+    run(&mut app, 0.1);
+    assert!(app.world().resource::<Arsenal>().reload > 0.0, "R starts a reload");
+    select_weapon(&mut app, WeaponKind::Fist);
+    assert_eq!(app.world().resource::<Arsenal>().reload, 0.0);
+    assert_eq!(app.world().resource::<Arsenal>().rounds(&t), None, "the fist has no magazine");
+}
+
+#[test]
+fn power_fist_launches_off_a_wall() {
+    let mut app = make_app(Tuning::default());
+    wall(&mut app, Vec3::new(6.0, 4.0, 0.5), controller::SPAWN + Vec3::new(0.0, 0.0, -1.8));
+    run(&mut app, 0.5);
+    select_weapon(&mut app, WeaponKind::Fist);
+    input(&mut app).fire_held = true;
+    run(&mut app, 0.05);
+    input(&mut app).fire_held = false;
+    let (_, vel, _) = player(&mut app);
+    assert!(vel.z > 6.0, "punching the wall throws you back: {vel}");
+}
+
+#[test]
+fn harpoon_yanks_you_to_a_wall() {
+    let mut app = make_app(Tuning::default());
+    wall(&mut app, Vec3::new(10.0, 10.0, 0.5), controller::SPAWN + Vec3::new(0.0, 0.0, -20.0));
+    run(&mut app, 0.5);
+    select_weapon(&mut app, WeaponKind::Harpoon);
+    input(&mut app).fire_pressed = true;
+    run(&mut app, 0.4);
+    let (_, vel, _) = player(&mut app);
+    assert!(vel.z < -8.0, "the spear sticks and pulls you toward it: {vel}");
+    run(&mut app, 0.2);
+    assert!(app.world().resource::<Arsenal>().reload > 0.0, "one spear, then a reload");
+}
+
+#[test]
+fn grenades_bounce_then_burst_and_knock_you_up() {
+    let mut app = make_app(Tuning::default());
+    run(&mut app, 0.5);
+    select_weapon(&mut app, WeaponKind::Grenade);
+    // Straight down at your feet: it bounces about, then bursts on the fuse close by.
+    app.world_mut().resource_mut::<ViewAngles>().pitch = -1.5;
+    input(&mut app).fire_pressed = true;
+    let fuse = Tuning::default().grenade.fuse;
+    run(&mut app, fuse - 0.3);
+    let (_, vel, _) = player(&mut app);
+    assert!(vel.y.abs() < 1.0, "no burst before the fuse: {vel}");
+    run(&mut app, 0.4);
+    let (_, vel, _) = player(&mut app);
+    assert!(vel.y > 1.5 && vel.length() > 4.0, "the burst throws you: {vel}");
+}
+
+#[test]
+fn old_saves_keep_their_gunsmith_parts() {
+    use crate::gunsmith::Loadout;
+    // A save from before the new weapons: four weapons' worth of parts.
+    let text = "parts = [[0, 0, 0, 0], [2, 1, 0, 0], [0, 0, 0, 0], [1, 0, 0, 0]]\ntune = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]\n";
+    let mut l: Loadout = toml::from_str(text).unwrap();
+    assert_eq!(l.part(WeaponKind::Rifle, 0), 2);
+    assert_eq!(l.part(WeaponKind::Pistol, 0), 1);
+    assert_eq!(l.part(WeaponKind::Dmr, 0), 0, "new guns start bare");
+    l.cycle(WeaponKind::Dmr, 0, 2);
+    assert_eq!(l.part(WeaponKind::Dmr, 0), 2);
+    assert_eq!(l.part(WeaponKind::Rifle, 0), 2, "growing the list keeps the old parts");
+}
+
+/// Every weapon's model is in the assets with the rig the viewmodel drives: the five clips, a
+/// muzzle on everything that shoots, and the gunsmith part meshes on the guns.
+#[test]
+fn weapon_models_carry_their_rigs() {
+    for kind in crate::weapon::WEAPONS {
+        let path = format!("assets/models/weapons/{}.glb", kind.id());
+        let Ok(bytes) = std::fs::read(&path) else { panic!("missing {path}") };
+        let len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+        let json = std::str::from_utf8(&bytes[20..20 + len]).unwrap();
+        let has = |name: &str| json.contains(&format!("\"name\":\"{name}\""));
+        for clip in ["idle", "fire", "reload", "draw", "inspect"] {
+            assert!(has(clip), "{path} has no {clip} clip");
+        }
+        assert!(has("root"), "{path} has no root bone");
+        assert!(has("muzzle"), "{path} has no muzzle socket");
+        if crate::gunsmith::customizable(kind) {
+            for slot in crate::gunsmith::MESHES {
+                for part in &slot[1..] {
+                    assert!(has(part), "{path} has no {part}");
+                }
+            }
+            assert!(has("optic"), "{path} has no optic socket for aiming");
+        }
+    }
 }
