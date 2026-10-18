@@ -452,6 +452,7 @@ fn fly_bullets(
         let air = wind.as_ref().map_or(Vec3::ZERO, |w| w.0);
         let rel = b.velocity - air;
         b.velocity = air + rel * (-b.drag * rel.length() * dt).exp();
+        let speed = b.velocity.length();
         let mut pos = tf.translation;
         let mut remaining = speed * dt;
         let dir = b.velocity / speed;
