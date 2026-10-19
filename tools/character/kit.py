@@ -969,12 +969,14 @@ ARMS = {}
 
 
 def solve_carries(build, arm):
+    """Solve every carry's arm pose. A build may bring its own `carries` (same shape as CARRIES, for
+    1.80 m): the realistic bodies' shoulders sit higher than the kit's."""
     k = build.k
     bases = {"ready": clip_walk(build, 0.0), "run": clip_run(build, 0.0), "sprint": clip_sprint(build, 0.0),
              "crouch": clip_crouch(build, 0.0), "slide": clip_slide(build, 0.0)}
     ARMS.clear()
     prev = None
-    for name, (grip, fwd) in CARRIES.items():
+    for name, (grip, fwd) in getattr(build, "carries", CARRIES).items():
         g = (grip[0] * build.width, grip[1] * k, grip[2] * k)
         ARMS[name] = solve_rifle_arms(arm, bases[name], g, fwd, start=prev)
         prev = dict(ARMS[name])
