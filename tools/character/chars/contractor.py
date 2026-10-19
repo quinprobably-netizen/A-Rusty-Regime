@@ -259,10 +259,11 @@ def dome(name, M, radii, lat0, lat1, thick, material, lon0=-180.0, lon1=180.0, n
     return _grid_obj(name, rows, full, material, thick, bevel, M.translation, pole=(M @ Vector((0, 0, rz))) if pole else None)
 
 
-def wrap(name, a, b, r0, r1, phi0, phi1, thick, material, front=(0, -1, 0), nt=6, nphi=16, bevel=0.003, ef=1.0, es=1.0, bulge=0.0):
+def wrap(name, a, b, r0, r1, phi0, phi1, thick, material, front=(0, -1, 0), nt=6, nphi=16, bevel=0.003, ef=1.0, es=1.0, bulge=0.0, round_ends=0.0):
     """A plate wrapped around the segment a->b (a limb): a tapered elliptic cylinder patch of radius
     r0 at a to r1 at b, from angle phi0 to phi1 (degrees; 0 faces `front`, +90 faces front x axis,
-    which is the outside of a left limb hanging down). `bulge` swells the middle (a rounded greave)."""
+    which is the outside of a left limb hanging down). `bulge` swells the middle (a rounded greave);
+    `round_ends` (a squircle exponent, ~3) narrows the ends so the plate gets rounded corners."""
     a, b = Vector(a), Vector(b)
     A = (b - a).normalized()
     F = Vector(front)
@@ -274,8 +275,12 @@ def wrap(name, a, b, r0, r1, phi0, phi1, thick, material, front=(0, -1, 0), nt=6
         t = i / nt
         r = r0 + (r1 - r0) * t + bulge * math.sin(math.pi * t)
         c = a.lerp(b, t)
+        f = 1.0
+        if round_ends and not closed:
+            f = max(0.5, (1 - abs(2 * t - 1) ** round_ends) ** (1 / round_ends))
+        pm = (phi0 + phi1) / 2
         rows.append([c + F * math.cos(math.radians(p)) * r * ef + S * math.sin(math.radians(p)) * r * es
-                     for p in [phi0 + (phi1 - phi0) * j / nphi for j in range(nphi if closed else nphi + 1)]])
+                     for p in [pm + (phi0 - pm + (phi1 - phi0) * j / nphi) * f for j in range(nphi if closed else nphi + 1)]])
     o = _grid_obj(name, rows, closed, material, thick, bevel, a.lerp(b, 0.5))
     return o
 

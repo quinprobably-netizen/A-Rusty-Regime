@@ -272,9 +272,10 @@ def sweep(name, pts, normals, width, thick, material):
     return kit.hs._obj(name, bm, material, bevel=0.0)
 
 
-def hug(name, src, c, axis, grow, width, thick, material, n=18, smooth=2):
+def hug(name, src, c, axis, grow, width, thick, material, n=18, smooth=2, rmax=None):
     """A strap ring that hugs `src` around the point `c` (inside it) in the plane across `axis`: the
-    surface is found by rays from `c` outward, then grown by `grow`."""
+    surface is found by rays from `c` outward, then grown by `grow`. Hits farther than `rmax` (into
+    the other leg, say) take the median radius instead."""
     c = Vector(c)
     a = Vector(axis).normalized()
     u = a.cross(Vector((0, 0, 1)) if abs(a.z) < 0.9 else Vector((1, 0, 0))).normalized()
@@ -286,9 +287,10 @@ def hug(name, src, c, axis, grow, width, thick, material, n=18, smooth=2):
         d = u * math.cos(ang) + v * math.sin(ang)
         ok, loc, _, _ = src.ray_cast(c, d)
         dirs.append(d)
-        rs.append((Vector(loc) - c).length if ok else None)
-    good = [r for r in rs if r is not None]
-    rs = [r if r is not None else max(good) for r in rs]
+        r = (Vector(loc) - c).length if ok else None
+        rs.append(r if r is not None and (rmax is None or r <= rmax) else None)
+    good = sorted(r for r in rs if r is not None)
+    rs = [r if r is not None else good[len(good) // 2] for r in rs]
     for _ in range(smooth):
         rs = [max(rs[i], (rs[i - 1] + rs[i] + rs[(i + 1) % n]) / 3) for i in range(n)]
     pts = [c + d * (r + grow + thick / 2) for d, r in zip(dirs, rs)]

@@ -850,26 +850,94 @@ def greave(c, b, s, sx, seed=71, t=(0.1, 0.74), strap=True):
     return gr
 
 
+def hug_tube(name, tree, a, b_, r0, r1, n=24, rings=6, reach=0.12, material="black", bevel=0.0025, smooth=1):
+    """A closed sleeve following the surface round the (near vertical) axis a -> b_, from `r0` to `r1`
+    off it: boot shafts, cuffs. Rays miss nothing at these heights; a miss takes the ring's mean."""
+    a, b_ = Vector(a), Vector(b_)
+    angles = [360.0 * i / n for i in range(n)]
+    profs = []
+    for ri in range(rings + 1):
+        p = a.lerp(b_, ri / rings)
+        prof = contour(tree, p, p.z, angles, reach)
+        known = [r for _, r in prof if r is not None]
+        if not known:
+            return None
+        rs = [r if r is not None else sum(known) / len(known) for _, r in prof]
+        for _ in range(smooth):
+            rs = [(rs[i - 1] + 2 * rs[i] + rs[(i + 1) % n]) / 4 for i in range(n)]
+        profs.append((p, [d for d, _ in prof], rs))
+    # A straight-walled sleeve: never narrower than what lies above it, and no waist below a straight
+    # taper from bottom to top (so an ankle bulge does not make a pot).
+    for i in range(n):
+        col = [pr[2][i] for pr in profs]
+        for ri in range(rings - 1, -1, -1):
+            col[ri] = max(col[ri], col[ri + 1])
+        for ri in range(rings + 1):
+            profs[ri][2][i] = max(col[ri], col[0] + (col[-1] - col[0]) * ri / rings)
+    bm = bmesh.new()
+    O, I = [], []
+    for p, ds, rs in profs:
+        cc = Vector((p.x, p.y))
+        O.append([bm.verts.new((*(cc + d.to_2d() * (r + r1)), p.z)) for d, r in zip(ds, rs)])
+        I.append([bm.verts.new((*(cc + d.to_2d() * (r + r0)), p.z)) for d, r in zip(ds, rs)])
+    for ri in range(rings):
+        for i in range(n):
+            j = (i + 1) % n
+            bm.faces.new((O[ri][i], O[ri][j], O[ri + 1][j], O[ri + 1][i]))
+            bm.faces.new((I[ri][j], I[ri][i], I[ri + 1][i], I[ri + 1][j]))
+    for ri in (0, rings):
+        for i in range(n):
+            j = (i + 1) % n
+            bm.faces.new((O[ri][j], O[ri][i], I[ri][i], I[ri][j]))
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    o = kit.hs._obj(name, bm, material, bevel, 1)
+    for f in o.data.polygons:
+        f.use_smooth = True
+    o["shaded"] = False
+    return o
+
+
 def boot(c, b, flesh, s, sx, top=0.19, material="black", toe="bone"):
-    """A black boot trimmed clean at the top, a bone toe cap, a treaded rubber sole, a red ankle strap."""
+    """A black boot: the foot shelled off the body and trimmed low, a sleeve-built shaft hugging the
+    ankle with a rolled rim, a bone toe cap, a treaded rubber sole and a red ankle strap with a buckle."""
     k = b.k
-    ll = "lower_leg." + s
-    f0 = b.j("foot." + s, 0.0)
+    ll, ft = "lower_leg." + s, "foot." + s
+    f0 = b.j(ft, 0.0)
     top = top * k
-    bt = kit.shell(flesh, lambda p: p.z < top + 0.04 and p.x * sx > 0, "boot", material, offset=0.012, thick=0.006,
-                   bones={"foot." + s, ll}, inside=[kit.block("boot_cut", (f0.x, -0.05, top / 2), (0.3, 0.6, top), "steel", bevel=0)])
-    c.add(bt, ["foot." + s, ll])
-    toe_c = b.j("foot." + s, 1.0) + Vector((0, -0.03, -0.005))
-    tf = ell_form(toe_c, (0.056 * k, 0.068 * k, 0.058 * k), u=24, v=16)
-    cap = form_plate(tf, kit.block("toe_cut", (f0.x, toe_c.y - 0.1, toe_c.z + 0.075), (0.2, 0.2, 0.12), "steel", bevel=0), "toecap", thick=0.008,
-                     keep=lambda p: p.y < toe_c.y + 0.02, bevel=0.003)
+    low = 0.125 * k
+    bt = kit.shell(flesh, lambda p: p.z < low + 0.03 and p.x * sx > 0, "boot", material, offset=0.012, thick=0.006,
+                   bones={ft, ll}, inside=[kit.block("boot_cut", (f0.x, -0.05, low / 2), (0.3, 0.6, low), "steel", bevel=0)])
+    c.add(bt, [ft, ll])
+    ftree = bvh(flesh)
+    z0 = f0.z + 0.004 * k
+    sh = hug_tube("boot_shaft", ftree, Vector((f0.x, f0.y, z0)), b.j(ll, (b.j(ll, 0.0).z - top) / (b.j(ll, 0.0).z - b.j(ll, 1.0).z)),
+                  0.013, 0.022, n=24, rings=5, material=material)
+    if sh is not None:
+        c.add(sh, [ll, ft])
+        st = bvh(sh)
+        rim = ring_band("boot_rim", st, Vector((f0.x, f0.y)), top - 0.006, 0, 360, -0.002, 0.003, 0.012, "rubber", n=24, reach=0.15)
+        if rim is not None:
+            c.add(rim, [ll])
+        az = b.j(ll, 0.86).z
+        strap = ring_band("ankle_strap", st, Vector((f0.x, f0.y)), az, 0, 360, 0.0004, 0.006, 0.022, "accent", n=24, reach=0.15)
+        if strap is not None:
+            c.add(strap, [ll, ft])
+            h = hit(bvh(strap), Vector((f0.x + sx * 0.2, f0.y, az)), (-sx, 0, 0))
+            if h:
+                bk = kit.block("ankle_buckle", (0, 0, 0), (0.006, 0.028, 0.03), "gunmetal", bevel=0.0015)
+                bk.data.transform(Matrix.Translation(h[0] + h[1] * 0.002))
+                c.rigid(bk, ll)
+                c.rigid(screw(h[0] + h[1] * 0.005, h[1], r=0.0035), ll)
+    toe_c = b.j(ft, 1.0) + Vector((0, -0.016, -0.004))
+    tf = ell_form(toe_c, (0.05 * k, 0.052 * k, 0.04 * k), u=24, v=16)
+    cap = form_plate(tf, kit.block("toe_cut", (f0.x, toe_c.y - 0.1, toe_c.z + 0.075), (0.2, 0.2, 0.12), "steel", bevel=0), "toecap", thick=0.007,
+                     keep=lambda p: p.y < toe_c.y + 0.012, bevel=0.003)
     done(tf)
-    c.rigid(cap, "foot." + s)
+    c.rigid(cap, ft)
     sole = kit.plan("sole", kit.rounded([(f0.x - 0.05 * k, 0.09 * k), (f0.x + 0.05 * k, 0.09 * k), (f0.x + 0.058 * k, -0.235 * k), (f0.x - 0.048 * k, -0.235 * k)], 0.04),
                     0.026, "rubber", z=0.013, bevel=0.002, segs=1)
     kit.cut(sole, *kit.slots("tread", -0.21 * k, 0.065 * k, 9, -0.002, 0.006, f0.x - 0.07, f0.x + 0.07))
-    c.rigid(sole, "foot." + s)
-    c.add(band("ankle_strap", b.j(ll, 0.86), (0.055 * k, 0.06 * k), 0.022, 0.008, "accent", axis=(0, 0, 1)), [ll, "foot." + s])
+    c.rigid(sole, ft)
 
 
 # ----------------------------------------------------------------------------------------- build

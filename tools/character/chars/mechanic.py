@@ -269,7 +269,11 @@ def rivets(name, spots, r=0.004, material="steel", segs=8):
         rot = Vector((0, 0, 1)).rotation_difference(n).to_matrix().to_4x4()
         h = r * 0.75
         m = Matrix.Translation(Vector(p) + n * (h / 2 - r * 0.25)) @ rot
-        bmesh.ops.create_cone(bm, cap_ends=True, cap_tris=False, segments=segs, radius1=r, radius2=r * 0.5, depth=h, matrix=m)
+        made = bmesh.ops.create_cone(bm, cap_ends=True, cap_tris=False, segments=segs, radius1=r, radius2=r * 0.5, depth=h, matrix=m)
+        vs = set(made["verts"])
+        bm.normal_update()
+        under = [f for f in bm.faces if len(f.verts) == segs and set(f.verts) <= vs and f.normal.dot(n) < -0.9]
+        bmesh.ops.delete(bm, geom=under, context="FACES_ONLY")  # the head sits on the plate: no underside
     o = kit.hs._obj(name, bm, material, bevel=0)
     o["shaded"] = True
     return o
@@ -384,6 +388,29 @@ def skin(c, obj, fn):
                 if bn not in groups:
                     groups[bn] = obj.vertex_groups.new(name=bn)
                 groups[bn].add([v.index], w, "REPLACE")
+    c.parts.append((obj, "DONE", None))
+    return obj
+
+
+def transfer_from(c, obj, flesh, bones):
+    """Skin `obj` by copying weights from the nearest face of the body that follows `bones` (trousers
+    on a big man whose hands hang by his thighs must not pick up the forearms)."""
+    import bpy
+    tmp = flesh.copy()
+    tmp.data = flesh.data.copy()
+    bpy.context.scene.collection.objects.link(tmp)
+    dom = kit.dominant(tmp)
+    bm = bmesh.new()
+    bm.from_mesh(tmp.data)
+    bmesh.ops.delete(bm, geom=[f for f in bm.faces if sum(dom[v.index] in bones for v in f.verts) * 2 < len(f.verts)], context="FACES")
+    bm.to_mesh(tmp.data)
+    bm.free()
+    obj.vertex_groups.clear()
+    kit.transfer(tmp, obj)
+    for g in list(obj.vertex_groups):
+        if g.name not in bones:
+            obj.vertex_groups.remove(g)
+    bpy.data.objects.remove(tmp)
     c.parts.append((obj, "DONE", None))
     return obj
 
