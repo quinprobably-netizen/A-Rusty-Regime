@@ -1,25 +1,38 @@
-"""Acolyte, Regime: the faceless grunt of the Algorithm's cult. A sealed bone-white helmet with one
-curved red sensor slit, bone polymer plate etched with black code scripture (cuirass, back plate,
-abdomen lames, layered pauldrons, vambraces, tassets, knee cops, greaves) over a black undersuit, and
-cables from the helmet and the plates into an uplink node on the back with a short antenna.
+"""Acolyte, Regime: the faceless grunt of the Algorithm's cult, an elite black-clad trooper. A black
+combat shirt and ripstop trousers draped by the cloth simulation, black gloves and tactical boots; a
+black plate carrier with bone-white hard plates etched with black code scripture front and back, rifle
+magazine pouches on the placard, red padded shoulder straps; bone shoulder caps over a lame, thigh
+guards, knee caps and shin guards strapped over the cloth; a sealed bone helmet with a respirator
+faceplate and one glowing red sensor slit over a knit hood; an uplink radio in a bone housing on the
+back plate with a whip antenna and a fold-up SATCOM panel, cabled into the helmet.
 
-Tints: primary = undersuit, secondary = waist wrap and pouches, accent = straps.
+Built on the realistic layer (real.py) like the Contractor: a real body, its head dropped under the
+helmet and hood; every hard plate is laid on an envelope of the cloth or head it sits on and bakes its
+scripture, screws and panel lines from detail meshes.
 
-This module also holds the Regime's shared helpers (scripture projected onto curved plates,
-contour-following bands and grooves, analytic arc plates and ellipsoid plate forms, cheap screws,
-bands, sockets, antennas, the sealed helmet) that zealot.py and choir.py import.
+Tints: primary = combat shirt and hood, secondary = trousers, accent = straps and pull tabs.
+
+The first half of this module holds the Regime's code-built helpers (scripture projected onto curved
+plates, contour-following bands, analytic arc and ellipsoid plates, cheap screws, sockets, antennas,
+the old sealed helmet) that zealot.py and choir.py import; the Acolyte uses `project` and the
+scripture generators from it.
 """
 
 import math
+import os
 import random
 
 import bmesh
 import bpy
+import numpy as np
 from mathutils import Euler, Matrix, Vector
 from mathutils.bvhtree import BVHTree
 
 import kit
-from kit import FEET, SHINS, TORSO
+import real
+import surfaces
+from chars import contractor as pmc
+from kit import FOREARMS, THIGHS, UPPER_ARMS
 
 # ------------------------------------------------------------------------------- Regime helpers
 
@@ -940,91 +953,973 @@ def boot(c, b, flesh, s, sx, top=0.19, material="black", toe="bone"):
     c.rigid(sole, ft)
 
 
-# ----------------------------------------------------------------------------------------- build
+# ===================================================================== the realistic Acolyte
+# Built on the realistic layer (real.py) like the Contractor: a real body under a draped black combat
+# shirt and trousers, gloves and tactical boots; then a black plate carrier whose bone-white hard
+# plates, shoulder caps and leg guards are fitted to the cloth they sit on (envelopes of that surface,
+# smoothed the way a moulded plate bridges the folds), and a sealed helmet fitted the same way round
+# the head. The hard plates bake their etched scripture, vents and panel lines from detail meshes
+# that cost no game triangles.
 
+kit.hs.PALETTE.update({
+    "regime_bone": ((0.74, 0.715, 0.655), (0.52, 0.49, 0.44), 0.0, 0.44, 0.3, 0),    # bone-white hard plate
+    "regime_nylon": ((0.030, 0.030, 0.033), (0.14, 0.14, 0.145), 0.0, 0.8, 0.3, 0),  # black carrier cordura
+    "regime_pad": ((0.022, 0.022, 0.024), (0.08, 0.08, 0.08), 0.0, 0.92, 0.1, 0),    # helmet liner foam
+})
+
+
+def bone_plate(g, pal):
+    """The Regime's hard plate: a moulded composite under a satin bone-white coat. A faint orange peel
+    in the coat, slow mottling from the layup, and fine scratches through to the darker composite (the
+    edge chips and cavity dirt come from the shared wear). Nothing finer than a few texels, so the coat
+    stays clean at game resolution instead of breaking into speckle."""
+    base, worn = pal[0], pal[1]
+    pos = g.geo("Position")
+    x, y, z = g.xyz(pos)
+    peel = g.noise(pos, 140.0, detail=2, rough=0.45)
+    mottle = g.noise(pos, 9.0, detail=3)
+    shade = g.remap(mottle, 0.3, 0.7, 0.955, 1.03, smooth=False)
+    col = g.mix(1.0, base, g.rgb(shade, shade, g.mul(shade, 0.99)), "MULTIPLY")
+    a = g.noise(g.combine(x, y, g.mul(z, 0.07)), 55.0, detail=2)
+    b = g.noise(g.combine(g.mul(x, 0.07), g.add(y, 3.1), g.add(z, 1.7)), 55.0, detail=2)
+    lines = g.math("MAXIMUM", g.remap(g.math("ABSOLUTE", g.sub(a, 0.5)), 0.012, 0.0), g.remap(g.math("ABSOLUTE", g.sub(b, 0.5)), 0.012, 0.0))
+    scr = g.mul(lines, g.remap(g.noise(pos, 5.0, detail=2), 0.5, 0.65))
+    col = g.mix(g.mul(scr, 0.45), col, worn)
+    rough = g.lerp(peel, pal[3] - 0.04, pal[3] + 0.04)
+    rough = g.lerp(scr, rough, 0.62)
+    h = g.sub(g.add(g.mul(peel, 0.5), 0.25), g.mul(scr, 0.5))
+    return dict(color=col, rough=rough, metal=0.0, height=h, bump=0.00006)
+
+
+surfaces.RECIPES.setdefault("boneplate", bone_plate)
+surfaces.RECIPE.setdefault("regime_bone", "boneplate")
+surfaces.RECIPE.setdefault("regime_nylon", "cordura")
+surfaces.RECIPE.setdefault("regime_pad", "canvas")
+
+BONE, NYLON = "regime_bone", "regime_nylon"
+FAST = bool(os.environ.get("ACOLYTE_FAST"))  # look-dev: skip the cloth simulation
+
+
+def _sm(x, a, b):
+    t = max(0.0, min(1.0, (x - a) / (b - a)))
+    return t * t * (3 - 2 * t)
+
+
+def sheet(name, rows, material, thick, centre, closed=False, pole=None, bevel=0.0015, inner=None, segs=1):
+    """A plate from rows of points on its OUTER surface: faces between the rows (closed round, or
+    fanned into a `pole`), turned to face away from `centre`, thickened inward by `thick`. `inner` is
+    the material of the inside surface (a helmet's liner)."""
+    bm = bmesh.new()
+    vrows = [[bm.verts.new(Vector(p)) for p in row] for row in rows]
+    n = len(rows[0])
+    for r0, r1 in zip(vrows, vrows[1:]):
+        for j in range(n if closed else n - 1):
+            k = (j + 1) % n
+            bm.faces.new((r0[j], r0[k], r1[k], r1[j]))
+    if pole is not None:
+        top = bm.verts.new(Vector(pole))
+        for j in range(n if closed else n - 1):
+            k = (j + 1) % n
+            bm.faces.new((vrows[-1][j], vrows[-1][k], top))
+    bm.normal_update()
+    c = Vector(centre)
+    if sum(f.normal.dot(f.calc_center_median() - c) * f.calc_area() for f in bm.faces) < 0:
+        bmesh.ops.reverse_faces(bm, faces=bm.faces[:])
+    o = kit.hs._obj(name, bm, material, 0.0)
+    if inner:
+        o.data.materials.append(kit.mat(inner))
+    if thick:
+        sm = o.modifiers.new("thick", "SOLIDIFY")
+        sm.thickness = thick
+        sm.offset = -1.0
+        sm.use_even_offset = True
+        sm.use_rim = True
+        sm.material_offset = 1 if inner else 0
+        kit.hs._apply(o, sm.name)
+        # Inner faces (a liner, a plate's back) get few texels: see Armour.finish.
+        me = o.data
+        flags = np.array([int(p.normal.dot((p.center - c).normalized()) < -0.3) for p in me.polygons], dtype=np.int32)
+        me.attributes.new("inner", "INT", "FACE").data.foreach_set("value", flags)
+    o["bevel"] = bevel
+    o["segs"] = segs
+    o["shaded"] = False
+    return o
+
+
+def _trees(objs):
+    return [o if isinstance(o, BVHTree) else pmc.tree(o) for o in objs]
+
+
+class Env:
+    """The outer envelope of surfaces seen from a centre point O: r(lat, lon), the distance to the
+    outermost surface along each direction, max-filtered over `spread` degrees and blurred over `blur`
+    so a plate laid on it bridges folds, noses and ears like a moulded shell, and never closer than
+    `floor` to the raw surface. Directions: latitude from the equator to `Z` (90 = pole), longitude
+    from `F` (0) toward Z x F (+90)."""
+
+    def __init__(self, objs, O, Z=(0, 0, 1), F=(0, -1, 0), reach=0.3, lat=(-90.0, 90.0), dlat=4.0, dlon=5.0,
+                 spread=12.0, blur=8.0, floor=0.004):
+        self.O = Vector(O)
+        Z = Vector(Z).normalized()
+        F = Vector(F)
+        F = (F - Z * F.dot(Z)).normalized()
+        self.Z, self.F, self.S = Z, F, Z.cross(F)
+        self.lats = np.arange(lat[0], lat[1] + 1e-6, dlat)
+        self.lons = np.arange(-180.0, 180.0 - 1e-6, dlon)
+        self.dlat, self.dlon = dlat, dlon
+        D = np.array([tuple(self.dir(la, lo)) for la in self.lats for lo in self.lons], dtype=np.float32)
+        trees = _trees(objs)
+        r = np.full(len(D), np.nan, dtype=np.float32)
+        for i, d in enumerate(D):
+            v = Vector(tuple(float(x) for x in d))
+            best = None
+            for t in trees:
+                loc, _, _, _ = t.ray_cast(self.O + v * reach, -v, reach)
+                if loc is not None:
+                    dd = (loc - self.O).length
+                    best = dd if best is None else max(best, dd)
+            if best is not None:
+                r[i] = best
+        self.raw = r.reshape(len(self.lats), len(self.lons))
+        ok = ~np.isnan(r)
+        ang = np.degrees(np.arccos(np.clip(D @ D[ok].T, -1, 1)))
+        mx = np.where(ang < spread, r[ok][None, :], -np.inf).max(1)
+        fin = np.isfinite(mx)
+        ang2 = np.degrees(np.arccos(np.clip(D @ D[fin].T, -1, 1)))
+        w = np.exp(-(ang2 / blur) ** 2)
+        env = (w @ mx[fin]) / np.maximum(w.sum(1), 1e-9)
+        env = np.where(ok, np.maximum(env, np.nan_to_num(r) + floor), env)
+        self.R = env.reshape(len(self.lats), len(self.lons)).astype(float)
+
+    def dir(self, la, lo):
+        la, lo = math.radians(la), math.radians(lo)
+        return (self.F * math.cos(lo) + self.S * math.sin(lo)) * math.cos(la) + self.Z * math.sin(la)
+
+    def r(self, la, lo):
+        fi = min(max((la - self.lats[0]) / self.dlat, 0.0), len(self.lats) - 1.0001)
+        i0 = int(fi)
+        fj = ((lo + 180.0) % 360.0) / self.dlon
+        j0 = int(fj) % len(self.lons)
+        j1 = (j0 + 1) % len(self.lons)
+        a, b = fi - i0, fj - int(fj)
+        R = self.R
+        return ((R[i0, j0] * (1 - b) + R[i0, j1] * b) * (1 - a) + (R[i0 + 1, j0] * (1 - b) + R[i0 + 1, j1] * b) * a)
+
+    def P(self, la, lo, off=0.0):
+        return self.O + self.dir(la, lo) * (self.r(la, lo) + off)
+
+    def normal(self, la, lo, off=0.0, h=1.0):
+        """The outward surface normal of the offset envelope at (la, lo)."""
+        a = self.P(la + h, lo, off) - self.P(la - h, lo, off)
+        b = self.P(la, lo + h, off) - self.P(la, lo - h, off)
+        n = b.cross(a).normalized()
+        return n if n.dot(self.dir(la, lo)) > 0 else -n
+
+    def patch(self, name, material, lo0, lo1, lat_lo, lat_hi, off, thick, nu, nv, closed=False, pole=None, **kw):
+        """A plate on the envelope: columns from lon lo0 to lo1, each running from lat_lo(lon) to
+        lat_hi(lon); `off(lat, lon)` (or a number) is its outer surface's height over the envelope.
+        `pole`: fan the last row into the pole (lat 90)."""
+        def o(la, lo):
+            return off(la, lo) if callable(off) else off
+        rows = []
+        for i in range(nv + 1):
+            v = i / nv
+            row = []
+            for j in range(nu if closed else nu + 1):
+                lo = lo0 + (lo1 - lo0) * j / nu
+                a, b = lat_lo(lo), lat_hi(lo)
+                la = a + (b - a) * v
+                row.append(self.P(la, lo, o(la, lo)))
+            rows.append(row)
+        return sheet(name, rows, material, thick, self.O, closed=closed, pole=self.P(90, 0, o(90, 0)) if pole else None, **kw)
+
+
+class Tube:
+    """The envelope of a limb's cloth round the axis a -> b: r(t, phi) to the cloth (rays from the axis
+    out, so the other leg never counts) and to `hard` parts (rays from outside in), max-filtered over
+    `spread` metres and blurred over `blur`. phi = 0 faces `front`, +90 faces F x A (the outside of a
+    left limb hanging down)."""
+
+    def __init__(self, cloth, a, b, front=(0, -1, 0), hard=(), t=(-0.1, 1.1), nt=40, nphi=60, reach=0.16, spread=0.025,
+                 blur=0.018, floor=0.003):
+        self.a, self.b = Vector(a), Vector(b)
+        self.L = (self.b - self.a).length
+        A = (self.b - self.a) / self.L
+        F = Vector(front)
+        self.F = (F - A * F.dot(A)).normalized()
+        self.S = self.F.cross(A).normalized()
+        self.A = A
+        self.ts = np.linspace(t[0], t[1], nt)
+        self.phis = np.arange(-180.0, 180.0 - 1e-6, 360.0 / nphi)
+        self.dphi = 360.0 / nphi
+        soft, hard_t = _trees(cloth), _trees(hard)
+        r = np.full((nt, nphi), np.nan)
+        for i, tt in enumerate(self.ts):
+            c = self.c(tt)
+            for j, ph in enumerate(self.phis):
+                d = self.d(ph)
+                best = None
+                for tr in soft:
+                    loc, _, _, _ = tr.ray_cast(c, d, reach)
+                    if loc is not None:
+                        best = (loc - c).length if best is None else max(best, (loc - c).length)
+                for tr in hard_t:
+                    loc, _, _, _ = tr.ray_cast(c + d * reach, -d, reach)
+                    if loc is not None:
+                        best = (loc - c).length if best is None else max(best, (loc - c).length)
+                if best is not None:
+                    r[i, j] = best
+        self.raw = r
+        rbar = float(np.nanmedian(r))
+        T, PH = np.meshgrid(self.ts, np.radians(self.phis), indexing="ij")
+        X = np.stack([T.ravel() * self.L, rbar * np.cos(PH.ravel()), rbar * np.sin(PH.ravel())], 1)
+        rv = r.ravel()
+        ok = ~np.isnan(rv)
+        dist = np.linalg.norm(X[:, None, :] - X[None, ok, :], axis=2)
+        mx = np.where(dist < spread, rv[ok][None, :], -np.inf).max(1)
+        fin = np.isfinite(mx)
+        dist2 = np.linalg.norm(X[:, None, :] - X[None, fin, :], axis=2)
+        w = np.exp(-(dist2 / blur) ** 2)
+        env = (w @ mx[fin]) / np.maximum(w.sum(1), 1e-9)
+        env = np.where(ok, np.maximum(env, np.nan_to_num(rv) + floor), env)
+        self.R = env.reshape(r.shape)
+
+    def c(self, t):
+        return self.a.lerp(self.b, t)
+
+    def d(self, ph):
+        ph = math.radians(ph)
+        return self.F * math.cos(ph) + self.S * math.sin(ph)
+
+    def r(self, t, ph):
+        fi = (t - self.ts[0]) / (self.ts[1] - self.ts[0])
+        fi = min(max(fi, 0.0), len(self.ts) - 1.0001)
+        i0 = int(fi)
+        fj = ((ph + 180.0) % 360.0) / self.dphi
+        j0 = int(fj) % len(self.phis)
+        j1 = (j0 + 1) % len(self.phis)
+        a, b = fi - i0, fj - int(fj)
+        R = self.R
+        return ((R[i0, j0] * (1 - b) + R[i0, j1] * b) * (1 - a) + (R[i0 + 1, j0] * (1 - b) + R[i0 + 1, j1] * b) * a)
+
+    def P(self, t, ph, off=0.0):
+        return self.c(t) + self.d(ph) * (self.r(t, ph) + off)
+
+    def patch(self, name, material, t0, t1, ph_c, half, off, thick, nu=12, nv=10, corner=3.0, bulge=0.0, **kw):
+        """A limb plate from t0 to t1, `half` degrees either side of `ph_c` (corners rounded by a
+        squircle of exponent `corner`), its outer surface `off` over the envelope, swelling `bulge`
+        in the middle (a moulded greave)."""
+        rows = []
+        for i in range(nv + 1):
+            v = i / nv
+            t = t0 + (t1 - t0) * v
+            f = max(0.62, (1 - abs(2 * v - 1) ** corner) ** (1 / corner)) if corner else 1.0
+            row = []
+            for j in range(nu + 1):
+                u = j / nu
+                ph = ph_c + half * f * (2 * u - 1)
+                sw = bulge * math.sin(math.pi * v) * max(0.0, math.cos(math.pi * (u - 0.5))) ** 0.5
+                row.append(self.P(t, ph, off + sw))
+            rows.append(row)
+        return sheet(name, rows, material, thick, self.c((t0 + t1) / 2), **kw)
+
+    def ring(self, t, lift=0.0015, n=28):
+        """A strap's path round the limb at t: pulled taut, it follows the convex hull of the section
+        through the cloth and the hard parts on it, `lift` off it."""
+        i0 = int(round(min(max((t - self.ts[0]) / (self.ts[1] - self.ts[0]), 0), len(self.ts) - 1)))
+        row = self.raw[i0]
+        med = float(np.nanmedian(row))
+        pts = [(float(rr if not np.isnan(rr) else med) * math.cos(math.radians(ph)), float(rr if not np.isnan(rr) else med) * math.sin(math.radians(ph)))
+               for ph, rr in zip(self.phis, row)]
+        hull = real._resample(real._hull2d(pts), n)
+        c = self.c(t)
+        out = []
+        for x, y in hull:
+            q = Vector((x, y))
+            q = q * (1 + lift / max(q.length, 1e-6))
+            out.append(c + self.F * q.x + self.S * q.y)
+        return out
+
+
+class Plate:
+    """A torso plate's surface: a smooth multi-curve fitted to the cloth seen from the front (side -1)
+    or back (+1), h(x, z) = a + b x^2 + c dz + d dz^2 outward, moved out until it clears the cloth by
+    `gap` everywhere under the outline. Real plates are moulded this way: they bear on the chest's
+    high points and bridge its hollows."""
+
+    def __init__(self, objs, outline, side, gap, bend=(-2.4, -0.9), rise=(-2.5, 0.0)):
+        self.side = side
+        self.outline = outline
+        xs, zs = [p[0] for p in outline], [p[1] for p in outline]
+        self.zc = (min(zs) + max(zs)) / 2
+        trees = _trees(objs)
+        S, H = [], []
+        for x in np.arange(min(xs), max(xs) + 1e-6, 0.01):
+            for z in np.arange(min(zs), max(zs) + 1e-6, 0.01):
+                if not pmc.inside_poly(x, z, pmc.grow(outline, 0.01)):
+                    continue
+                best = None
+                for t in trees:
+                    loc, _, _, _ = t.ray_cast(Vector((x, side * 0.6, z)), Vector((0, -side, 0)), 1.0)
+                    if loc is not None:
+                        h = side * loc.y
+                        best = h if best is None else max(best, h)
+                if best is not None:
+                    S.append((x, z))
+                    H.append(best)
+        S, H = np.array(S), np.array(H)
+        dz = S[:, 1] - self.zc
+        M = np.stack([np.ones(len(S)), S[:, 0] ** 2, dz, dz ** 2], 1)
+        k = np.linalg.lstsq(M, H, rcond=None)[0]
+        k[1] = min(max(k[1], bend[0]), bend[1])
+        k[3] = min(max(k[3], rise[0]), rise[1])
+        k[2] = np.linalg.lstsq(dz[:, None], H - k[0] - k[1] * S[:, 0] ** 2 - k[3] * dz ** 2, rcond=None)[0][0]
+        k[0] = 0.0
+        k[0] = float(np.max(H + gap - M @ k))
+        self.k = k
+
+    def h(self, x, z):
+        dz = z - self.zc
+        a, b, c, d = self.k
+        return a + b * x * x + c * dz + d * dz * dz
+
+    def P(self, x, z, off=0.0):
+        return Vector((x, self.side * (self.h(x, z) + off), z))
+
+    def normal(self, x, z):
+        # The surface is y = side * h(x, z); the gradient of side * y - h points outward.
+        _, b, c, d = self.k
+        return Vector((-2 * b * x, self.side, -(c + 2 * d * (z - self.zc)))).normalized()
+
+    def span(self, outline, z):
+        xs = []
+        for i in range(len(outline)):
+            (x0, z0), (x1, z1) = outline[i - 1], outline[i]
+            if (z0 - z) * (z1 - z) <= 0 and z0 != z1:
+                xs.append(x0 + (z - z0) * (x1 - x0) / (z1 - z0))
+        return (min(xs), max(xs)) if xs else None
+
+    def patch(self, name, material, outline, off, thick, nu=16, nv=14, **kw):
+        """A panel with `outline` [(x, z)] whose outer surface is `off` over the fitted surface."""
+        zs = [p[1] for p in outline]
+        z0, z1 = min(zs) + 1e-4, max(zs) - 1e-4
+        rows = []
+        for i in range(nv + 1):
+            z = z0 + (z1 - z0) * i / nv
+            x0, x1 = self.span(outline, z)
+            rows.append([self.P(x0 + (x1 - x0) * j / nu, z, off(x0 + (x1 - x0) * j / nu, z) if callable(off) else off) for j in range(nu + 1)])
+        return sheet(name, rows, material, thick, Vector((0, -self.side * 0.3, self.zc)), **kw)
+
+    def border(self, outline, off, inset=0.011, width=0.0016):
+        """An inked panel line `inset` inside `outline` on the outer surface (bake detail)."""
+        pts = [self.P(x, z, off + 0.0002) for x, z in pmc.grow(outline, -inset)]
+        return pmc.sweep("panel_line", pts, width, 0.0007, "ink", lambda q: self.normal(q.x, q.z), closed=True, bevel=0.0)
+
+    def frame(self, x, z, off=0.0):
+        """pmc.frame at a point of the surface: flat build space (front -Y, up +Z) onto it."""
+        n = self.normal(x, z)
+        return pmc.frame(self.P(x, z, off), n, (0, 0, 1))
+
+
+class Armour:
+    """Bone-white hard parts that bake their maps from detail: each piece (rigid to its bone) gets a
+    high copy, `etch` lays code scripture on it and `detail` adds any other high-only meshes (vents,
+    panel lines). `finish` joins the pieces into one part, each vertex weighted to its piece's bone,
+    and registers the bake. Pieces are bevelled before they are copied, so the copy matches."""
+
+    def __init__(self, c, name, texel=1.8):
+        self.c, self.name, self.texel = c, name, texel
+        self.pieces, self.highs = [], []
+
+    def add(self, obj, bone):
+        kit.hs.apply_modifiers(obj)
+        self.pieces.append((obj, bone))
+        return obj
+
+    def etch(self, obj, items, origin, d, up=(0, 0, 1), lift=0.0002):
+        o = project(obj, items, origin, d, up=up, lift=lift, material="ink", name="etch", tree=bvh(obj))
+        self.highs.append(o)
+        return o
+
+    def detail(self, obj):
+        kit.hs.apply_modifiers(obj)
+        self.highs.append(obj)
+        return obj
+
+    def finish(self):
+        for o, bone in self.pieces:
+            h = bpy.data.objects.new(o.name + ".high", o.data.copy())
+            bpy.context.scene.collection.objects.link(h)
+            h["shaded"] = True  # keeps the piece's own normals
+            self.highs.append(h)
+            o.vertex_groups.clear()
+            o.vertex_groups.new(name=bone).add(list(range(len(o.data.vertices))), 1.0, "REPLACE")
+        joined = kit.join_skinned([o for o, _ in self.pieces], self.name)
+        joined["texel"] = self.texel
+        joined["bevel"] = 0.0
+        joined["shaded"] = True
+        surfaces._TEXEL_FN[joined.name] = _outer_texels
+        # One high object: the selected-to-active bake renders once per high object.
+        for h in self.highs:
+            kit.hs.apply_modifiers(h)
+        high = kit.join_skinned(self.highs, self.name + ".high")
+        self.c.parts.append((joined, "DONE", None))
+        self.c.detail(joined, [high], ext=0.003, ray=0.008)
+        return joined
+
+
+def _outer_texels(obj):
+    """Texel factor per UV island of a joined armour part: the faces flagged `inner` (liners, plate
+    backs) get a quarter of the density, the outer faces where the scripture shows keep it all."""
+    me = obj.data
+    flags = np.zeros(len(me.polygons), dtype=np.int32)
+    if "inner" in me.attributes:
+        me.attributes["inner"].data.foreach_get("value", flags)
+
+    def f(isl):
+        return 0.3 if sum(int(flags[fc.index]) for fc in isl) * 2 > len(isl) else 1.0
+    return f
+
+
+def region_tree(obj, bones):
+    """A ray-cast tree of the faces of a skinned mesh led by `bones` (a sleeve without the chest)."""
+    dom = kit.dominant(obj)
+    me = obj.data
+    return BVHTree.FromPolygons([v.co.copy() for v in me.vertices],
+                                [p.vertices[:] for p in me.polygons if sum(dom[i] in bones for i in p.vertices) * 2 >= len(p.vertices)])
+
+
+def strap_ring(name, pts, centre, axis, width, thick, material):
+    return pmc.sweep(name, pts, width, thick, material, pmc.radial(centre, axis), closed=True, bevel=0.0)
+
+
+# ------------------------------------------------------------------------------------------ helmet
+
+def helmet(c, man, arm):
+    """The sealed helmet: a bone shell fitted round the head with a black liner, a faceplate with a
+    respirator snout and keel, one glowing sensor slit between the brow and the faceplate behind a
+    dark visor, side rails, comms domes over the ears, a rear battery module and a brow mount.
+    Returns (envelope, shell rim lat(lon), mask chin lat(lon), rear port point)."""
+    hc = man.head_center()
+    dom = kit.dominant(man.low)
+    me = man.low.data
+    co = [v.co.copy() for v in me.vertices]
+    polys = [p.vertices[:] for p in me.polygons if sum(dom[i] in ("head", "neck") for i in p.vertices) * 2 > len(p.vertices)]
+    head = BVHTree.FromPolygons(co, polys)
+    O = hc + Vector((0, -0.016, -0.018))
+    env = Env([head], O, reach=0.22, lat=(-80.0, 90.0), dlat=4.0, dlon=5.0, spread=14.0, blur=10.0, floor=0.006)
+
+    BROW, SLIT_LO = 12.0, 3.0
+
+    def rim(lo):
+        a = abs(lo)
+        side = -38.0 + 5.0 * _sm(a, 110, 180)
+        return BROW + (side - BROW) * _sm(a, 58, 76)
+
+    def chin(lo):
+        return -57.0 + 17.0 * _sm(abs(lo), 0, 82)
+
+    def mtop(lo):
+        return SLIT_LO + 12.5 * _sm(abs(lo), 54, 70)
+
+    SHELL = 0.0135  # outer surface over the envelope
+
+    def mask_off(la, lo):
+        keel = 0.0032 * math.exp(-(lo / 5.0) ** 2) * _sm(SLIT_LO - la, 2.0, 14.0)
+        snout = 0.009 * math.exp(-((la + 30.0) / 17.0) ** 2 - (lo / 30.0) ** 2)
+        return 0.0205 + keel + snout
+
+    shell = env.patch("helmet", BONE, -180.0, 180.0, rim, lambda lo: 86.0, SHELL, 0.0055, nu=56, nv=14, closed=True, pole=True,
+                      inner="regime_pad", bevel=0.0018)
+    mask = env.patch("faceplate", BONE, -82.0, 82.0, chin, mtop, mask_off, 0.006, nu=30, nv=11, inner="regime_pad", bevel=0.0018)
+    visor = env.patch("visor", "glass", -72.0, 72.0, lambda lo: -1.0, lambda lo: 16.0, 0.0075, 0.002, nu=24, nv=3, bevel=0.0)
+    glow = env.patch("sensor", "glow_red", -54.0, 54.0, lambda lo: 6.3, lambda lo: 8.7, 0.0105, 0.0025, nu=20, nv=1, bevel=0.0)
+    c.rigid(visor, "head")
+    c.rigid(glow, "head")
+    arm.add(shell, "head")
+    arm.add(mask, "head")
+
+    # Scripture: the cult mark on the back, code down the temples, ticks along the faceplate's jaw.
+    def at(la, lo, off=SHELL):
+        n = env.normal(la, lo, off)
+        return env.P(la, lo, off) + n * 0.1, -n
+    o, d = at(28, 180)
+    arm.etch(shell, sigil(0.026, n=24, w=0.0028) + code_rows(["∴"], 0.028), o, d)
+    o, d = at(4, 180)
+    arm.etch(shell, code_rows(scripture(17, 2, 11), 0.0082), o, d)
+    for sx in (1, -1):
+        o, d = at(24, sx * 62)
+        arm.etch(shell, code_rows(scripture(5 + sx, 3, 6), 0.0082), o, d)
+        o, d = at(-22, sx * 60, mask_off(-22, sx * 60))
+        arm.etch(mask, tick_rows(9 + sx, 3, 0.03, 0.0035, unit=0.001), o, d)
+
+    # Panel lines and fasteners (baked detail): a groove round the crown, screws on the faceplate.
+    lines = []
+    for sx in (1, -1):
+        for la, lo in ((-6, sx * 74), (-34, sx * 70)):
+            p = env.P(la, lo, mask_off(la, lo))
+            lines.append(screw(p, env.normal(la, lo, mask_off(la, lo)), r=0.0034))
+    for o_ in lines:
+        arm.detail(o_)
+
+    # Respirator vents either side of the snout: black grilles with gunmetal slats.
+    for sx in (1, -1):
+        lo0, lo1 = sorted((sx * 17.0, sx * 38.0))
+        vent = env.patch("vent", "black", lo0, lo1, lambda lo: -40.0, lambda lo: -20.0, lambda la, lo: mask_off(la, lo) + 0.0012, 0.003,
+                         nu=6, nv=4, bevel=0.0008, segs=1)
+        c.rigid(vent, "head")
+        for k in range(4):
+            la0 = -37.0 + k * 4.6
+            c.rigid(env.patch("vent_slat", "gunmetal", lo0 + 1.5, lo1 - 1.5, lambda lo, la0=la0: la0, lambda lo, la0=la0: la0 + 1.6,
+                              lambda la, lo: mask_off(la, lo) + 0.0028, 0.0018, nu=5, nv=1, bevel=0.0), "head")
+
+    # Side rails, comms domes over the ears, rear battery module, brow mount.
+    for sx in (1, -1):
+        lo0, lo1 = sorted((sx * 96.0, sx * 152.0))
+        c.rigid(env.patch("rail", "black", lo0, lo1, lambda lo: -3.0 + 0.04 * (abs(lo) - 96), lambda lo: 4.5 + 0.04 * (abs(lo) - 96),
+                          SHELL + 0.0055, 0.0055, nu=10, nv=1, bevel=0.0012, segs=1), "head")
+        p = env.P(-15, sx * 100, SHELL - 0.002)
+        n = env.normal(-15, sx * 100, SHELL)
+        c.rigid(kit.cyl("comms", p, p + n * 0.013, 0.031, "black", segs=20, bevel=0.002, bsegs=1), "head")
+        c.rigid(kit.cyl("comms_cap", p + n * 0.012, p + n * 0.017, 0.022, "gunmetal", segs=20, bevel=0.0012, bsegs=1), "head")
+        c.rigid(kit.cyl("comms_btn", p + n * 0.012 + Vector((0, 0.02, 0.024)), p + n * 0.02 + Vector((0, 0.02, 0.024)), 0.0055, "rubber",
+                        segs=10, bevel=0.0008, bsegs=1), "head")
+    n = env.normal(6, 180, SHELL)
+    M = pmc.frame(env.P(6, 180, SHELL) + n * 0.014, n, (0, 0, 1))
+    batt = [kit.block("battery", (0, 0, 0), (0.074, 0.03, 0.046), "black", bevel=0.005),
+            kit.block("battery_lid", (0, -0.016, 0.004), (0.06, 0.004, 0.03), "gunmetal", bevel=0.0012),
+            kit.cyl("strobe", (0.0, -0.012, 0.026), (0.0, -0.012, 0.031), 0.008, "glow_red", segs=10, bevel=0)]
+    for o_ in batt:
+        o_.data.transform(M)
+        c.rigid(o_, "head")
+    port = M @ Vector((0.0, 0.0, -0.026))
+    n = env.normal(30, 0, SHELL)
+    M = pmc.frame(env.P(30, 0, SHELL) + n * 0.004, n, (0, 0, 1))
+    shroud = [kit.block("shroud", (0, 0, 0), (0.05, 0.009, 0.032), "gunmetal", bevel=0.002, taper=(0.8, 1.0)),
+              kit.block("shroud_slot", (0, -0.006, -0.002), (0.022, 0.006, 0.012), "black", bevel=0.001)]
+    for o_ in shroud:
+        o_.data.transform(M)
+        c.rigid(o_, "head")
+    return env, rim, chin, port
+
+
+# ------------------------------------------------------------------------------------------ build
 
 def build():
-    b = kit.Build(height=1.80, width=1.0, bulk=1.0)
-    k = b.k
-    c = kit.begin("acolyte", b)
-    parts = kit.body(b, skin="primary", head=False)
-    flesh = c.flesh(parts["body"])
-    hc = b.j("head", 0.45)
-    piping(c, b, flesh)
-    gloves(c, b, parts)
-    _, htree = sealed_helmet(c, b)
-    neck_seal(c, b)
-    chest, _ = cuirass(c, b)
-    ct = bvh(chest)
-    side_straps(c, b)
+    b = real.Anatomy(height=1.80, sole=0.032)
+    c = real.begin("acolyte", b)
+    man = real.body(c, stubble=0.0, face_detail=1.0)
+    J, seg = b.j, kit.seg_dist
+    lead = real.bones_at(man)
+    armpit = b.at("armpit")
+    ARMS = UPPER_ARMS | FOREARMS
+    head_arm = Armour(c, "armour_head", texel=2.6)
+    torso_arm = Armour(c, "armour_torso", texel=2.4)
+    arm_arm = Armour(c, "armour_arms", texel=2.2)
+    leg_arm = Armour(c, "armour_legs", texel=2.2)
+    # No skin shows: what is left under the hems needs few texels.
+    surfaces._TEXEL_FN[man.low.name] = lambda obj: (lambda isl: 0.3)
 
-    # Uplink node on the back plate: vented bone casing, gunmetal data drum with a red lens, antenna.
-    ny, nz = 0.168 * b.bulk, 1.285 * k
-    node = kit.block("node", (0, ny, nz), (0.15, 0.07, 0.2 * k), "bone", bevel=0.008, taper=(0.86, 0.86))
-    kit.cut(node, *[kit.block("node_vent", (s * 0.075, ny, nz - 0.06 + i * 0.024), (0.016, 0.05, 0.007), "steel", bevel=0)
-                    for s in (-1, 1) for i in range(5)])
-    c.rigid(node, "chest")
-    c.rigid(kit.block("node_band", (0, ny, nz + 0.075 * k), (0.135, 0.074, 0.018), "gunmetal", bevel=0.002, taper=(0.98, 0.98)), "chest")
-    fy = ny + 0.035
-    core = kit.cyl("core", (0, fy - 0.01, nz), (0, fy + 0.012, nz), 0.043, "gunmetal", segs=24, bevel=0.0015, bsegs=1)
-    kit.cut(core, *[kit.block("core_fin", (math.cos(a) * 0.03, fy + 0.014, nz + math.sin(a) * 0.03), (0.006, 0.01, 0.022), "steel", bevel=0)
-                    for a in [math.radians(30 + 60 * i) for i in range(6)]])
-    c.rigid(core, "chest")
-    c.rigid(ring("core_ring", (0, fy + 0.004, nz), (0, 1, 0), 0.05, 0.042, 0.014, "bone", segs=24), "chest")
-    c.rigid(kit.cyl("lens", (0, fy + 0.006, nz), (0, fy + 0.0145, nz), 0.012, "glow_red", segs=16, bevel=0), "chest")
-    c.rigid(ring("lens_bezel", (0, fy + 0.012, nz), (0, 1, 0), 0.017, 0.0115, 0.006, "gunmetal", segs=16), "chest")
-    nt = bvh(node)
-    c.rigid(project(node, code_rows(["UPLINK ∴ 07"], 0.011), (0, 0.4, nz - 0.074 * k), (0, -1, 0), tree=nt), "chest")
-    for x in (-0.052, 0.052):
-        for z in (nz - 0.08 * k, nz + 0.05 * k):
-            fix(c, screw_on(nt, (x, 0.4, z), (0, -1, 0), r=0.004), "chest")
-    c.rigid(antenna("antenna", (0.05, ny + 0.01, nz + 0.1 * k), (0.068, ny + 0.03, nz + 0.33 * k), r=0.005, bars=((0.62, 0.016), (0.8, 0.011))), "chest")
-    # Sockets and cables: helmet -> node top, node -> over the shoulders onto the cuirass, node -> belt.
-    for s in (-1, 1):
-        c.rigid(socket("node_port", (s * 0.045, ny + 0.012, nz + 0.1 * k), (0, 0, 1), r=0.009), "chest")
-        h = hit(htree, hc + Vector((s * 0.035, 0.3, -0.105 * k)), (0, -1, 0))
-        if h:
-            c.rigid(socket("helmet_port", h[0], h[1], r=0.0085), "head")
-            top = Vector((s * 0.045, ny + 0.012, nz + 0.112 * k))
-            p0 = h[0] + h[1] * 0.01
-            c.add(cable("neck_cable", [p0, p0 + Vector((0, 0.03, -0.035)), top + Vector((s * 0.004, 0.012, 0.045)), top], 0.0055), ["head", "neck", "chest"])
-        start = Vector((s * 0.066, ny - 0.01, nz + 0.07 * k))
-        cp = hit(ct, (s * 0.082 * b.width, -0.3, 1.388 * k), (0, 1, 0))
-        if cp:
-            c.rigid(socket("chest_port", cp[0], cp[1], r=0.0075), "chest")
-            end = cp[0] + cp[1] * 0.01
-            c.rigid(cable("shoulder_cable", [start, Vector((s * 0.085, 0.12, 1.42 * k)), Vector((s * 0.088, 0.02, 1.458 * k)),
-                                              end + Vector((0, -0.01, 0.04)), end], 0.0048), "chest")
-        low = Vector((s * 0.05, ny - 0.005, nz - 0.1 * k))
-        c.add(cable("belt_cable", [low, low + Vector((s * 0.01, 0.01, -0.06)), Vector((s * 0.075, 0.15, 1.04 * k)), Vector((s * 0.085, 0.135, 0.995 * k))], 0.0048),
-              ["chest", "spine", "hips"])
+    # Faceless: the eyes go, and the head's skin under the helmet and hood.
+    for e in man.eyes:
+        c.parts = [p for p in c.parts if p[0] is not e]
+    env, rim, chin, port = helmet(c, man, head_arm)
+    for e in man.eyes:
+        bpy.data.objects.remove(e, do_unlink=True)
+    c.cover({"head"})
 
-    # Waist: a quilted wrap, two abdomen lames tucked under the cuirass, the belt, pouches, a canister.
-    c.add(kit.shell(flesh, lambda p: 0.965 * k < p.z < 1.19 * k, "waist", "secondary", offset=0.012, thick=0.004, smooth_iter=2, bones=TORSO))
-    abdomen_lames(c, b)
-    c.add(band("belt", Vector((0, 0.0, 0.99 * k)), (0.168 * b.width, 0.13), 0.045, 0.012, "accent", segs=20), ["hips", "spine"])
-    buckle = c.rigid(kit.block("buckle", (0, -0.139, 0.99 * k), (0.06, 0.012, 0.042), "bone", bevel=0.003), "hips")
-    c.rigid(project(buckle, code_rows(["∴"], 0.026), (0, -0.3, 0.99 * k), (0, 1, 0)), "hips")
-    for s in (-1, 1):
-        x = s * 0.12 * b.width
-        pouch = kit.block("pouch", (x, -0.115, 0.95 * k), (0.06, 0.04, 0.08), "secondary", bevel=0.006)
-        flap = kit.block("pouch_flap", (x, -0.118, 0.985 * k), (0.064, 0.046, 0.022), "secondary", bevel=0.005)
-        snap = kit.cyl("snap", (x, -0.142, 0.982 * k), (x, -0.145, 0.982 * k), 0.006, "gunmetal", segs=10, bevel=0)
-        c.rigid(kit.join([pouch, flap, snap], "pouch"), "hips")
-    c.rigid(kit.cyl("canister", (-0.07, 0.15, 0.94 * k), (0.07, 0.15, 0.94 * k), 0.032, "gunmetal", segs=20, bevel=0.0015, bsegs=1), "hips")
-    for x in (-0.045, 0.045):
-        c.rigid(band("can_band", Vector((x, 0.15, 0.94 * k)), (0.035, 0.035), 0.01, 0.005, "bone", axis=(1, 0, 0), segs=16), "hips")
+    # ---------------------------------------------------------------- gloves
+    gloves_ = real.gloves(c, man, "glove", cuff=0.042)
+    tg = pmc.tree(gloves_)
+    for s, sx in (("L", 1), ("R", -1)):
+        W = Vector(b.rest["hand." + s][0])
+        Lh = (Vector(b.rest["hand." + s][1]) - W).normalized()
+        mcp = [Vector(b.rest[f"f_{f}.1.{s}"][0]) for f in ("index", "middle", "ring", "pinky")]
+        T = mcp[0] - mcp[3]
+        T = (T - Lh * T.dot(Lh)).normalized()
+        Pn = Lh.cross(T).normalized()
+        if Pn.x * sx > 0:
+            Pn = -Pn
+        back = -Pn
+        mid = sum(mcp, Vector()) / 4
+        loc, _ = pmc.hit(tg, mid + back * 0.12, -back)
+        loc = loc if loc is not None else mid + back * 0.02
+        guard = kit.block("knuckle", (0, 0, 0), (0.074, 0.011, 0.024), "black", bevel=0.0028)
+        kit.cut(guard, *[kit.block("groove", (x, 0.006, 0), (0.004, 0.004, 0.03), "steel", bevel=0) for x in (-0.019, 0.0, 0.019)])
+        M = Matrix((T, back, Lh)).transposed().to_4x4()
+        M.translation = loc + back * 0.0055 - Lh * 0.004
+        guard.data.transform(M)
+        c.rigid(guard, "hand." + s)
+        ax = J("hand." + s, 0.0) - J("forearm." + s, 0.0)
+        cc = J("hand." + s, 0.0) - ax.normalized() * 0.022
+        r = pmc._radius(tg, cc, ax)
+        c.rigid(pmc.band("glove_cuff", cc, (r + 0.003, r * 0.82 + 0.003), 0.03, 0.004, "glove", axis=ax), "hand." + s)
+        c.rigid(kit.block("cuff_tab", cc + back * (r + 0.006), (0.02, 0.004, 0.028), "accent", bevel=0.0012), "hand." + s)
+
+    # ---------------------------------------------------------------- combat shirt
+    neck = J("neck", 0.0)
+    tuck = b.hip_z + 0.095
+    waist = tuck - 0.03
+    neckline = (Vector((0, 0, neck.z + 0.028)), Vector((0, -0.45, 1)).normalized())
+    collar_top = (neckline[0] + Vector((0, 0, 0.03)), Vector((0, -0.25, 1)).normalized())
+
+    def on_arm(p):
+        return lead(p) in ARMS
+
+    cuts = [collar_top]
+    for s in ("L", "R"):
+        e, w = J("forearm." + s, 0.0), J("forearm." + s, 1.0)
+        cuts.append((e.lerp(w, 0.86), w - e, lambda p, e=e, w=w: on_arm(p) and seg(p, e, w + (w - e) * 0.6) < 0.09))
+    cuts.append(((0, 0, waist), (0, 0, -1), lambda p: not on_arm(p)))
+
+    def ease(p):
+        if not on_arm(p) and p.z < armpit - 0.06:
+            return 0.007 - 0.003 * float(real._smooth(tuck + 0.03 - p.z, 0.0, 0.03))
+        a = min(seg(p, J("upper_arm." + s, 0.3), J("forearm." + s, 1.0)) for s in ("L", "R"))
+        return 0.007 + 0.011 * max(0.0, min(1.0, (0.09 - a) / 0.03))
+
+    def pin(p):
+        w = 0.0
+        if p.z > neck.z - 0.01 and not on_arm(p):
+            w = 1.0
+        if p.z < tuck and not on_arm(p):
+            w = 1.0
+        for s in ("L", "R"):
+            e, wr = J("forearm." + s, 0.0), J("forearm." + s, 0.86)
+            d = (wr - e).normalized()
+            if on_arm(p) and seg(p, e, wr) < 0.1 and (p - wr).dot(d) > -0.025:
+                w = 1.0
+        return w
+
+    def slack(p):
+        w = 0.0
+        for s in ("L", "R"):
+            e, wr = J("forearm." + s, 0.0), J("forearm." + s, 0.86)
+            d = wr - e
+            L = d.length
+            d.normalize()
+            t = (p - e).dot(d) / L
+            if on_arm(p) and seg(p, e, wr) < 0.1 and t > 0.2:
+                w = max(w, min(1.0, (t - 0.2) / 0.5))
+        if not on_arm(p) and tuck < p.z < tuck + 0.12:
+            w = max(w, 0.6 * (1 - (p.z - tuck) / 0.12))
+        return w
+
+    def above(plane, p):
+        return (Vector(p) - plane[0]).dot(plane[1]) > 0
+
+    def cuff(p):
+        for s in ("L", "R"):
+            e, w = J("forearm." + s, 0.0), J("forearm." + s, 1.0)
+            d = (w - e).normalized()
+            if on_arm(p) and seg(p, e, w) < 0.09 and (p - e.lerp(w, 0.80)).dot(d) > 0:
+                return True
+        return False
+    shirt = real.garment(c, man, "shirt", "primary", lambda p: lead(p) in kit.TORSO | ARMS | THIGHS | {"neck"} and p.z > waist - 0.05,
+                         cuts, ease=ease, pin=None if FAST else pin, slack=slack, bend=12.0, texel=1.2,
+                         trims=[("knit.primary", lambda p: (above(neckline, p) and lead(p) not in ARMS) or cuff(p))])
+    c.hide_under(shirt.low, 0.05, 2)
+    tshirt = pmc.tree(shirt.low)
+
+    # Hood: a knit balaclava from inside the collar up under the helmet and faceplate.
+    def hood_top(lo):
+        return (chin(lo) if abs(lo) < 82 else rim(lo)) + 5.0
+
+    def in_hood(p):
+        if lead(p) not in ("head", "neck") or (Vector(p) - neckline[0]).dot(neckline[1]) < -0.025:
+            return False
+        d = Vector(p) - env.O
+        la = math.degrees(math.asin(max(-1.0, min(1.0, d.normalized().dot(env.Z)))))
+        lo = math.degrees(math.atan2(d.dot(env.S), d.dot(env.F)))
+        return la < hood_top(lo)
+    hood = real.layer(c, man, "hood", "knit.primary", in_hood, [], ease=0.004, smooth=1, texel=0.8, seams="hems")
+    c.hide_under(hood, 0.02, 1)
 
     for s, sx in (("L", 1), ("R", -1)):
-        pauldron(c, b, s, sx)
-        vambrace(c, b, s, sx)
-        tassets(c, b, s, sx)
-        knee_cop(c, b, s)
-        greave(c, b, s, sx)
-        boot(c, b, flesh, s, sx)
-    c.cover(FEET | SHINS, lambda p: p.z < 0.16 * k)
+        fa0, fa1 = J("forearm." + s, 0.0), J("forearm." + s, 1.0)
+        ax = (fa1 - fa0).normalized()
+        r = pmc._radius(tshirt, fa0 + ax * 0.01, ax) + 0.003
+        pad = pmc.wrap("elbow_pad", fa0 - ax * 0.03, fa0 + ax * 0.055, r, r - 0.005, 180 - 55 * sx, 180 + 55 * sx, 0.009, "black",
+                       nt=4, nphi=8, bevel=0.003, bulge=0.004, fit=(tshirt, 0.0025))
+        c.rigid(pad, "forearm." + s)
+        # Sleeve pocket under the shoulder plates.
+        ua0, ua1 = J("upper_arm." + s, 0.0), J("upper_arm." + s, 1.0)
+        around = pmc._limb(ua0, ua1, front=(0, -1, 0))
+        out = 90 * sx - 15 * sx
+        real.patch(c, shirt.low, "sleeve_pocket", "primary",
+                   lambda p, around=around, out=out: (lambda t, a: 0.50 < t < 0.76 and abs((a - out + 180) % 360 - 180) < 34)(*around(p)),
+                   lift=0.0015, puff=0.006, thick=0.002)
+
+    # ---------------------------------------------------------------- trousers
+    top_z = tuck
+    belt_z = b.hip_z + 0.07
+    hem = b.sole + 0.19 - 0.03
+    LEGS = THIGHS | kit.SHINS
+
+    def t_ease(p):
+        band = 0.003 * (1 - real._smooth(top_z - p.z, 0.02, 0.07))
+        return 0.011 + band + 0.004 * real._smooth(top_z - p.z, 0.04, 0.2) + 0.007 * real._smooth(J("lower_leg.L", 0.0).z - p.z, 0.0, 0.15)
+
+    def t_pin(p):
+        return 1.0 if p.z > top_z - 0.045 or p.z < hem + 0.018 else 0.0
+
+    def t_slack(p):
+        return real._smooth(hem + 0.13 - p.z, 0.0, 0.1)
+
+    trousers = real.garment(c, man, "trousers", "ripstop.secondary",
+                            lambda p: lead(p) in LEGS | {"hips", "spine"} and hem - 0.03 < p.z < top_z + 0.03,
+                            [((0, 0, top_z), (0, 0, 1)), ((0, 0, hem), (0, 0, -1), lambda p: lead(p) in LEGS)],
+                            ease=t_ease, pin=None if FAST else t_pin, slack=t_slack, bend=14.0, texel=1.0)
+    c.hide_under(trousers.low, 0.06, 2)
+    tt = pmc.tree(trousers.low)
+    belt = pmc.sweep("belt", pmc.ring_pts(tt, (0, -0.005), belt_z, 0.004, n=32), 0.048, 0.01, "webbing", pmc.radial((0, -0.005, 0)), closed=True)
+    c.add(belt, ["hips", "spine", "upper_leg.L", "upper_leg.R"])
+    loc, _ = pmc.hit(tt, (0, -0.5, belt_z), (0, 1, 0))
+    bk = kit.block("buckle", (0, 0, 0), (0.062, 0.013, 0.04), "gunmetal", bevel=0.003)
+    kit.cut(bk, kit.block("buckle_slot", (0, -0.007, 0), (0.044, 0.006, 0.02), "steel", bevel=0))
+    bk.data.transform(Matrix.Translation(Vector((0, loc.y - 0.016, belt_z))))
+    c.rigid(bk, "hips")
+    for s, sx in (("L", 1), ("R", -1)):
+        ul0, ul1 = J("upper_leg." + s, 0.0), J("upper_leg." + s, 1.0)
+        around = pmc._limb(ul0, ul1)
+        out = 98 * sx
+        real.patch(c, trousers.low, "cargo", "ripstop.secondary",
+                   lambda p, around=around, out=out: (lambda t, a: 0.47 < t < 0.76 and abs((a - out + 180) % 360 - 180) < 34)(*around(p)),
+                   lift=0.002, puff=0.013, thick=0.003)
+        real.patch(c, trousers.low, "cargo_flap", "ripstop.secondary",
+                   lambda p, around=around, out=out: (lambda t, a: 0.445 < t < 0.53 and abs((a - out + 180) % 360 - 180) < 37)(*around(p)),
+                   lift=0.016, puff=0.002, thick=0.003)
+
+    # ---------------------------------------------------------------- plate carrier
+    dz = (armpit - 0.198) - 1.03
+
+    def Z(z):
+        return z + dz
+    shirt_hard = [tshirt]
+    f_cover = kit.rounded([(-0.13, Z(1.10)), (0.13, Z(1.10)), (0.13, Z(1.29)), (0.078, Z(1.378)), (-0.078, Z(1.378)), (-0.13, Z(1.29))], 0.022)
+    f_plate = kit.rounded([(-0.118, Z(1.112)), (0.118, Z(1.112)), (0.118, Z(1.286)), (0.07, Z(1.366)), (-0.07, Z(1.366)), (-0.118, Z(1.286))], 0.018)
+    pf = Plate(shirt_hard, f_cover, -1, 0.007)
+    front = pf.patch("carrier_front", NYLON, f_cover, 0.022, 0.022, nu=16, nv=12, bevel=0.005)
+    c.rigid(front, "chest")
+    fp = pf.patch("chest_plate", BONE, f_plate, 0.032, 0.0105, nu=18, nv=14, bevel=0.003)
+    torso_arm.add(fp, "chest")
+    torso_arm.detail(pf.border(f_plate, 0.032))
+    for sx in (1, -1):
+        p = pf.P(sx * 0.056, Z(1.298), 0.032)
+        torso_arm.etch(fp, code_rows(scripture(3 + sx, 5, 8), 0.0108), p + Vector((0, -0.1, 0)), (0, 1, 0))
+    p = pf.P(0.0, Z(1.19), 0.032)
+    torso_arm.etch(fp, sigil(0.03, n=28, w=0.0032) + code_rows(["∴"], 0.032), p + Vector((0, -0.1, 0)), (0, 1, 0))
+    p = pf.P(0.0, Z(1.13), 0.032)
+    torso_arm.etch(fp, barcode(23, 0.16, 0.007), p + Vector((0, -0.1, 0)), (0, 1, 0))
+    for x, z in ((-0.1, Z(1.14)), (0.1, Z(1.14)), (-0.094, Z(1.285)), (0.094, Z(1.285))):
+        n = pf.normal(x, z)
+        torso_arm.detail(screw(pf.P(x, z, 0.032), n, r=0.0042))
+    # The placard below the plate: three rifle-magazine pouches with red pull tabs.
+    for x in (-0.08, 0.0, 0.08):
+        M = pf.frame(x, Z(1.165), 0.022)
+        objs = [kit.block("mag_pouch", (0, -0.021, -0.006), (0.07, 0.042, 0.118), NYLON, bevel=0.006),
+                kit.block("pouch_flap", (0, -0.023, 0.046), (0.074, 0.048, 0.028), NYLON, bevel=0.005),
+                kit.block("bungee", (0, -0.043, -0.01), (0.072, 0.004, 0.012), "black", bevel=0.0015),
+                kit.block("pull_tab", (0, -0.05, 0.036), (0.026, 0.005, 0.034), "accent", bevel=0.0015)]
+        for o in objs:
+            o.data.transform(M)
+            c.rigid(o, "chest")
+
+    b_cover = kit.rounded([(-0.132, Z(1.03)), (0.132, Z(1.03)), (0.132, Z(1.29)), (0.104, Z(1.365)), (-0.104, Z(1.365)), (-0.132, Z(1.29))], 0.025)
+    b_plate = kit.rounded([(-0.12, Z(1.042)), (0.12, Z(1.042)), (0.12, Z(1.286)), (0.094, Z(1.353)), (-0.094, Z(1.353)), (-0.12, Z(1.286))], 0.02)
+    pb = Plate(shirt_hard, b_cover, 1, 0.007)
+    back = pb.patch("carrier_back", NYLON, b_cover, 0.022, 0.022, nu=16, nv=12, bevel=0.005)
+    c.rigid(back, "chest")
+    bp = pb.patch("back_plate", BONE, b_plate, 0.032, 0.0105, nu=18, nv=14, bevel=0.003)
+    torso_arm.add(bp, "chest")
+    torso_arm.detail(pb.border(b_plate, 0.032))
+    p = pb.P(0.0, Z(1.322), 0.032)
+    torso_arm.etch(bp, code_rows(scripture(29, 2, 18), 0.0082), p + Vector((0, 0.1, 0)), (0, -1, 0))
+    p = pb.P(0.0, Z(1.065), 0.032)
+    torso_arm.etch(bp, tick_rows(31, 2, 0.2, 0.005), p + Vector((0, 0.1, 0)), (0, -1, 0))
+
+    # The uplink: a bone-housed radio on the back plate, a whip antenna and a fold-up SATCOM panel.
+    Mb = pb.frame(0.0, Z(1.19), 0.032)
+    hw, hd, hh = 0.19, 0.075, 0.25
+
+    def W_(p):
+        return Mb @ Vector(p)
+    # The radio rides in a black cordura pouch behind a bone armour lid.
+    pouch = kit.block("uplink_pouch", (0, -hd / 2, 0), (hw, hd, hh), NYLON, bevel=0.012, taper=(0.95, 0.97))
+    pouch.data.transform(Mb)
+    c.rigid(pouch, "chest")
+    lid = kit.block("uplink_lid", (0, -hd - 0.003, 0.004), (hw - 0.028, 0.008, hh - 0.05), BONE, bevel=0.003)
+    kit.hs.apply_modifiers(lid)
+    lid.data.transform(Mb)
+    torso_arm.add(lid, "chest")
+    nrm = (Mb.to_3x3() @ Vector((0, -1, 0))).normalized()
+    torso_arm.etch(lid, sigil(0.036, n=30, w=0.0034) + code_rows(["∴"], 0.04), W_((0, -hd - 0.007, 0.03)) + nrm * 0.1, -nrm)
+    torso_arm.etch(lid, code_rows(["UPLINK 07", "0x7F A3 C0DE"], 0.0085), W_((0, -hd - 0.007, -0.062)) + nrm * 0.1, -nrm)
+    for x in (-0.067, 0.067):
+        for z in (-0.083, 0.091):
+            torso_arm.detail(screw(W_((x, -hd - 0.007, z)), nrm, r=0.0038))
+    parts = [kit.block("uplink_cap", (0, -hd / 2, hh / 2 + 0.012), (hw * 0.92, hd * 0.9, 0.026), "gunmetal", bevel=0.004),
+             kit.block("uplink_base", (0, -hd / 2, -hh / 2 - 0.008), (hw * 0.9, hd * 0.88, 0.02), "gunmetal", bevel=0.004),
+             kit.cyl("knob", (0.035, -hd / 2, hh / 2 + 0.024), (0.035, -hd / 2, hh / 2 + 0.04), 0.011, "black", segs=14, bevel=0.0015),
+             kit.cyl("knob", (0.0, -hd / 2, hh / 2 + 0.024), (0.0, -hd / 2, hh / 2 + 0.036), 0.008, "black", segs=12, bevel=0.0015),
+             kit.cyl("led", (-0.025, -hd / 2 - 0.02, hh / 2 + 0.024), (-0.025, -hd / 2 - 0.02, hh / 2 + 0.03), 0.004, "glow_red", segs=8, bevel=0),
+             kit.cyl("whip_base", (-0.07, -hd / 2, hh / 2 + 0.024), (-0.07, -hd / 2, hh / 2 + 0.05), 0.011, "black", segs=12, bevel=0.0015),
+             kit.cyl("sat_mast", (0.062, -hd / 2 + 0.01, hh / 2 + 0.024), (0.062, -hd / 2 + 0.01, hh / 2 + 0.07), 0.007, "gunmetal", segs=10, bevel=0.001)]
+    for z in (-0.112, 0.118):
+        parts.append(kit.block("uplink_strap", (0, -hd / 2 - 0.002, z), (hw + 0.008, hd + 0.01, 0.022), "webbing", bevel=0.002))
+    for o in parts:
+        o.data.transform(Mb)
+        c.rigid(o, "chest")
+    whip = [W_((-0.07, -hd / 2, hh / 2 + 0.05)), W_((-0.072, -hd / 2 - 0.004, hh / 2 + 0.09)), W_((-0.08, -hd / 2 - 0.016, hh / 2 + 0.2)),
+            W_((-0.092, -hd / 2 - 0.05, hh / 2 + 0.52))]
+    c.rigid(kit.rope("whip_goose", whip[:2] + [whip[1].lerp(whip[2], 0.5)], 0.0065, "rubber"), "chest")
+    c.rigid(kit.cyl("whip", whip[1].lerp(whip[2], 0.45), whip[3], 0.0042, "rubber", r1=0.0022, segs=8, bevel=0), "chest")
+    c.rigid(kit.cyl("whip_tip", whip[3], whip[3] + (whip[3] - whip[2]).normalized() * 0.012, 0.004, "black", segs=8, bevel=0), "chest")
+    # SATCOM panel hinged up on its mast, facing up and back.
+    hinge = W_((0.062, -hd / 2 + 0.01, hh / 2 + 0.07))
+    Ms = Matrix.Translation(hinge) @ Mb.to_3x3().to_4x4() @ Matrix.Rotation(math.radians(30), 4, "X") @ Matrix.Translation((0, -0.004, 0.058))
+    sat = kit.block("satcom", (0, 0, 0), (0.115, 0.012, 0.11), BONE, bevel=0.003)
+    kit.hs.apply_modifiers(sat)
+    sat.data.transform(Ms)
+    torso_arm.add(sat, "chest")
+    sn = (Ms.to_3x3() @ Vector((0, -1, 0))).normalized()
+    torso_arm.etch(sat, code_rows(scripture(41, 6, 9), 0.0072), Ms @ Vector((0, -0.006, 0)) + sn * 0.1, -sn,
+                   up=Ms.to_3x3() @ Vector((0, 0, 1)))
+    c.rigid(kit.block("sat_hinge", hinge, (0.03, 0.014, 0.014), "gunmetal", bevel=0.002), "chest")
+    sat_back = kit.block("satcom_back", (0, 0.009, 0), (0.1, 0.008, 0.095), "gunmetal", bevel=0.002)
+    sat_back.data.transform(Ms)
+    c.rigid(sat_back, "chest")
+    # Cable from the radio up the back of the neck into the helmet's rear module.
+    rt = W_((-0.03, -hd / 2 - 0.01, hh / 2 + 0.03))
+    c.add(kit.rope("helmet_cable", [port + Vector((0, 0.004, -0.004)), port + Vector((0.0, 0.03, -0.05)), rt + Vector((-0.01, 0.02, 0.06)), rt], 0.0045,
+                   "rubber"), ["head", "neck", "chest"])
+
+    # Padded shoulder straps in the accent colour with buckles, over the shirt.
+    for s, sx in (("L", 1), ("R", -1)):
+        xs = sx * 0.085
+        pts = []
+        for y in (-0.13, -0.10, -0.07, -0.04, -0.01, 0.02, 0.05, 0.08, 0.11, 0.13):
+            loc, _ = pmc.hit(tshirt, (xs, y, 1.9), (0, 0, -1))
+            z = loc.z + 0.008 if loc and loc.z > armpit + 0.05 else Z(1.36)
+            pts.append((xs, y, z))
+        pts[0] = pf.P(sx * 0.074, Z(1.362), 0.012)
+        pts[-1] = pb.P(sx * 0.082, Z(1.348), 0.012)
+        path = pmc.smooth_path(pts, 3)
+        nrm = pmc.radial((sx * 0.085, 0, Z(1.33)), (1, 0, 0))
+        c.rigid(pmc.sweep("shoulder_strap", path, 0.05, 0.013, "accent", nrm), "chest")
+        k = min(range(1, len(path) - 1), key=lambda i: abs(path[i].y + 0.07))
+        tan = (path[k + 1] - path[k - 1]).normalized()
+        nn = nrm(path[k]).normalized()
+        c.rigid(pmc.side_buckle("strap_buckle", path[k] + nn * 0.009, -tan, nn, w=0.04), "chest")
+        if s == "L":
+            k2 = min(range(1, len(path) - 1), key=lambda i: abs(path[i].y + 0.035))
+            t2 = (path[k2 + 1] - path[k2 - 1]).normalized()
+            n2 = nrm(path[k2]).normalized()
+            Mp = pmc.frame(path[k2] + n2 * 0.0065, n2, t2)
+            ptt = [kit.block("ptt", (0, -0.009, 0), (0.034, 0.018, 0.042), "black", bevel=0.003),
+                   kit.cyl("ptt_button", (0, -0.017, 0.004), (0, -0.023, 0.004), 0.009, "accent", segs=14, bevel=0.0015)]
+            pmc.put(ptt, Mp)
+            pmc.rigid_all(c, ptt, "chest")
+            ptt_top = Mp @ Vector((0, -0.01, 0.022))
+            over = [path[i] + nrm(path[i]).normalized() * 0.014 + Vector((0.026, 0, 0)) for i in range(k2 + 3, len(path) - 4, 3)]
+            c.rigid(kit.rope("ptt_cable", [ptt_top] + over + [rt + Vector((0.06, 0.01, 0.03)), rt + Vector((0.03, 0, 0))], 0.0035, "black"), "chest")
+
+    # Cummerbund from under the front plate round to the back.
+    for s, sx in (("L", 1), ("R", -1)):
+        for z, w in ((Z(1.075), 0.06), (Z(1.15), 0.06)):
+            pts = pmc._ring_side(tshirt, (0, -0.004), z, 0.012, sx * 46, sx * 136)
+            c.rigid(pmc.sweep("cummerbund", pmc.smooth_path(pts, 3), w, 0.012, NYLON, pmc.radial((0, -0.004, 0))), "chest")
+
+    # ---------------------------------------------------------------- shoulder plates
+    for s, sx in (("L", 1), ("R", -1)):
+        ua = "upper_arm." + s
+        ua0, ua1 = J(ua, 0.0), J(ua, 1.0)
+        # The lower lame first: a band round the outside of the upper arm, tucked under the cap.
+        sleeve = region_tree(shirt.low, {ua, "shoulder." + s})
+        tu = Tube([sleeve], ua0, ua1, front=(0, -1, 0), t=(0.1, 0.75), nt=22, nphi=48, reach=0.14, spread=0.03, blur=0.02)
+        lame = tu.patch("shoulder_lame", BONE, 0.2, 0.42, 90 * sx, 66, 0.007, 0.0055, nu=10, nv=3, corner=2.5, bevel=0.002)
+        arm_arm.add(lame, ua)
+        # The cap: a dome over the deltoid fitted round the shoulder joint, clearing the lame.
+        O = ua0 + Vector((-sx * 0.012, 0.0, -0.012))
+        cap_env = Env([sleeve, lame], O, Z=(sx * 0.6, 0.0, 0.8), F=(0, -sx, 0), reach=0.16, lat=(-40.0, 90.0), dlat=4.0, dlon=6.0,
+                      spread=9.0, blur=7.0, floor=0.003)
+
+        def cap_rim(lo):
+            sn = math.sin(math.radians(lo))
+            return 38.0 - 63.0 * max(0.0, sn) ** 1.3 + 7.0 * max(0.0, -sn)
+        cap = cap_env.patch("shoulder_cap", BONE, -180.0, 180.0, cap_rim, lambda lo: 84.0, 0.0095, 0.006, nu=28, nv=6, closed=True, pole=True,
+                            inner="regime_pad", bevel=0.0022)
+        arm_arm.add(cap, ua)
+        n = cap_env.normal(40, 90)
+        arm_arm.etch(cap, code_rows(scripture(41 + sx, 3, 7), 0.0095), cap_env.P(40, 90, 0.0095) + n * 0.1, -n, up=(0, 0, 1))
+        n = tu.d(90 * sx)
+        p = tu.P(0.33, 90 * sx, 0.007)
+        arm_arm.etch(lame, tick_rows(44 + sx, 2, 0.06, 0.0045), p + n * 0.1, -n, up=(ua0 - ua1).normalized())
+        for lo in (-40, -140):
+            la = cap_rim(lo) + 7
+            arm_arm.detail(screw(cap_env.P(la, lo, 0.0095), cap_env.normal(la, lo, 0.0095), r=0.0035))
+        # A strap round the arm under the lame holds it.
+        tu2 = Tube([sleeve], ua0, ua1, hard=[lame], t=(0.3, 0.5), nt=6, nphi=36, reach=0.14)
+        c.rigid(strap_ring("arm_strap", tu2.ring(0.38, 0.0015, n=20), ua0.lerp(ua1, 0.38), ua1 - ua0, 0.022, 0.004, NYLON), ua)
+
+    # ---------------------------------------------------------------- leg guards
+    tt = pmc.tree(trousers.low)
+    for s, sx in (("L", 1), ("R", -1)):
+        ul, ll = "upper_leg." + s, "lower_leg." + s
+        ul0, ul1 = J(ul, 0.0), J(ul, 1.0)
+        ll0, ll1 = J(ll, 0.0), J(ll, 1.0)
+        # Thigh guard: front and outside of the upper thigh, hung from the belt, two straps.
+        tu = Tube([tt], ul0, ul1, t=(-0.05, 0.6), nt=28, nphi=60, reach=0.16, spread=0.03, blur=0.022)
+        thigh = tu.patch("thigh_guard", BONE, 0.1, 0.44, 42 * sx, 38, 0.0095, 0.007, nu=10, nv=7, corner=3.0, bulge=0.003, bevel=0.0025)
+        leg_arm.add(thigh, ul)
+        n = tu.d(44 * sx)
+        p = tu.P(0.27, 44 * sx, 0.0095)
+        leg_arm.etch(thigh, code_rows(scripture(61 + sx, 4, 6), 0.0098), p + n * 0.1, -n, up=(ul0 - ul1).normalized())
+        for tq in (0.14, 0.4):
+            for pq in (-28, 28):
+                ph = 42 * sx + pq
+                leg_arm.detail(screw(tu.P(tq, ph, 0.0095), tu.d(ph), r=0.0034))
+        tu2 = Tube([tt], ul0, ul1, hard=[thigh], t=(0.0, 0.5), nt=11, nphi=36, reach=0.17)
+        for tq in (0.3,):
+            c.rigid(strap_ring("thigh_strap", tu2.ring(tq, 0.0015, n=22), ul0.lerp(ul1, tq), ul1 - ul0, 0.03, 0.0045, "accent"), ul)
+            p = tu2.P(tq, -30 * sx, 0.0)
+            M = pmc.frame(p + tu2.d(-30 * sx) * 0.0045, tu2.d(-30 * sx), ul0 - ul1)
+            bk = kit.block("leg_buckle", (0, 0, 0), (0.034, 0.008, 0.03), "gunmetal", bevel=0.0012)
+            bk.data.transform(M)
+            c.rigid(bk, ul)
+        top = tu.P(0.1, 42 * sx, 0.006)
+        c.add(pmc.sweep("hanger", [Vector((top.x, top.y, belt_z + 0.01)) + (top - ul0.lerp(ul1, 0.06)).normalized() * 0.004, top + Vector((0, 0, 0.012))],
+                        0.022, 0.004, "black", lambda p, s_=sx: tu.d(42 * s_)), ["hips", ul])
+
+        # Shin guard and knee cap over the trousers.
+        ts = Tube([tt], ll0, ll1, t=(-0.1, 0.8), nt=30, nphi=60, reach=0.15, spread=0.03, blur=0.022)
+        shin = ts.patch("shin_guard", BONE, 0.13, 0.64, 4 * sx, 58, 0.009, 0.0065, nu=10, nv=9, corner=3.0, bulge=0.004, bevel=0.0025)
+        leg_arm.add(shin, ll)
+        n = ts.d(4 * sx)
+        p = ts.P(0.42, 4 * sx, 0.009)
+        leg_arm.etch(shin, code_rows(scripture(71 + sx, 8, 3), 0.0092), p + n * 0.1, -n, up=(ll0 - ll1).normalized())
+        kn = ll0 + Vector((0, 0.012, 0.004))
+        kenv = Env([tt, shin], kn, Z=(0, -1, 0.12), F=(0, 0, 1), reach=0.14, lat=(0.0, 90.0), dlat=4.0, dlon=8.0, spread=16.0, blur=10.0, floor=0.004)
+
+        def knee_rim(lo):
+            return 50.0 - 10.0 * math.cos(math.radians(lo)) ** 2
+        knee = kenv.patch("knee_cap", BONE, -180.0, 180.0, knee_rim, lambda lo: 84.0, 0.011, 0.0065, nu=16, nv=4, closed=True, pole=True,
+                          inner="regime_pad", bevel=0.0022)
+        leg_arm.add(knee, ll)
+        kp = kenv.P(90, 0, 0.011)
+        kn_n = kenv.normal(90, 0, 0.011, h=4.0)
+        c.rigid(kit.cyl("knee_boss", kp - kn_n * 0.003, kp + kn_n * 0.0045, 0.013, "gunmetal", segs=6, bevel=0.0012, bsegs=1), ll)
+        ts2 = Tube([tt], ll0, ll1, hard=[shin], t=(0.1, 0.7), nt=13, nphi=36, reach=0.15)
+        for tq in (0.24, 0.56):
+            c.rigid(strap_ring("shin_strap", ts2.ring(tq, 0.0015, n=22), ll0.lerp(ll1, tq), ll1 - ll0, 0.024, 0.0045, "webbing"), ll)
+
+    # Tactical boots.
+    real.boots(c, man, "boot", sole_kind="rubber", trim="rubber", top=0.19, lace="webbing", tab="accent")
+    for a in (head_arm, torso_arm, arm_arm, leg_arm):
+        a.finish()
+    pmc.economise(c)
     return c
 
 
-SPEC = {"build": build, "faction": "regime", "budget": (25000, 75000), "loadout": "rifle",
+SPEC = {"build": build, "faction": "regime", "budget": (25000, 80000), "loadout": "rifle",
         "colors": {"primary": "#1a1a1d", "secondary": "#2a2a2e", "accent": "#7a1010"}}

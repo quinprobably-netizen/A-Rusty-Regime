@@ -1,9 +1,18 @@
-"""Mechanic, Scrappers: a Luddite fixer. Welding goggles pushed up on the forehead (brass-rimmed round
-lenses on a leather strap), a heavy split-leg leather apron with a hand-painted cog over a rolled-sleeve
-work shirt and suspenders, a tool belt with a hammer, wrenches and screwdrivers, an oil can and a rag,
-a brass pressure gauge strapped to the left wrist, suede welding gloves, steel-capped boots.
+"""Mechanic, Scrappers: a Luddite homesteader who keeps the settlement's machines running. A waxed-canvas
+chore jacket with a corduroy collar and leather elbow patches; over it a split-leg leather welding apron
+with a hand-painted cog, brass rivets and tan straps; a tool belt with a hammer, a tool pouch and an oil
+can, and a waxed tool roll strapped across the small of the back. A leather work cap with brass welding
+goggles pushed up on it, suede work gloves, a brass pressure gauge strapped to the left wrist, patched
+duck trousers with turn-ups and worn leather work boots. A real face: stubble and a moustache. Nothing
+electric: leather, brass, riveted steel, waxed cloth and paint.
 
-Tints: primary = shirt, secondary = trousers, accent = suspenders and apron straps.
+Built on the realistic layer (real.py), like the Contractor: a real body, face and eyes, gloved fists
+closed round the grips, jacket, apron and trousers cut from the body and draped by the cloth
+simulation, procedural surfaces (this module's own: waxed canvas, cotton duck, corduroy, brushed paint,
+ash wood, moustache) baked into a 2048 atlas.
+
+Tints: primary = jacket (and the knee patches cut from the same cloth), secondary = trousers, accent =
+the tan straps (apron, goggles, tool roll). The collar, leather and brass are fixed colours.
 
 The first part of this file holds placement helpers the other Scrappers (bruiser, trapper) import: ray
 casts against the body so gear sits on the skin, straps draped over it, conforming bands, parametric
@@ -12,6 +21,7 @@ sheets (aprons, coat panels), rivet and stitch rows, custom skin weights.
 
 import math
 
+import bpy
 import bmesh
 from mathutils import Matrix, Vector
 from mathutils.bvhtree import BVHTree
@@ -532,383 +542,1118 @@ def boots(c, b, flesh, cap="steel", top=0.2, sole_mat="rubber", lace="canvas"):
     return out
 
 
-# ---------------------------------------------------------------------------------------- the mechanic
+
+
+# ===================================================================================== realistic layer
+# The Mechanic proper, on the realistic layer (real.py). Everything below is this character's own; the
+# helpers above stay for the bruiser and trapper.
+
+import real  # noqa: E402
+import surfaces  # noqa: E402
+from chars import contractor as pmc  # noqa: E402  (ray-cast and strap helpers)
+
+kit.hs.PALETTE.setdefault("scrap_boot", ((0.16, 0.095, 0.05), (0.40, 0.29, 0.19), 0.0, 0.6, 0.65, 0))      # oiled work-boot leather
+kit.hs.PALETTE.setdefault("scrap_lace", ((0.36, 0.24, 0.13), (0.50, 0.38, 0.25), 0.0, 0.75, 0.3, 0))       # rawhide laces
+kit.hs.PALETTE.setdefault("scrap_lens", ((0.012, 0.045, 0.026), (0.012, 0.045, 0.026), 0.0, 0.05, 0.0, 0))  # shade-5 welding glass
+kit.hs.PALETTE.setdefault("scrap_paint", ((0.80, 0.57, 0.12), (0.20, 0.12, 0.065), 0.0, 0.5, 0.7, 0))      # yellow enamel, chipped to leather
+kit.hs.PALETTE.setdefault("scrap_copper", ((0.56, 0.30, 0.17), (0.80, 0.52, 0.36), 1.0, 0.38, 0.4, 0))
+kit.hs.PALETTE.setdefault("scrap_cord", ((0.15, 0.085, 0.045), (0.30, 0.20, 0.12), 0.0, 0.85, 0.35, 0))      # brown corduroy
+kit.hs.PALETTE.setdefault("scrap_cap", ((0.115, 0.068, 0.038), (0.27, 0.18, 0.11), 0.0, 0.62, 0.35, 0))   # oiled cap leather, dark with handling
+kit.hs.PALETTE.setdefault("scrap_wax", ((0.21, 0.18, 0.11), (0.36, 0.31, 0.20), 0.0, 0.5, 0.45, 0))         # brown waxed cotton
+
+# This character's kinds -> surface recipes (all prefixed, so no other character's materials change).
+for _k, _s in (("scrap_suede", "leather"), ("scrap_boot", "leather"), ("scrap_cap", "oiled"), ("scrap_lace", "leather"), ("scrap_lens", "glass"),
+               ("scrap_paint", "paint"), ("scrap_hair", "hair"), ("scrap_kerchief", "canvas"), ("scrap_ash", "wood"),
+               ("scrap_copper", "metal"), ("scrap_wax", "waxed"), ("scrap_cord", "corduroy")):
+    surfaces.RECIPE.setdefault(_k, _s)
+
+
+# ------------------------------------------------------------------------------------ own surfaces
+
+def _cloth_grain(g, uv):
+    """Thread-scale grain for heavy cotton, from noise only: the atlas has about a millimetre per texel,
+    and a periodic weave that fine aliases into a check."""
+    u, v, _ = g.xyz(uv)
+    slub = g.noise(g.combine(u, g.mul(v, 0.12), 0.0), 160.0, detail=2)       # thick and thin yarns, streaking along the warp
+    fib = surfaces._fibres(g, uv)
+    tex = g.noise(g.combine(g.mul(u, 0.5), v, 0.0), 420.0, detail=1)          # the weave's own tooth, as noise
+    return slub, fib, tex
+
+
+def _duck(g, pal):
+    """Heavy cotton duck (work trousers, patches): streaky slub yarns, a dry matte face, lighter where
+    it has been rubbed."""
+    base = pal[0]
+    uv = g.uv()
+    slub, fib, tex = _cloth_grain(g, uv)
+    pos = g.geo("Position")
+    rub = g.mul(g.edge(0.006, lo=0.9985, hi=0.98), g.remap(g.noise(pos, 8.0, detail=3), 0.35, 0.7))
+    shade = g.remap(g.add(g.mul(slub, 0.6), g.mul(fib, 0.4)), 0.3, 0.7, 0.9, 1.06, smooth=False)
+    col = g.mix(1.0, base, g.rgb(shade, shade, shade), "MULTIPLY")
+    col = g.mix(g.mul(rub, 0.4), col, surfaces._scale(base, 1.18))
+    h = g.add(g.add(g.mul(tex, 0.45), g.mul(fib, 0.35)), g.mul(slub, 0.2))
+    return dict(color=col, rough=g.lerp(rub, 0.9, 0.8), metal=0.0, height=h, bump=0.0004)
+
+
+def _waxed(g, pal):
+    """Waxed cotton duck: the weave darkened by the wax and given a dull sheen; the wax breaks into pale
+    crease lines and lightens along the folds, where the cloth keeps getting bent."""
+    base = pal[0]
+    uv = g.uv()
+    slub, fib, tex = _cloth_grain(g, uv)
+    pos = g.geo("Position")
+    cr = g.noise(pos, 26.0, detail=6, rough=0.7, distort=0.6)
+    lines = g.remap(g.math("ABSOLUTE", g.sub(cr, 0.5)), 0.010, 0.0)
+    ridge = g.edge(0.005, lo=0.9985, hi=0.985)
+    patchy = g.remap(g.noise(pos, 5.0, detail=3), 0.35, 0.7)
+    brk = g.math("MAXIMUM", g.mul(g.mul(lines, g.add(0.25, g.mul(patchy, 0.75))), 0.5), g.mul(ridge, g.add(0.35, g.mul(patchy, 0.65))), clamp=True)
+    shade = g.remap(g.add(g.mul(slub, 0.6), g.mul(fib, 0.4)), 0.3, 0.7, 0.9, 1.05, smooth=False)
+    col = g.mix(1.0, base, g.rgb(shade, shade, shade), "MULTIPLY")
+    col = g.mix(g.mul(patchy, 0.2), col, surfaces._scale(base, 0.8))     # heavier wax: darker blotches
+    col = g.mix(g.mul(brk, 0.6), col, surfaces._scale(base, 1.22))       # the breaks: pale
+    h = g.sub(g.add(g.mul(tex, 0.4), g.mul(fib, 0.35)), g.mul(lines, 0.35))
+    rough = g.lerp(brk, g.lerp(patchy, 0.6, 0.48), 0.84)
+    return dict(color=col, rough=rough, metal=0.0, height=h, bump=0.00045)
+
+
+def _whiskers(g, pal):
+    """A moustache: dense coarse hairs combed down and out, a few gone grey, thinning only at the edge."""
+    base = pal[0]
+    pos = g.geo("Position")
+    x, y, z = g.xyz(pos)
+    strands = g.noise(g.combine(g.mul(x, 0.6), y, g.mul(z, 0.08)), 1300.0, detail=2, rough=0.5)
+    clumps = g.noise(g.combine(x, y, g.mul(z, 0.25)), 220.0, detail=2)
+    shade = g.remap(g.add(g.mul(strands, 0.7), g.mul(clumps, 0.3)), 0.25, 0.75, 0.55, 1.45, smooth=False)
+    col = g.mix(1.0, base, g.rgb(shade, shade, shade), "MULTIPLY")
+    grey = g.remap(g.noise(pos, 1900.0, detail=1), 0.68, 0.72)
+    col = g.mix(g.mul(grey, 0.7), col, (0.42, 0.40, 0.37))
+    edge = g.remap(g.attr("seam"), 0.0, 0.0025)
+    sparse = g.remap(g.sub(strands, g.mul(g.sub(1.0, edge), 0.6)), 0.3, 0.5)
+    col = g.mix(g.mul(g.sub(1.0, sparse), 0.9), col, surfaces._scale(kit.hs.PALETTE["skin"][0], 0.75))
+    return dict(color=col, rough=g.lerp(strands, 0.7, 0.5), metal=0.0, height=strands, bump=0.0007)
+
+
+def _corduroy(g, pal):
+    """Corduroy: rounded wales 2.6 mm apart, the pile darker in the valleys, crushed and shiny on worn crowns."""
+    base = pal[0]
+    uv = g.uv()
+    u, _, _ = g.xyz(uv)
+    t = g.math("FRACT", g.math("DIVIDE", u, 0.0026))
+    wale = g.math("SINE", g.mul(t, math.pi))
+    pile = g.noise(uv, 1800.0, detail=3, rough=0.7)
+    worn = g.remap(g.noise(g.geo("Position"), 16.0, detail=3), 0.5, 0.8)
+    col = g.mix(g.mul(g.sub(1.0, wale), 0.5), base, surfaces._scale(base, 0.7))
+    col = g.mix(g.mul(g.mul(wale, worn), 0.45), col, surfaces._scale(base, 1.15))
+    h = g.add(g.mul(wale, 0.8), g.mul(pile, 0.2))
+    return dict(color=col, rough=g.lerp(g.mul(wale, worn), 0.92, 0.72), metal=0.0, height=h, bump=0.0008)
+
+
+def _paint(g, pal):
+    """Hand-brushed enamel: vertical brush streaks, thin passes where the leather shows through."""
+    base, worn = pal[0], pal[1]
+    pos = g.geo("Position")
+    x, y, z = g.xyz(pos)
+    streak = g.noise(g.combine(x, y, g.mul(z, 0.1)), 240.0, detail=2)
+    thin = g.remap(g.add(g.noise(pos, 40.0, detail=4), g.mul(streak, 0.25)), 0.66, 0.8)
+    sh = g.remap(streak, 0.3, 0.7, 0.86, 1.06, smooth=False)
+    col = g.mix(1.0, base, g.rgb(sh, sh, sh), "MULTIPLY")
+    col = g.mix(g.mul(thin, 0.9), col, worn)
+    h = g.sub(g.mul(streak, 0.6), g.mul(thin, 0.6))
+    return dict(color=col, rough=g.lerp(thin, pal[3], 0.78), metal=0.0, height=h, bump=0.00025)
+
+
+def _wood(g, pal):
+    """Ash handle: long grain along the handle (the handles hang roughly upright), oiled and handled dark."""
+    base = pal[0]
+    pos = g.geo("Position")
+    x, y, z = g.xyz(pos)
+    grain = g.noise(g.combine(g.mul(x, 1.0), g.mul(y, 1.0), g.mul(z, 0.05)), 160.0, detail=3, distort=0.5)
+    rings = g.remap(g.math("SINE", g.mul(grain, 60.0)), 0.6, 1.0)
+    col = g.mix(g.mul(rings, 0.35), base, surfaces._scale(base, 0.62))
+    grime = g.remap(g.noise(pos, 12.0, detail=3), 0.45, 0.75)
+    col = g.mix(g.mul(grime, 0.4), col, surfaces._scale(base, 0.55))
+    return dict(color=col, rough=g.lerp(grime, 0.62, 0.42), metal=0.0, height=rings, bump=0.0002)
+
+
+def _oiled(g, pal):
+    """Oiled, handled leather (the cap): the hide's pebble grain worn down smooth and larger, a soft sheen."""
+    r = surfaces.leather(g, pal, grain=1.6)
+    r["bump"] = 0.00018
+    return r
+
+
+surfaces.RECIPES.setdefault("waxed", _waxed)
+surfaces.RECIPES.setdefault("oiled", _oiled)
+surfaces.RECIPES.setdefault("corduroy", _corduroy)
+surfaces.RECIPES.setdefault("paint", _paint)
+surfaces.RECIPES.setdefault("wood", _wood)
+surfaces.RECIPES.setdefault("duck", _duck)
+surfaces.RECIPES.setdefault("whiskers", _whiskers)
+surfaces.SOFT.update({"waxed", "corduroy", "duck", "oiled"})
+
+
+# ---------------------------------------------------------------------------------- helpers
+
+def remat(obj, kind):
+    """Give a part built with a palette kind the realistic material `kind` ("<surface>.<tint>")."""
+    obj.data.materials.clear()
+    obj.data.materials.append(real.mat(kind))
+    return obj
+
+
+def glue(c, obj, src):
+    """Skin a part sitting on a garment with that garment's own weights (nearest face), so it moves
+    exactly with the cloth under it: the cloth simulation moved the garment's vertices off the body
+    vertices their weights came from, and weights from the body would let the cloth swallow the part."""
+    kit.hs.apply_modifiers(obj)
+    kit.transfer(src, obj)
+    c.parts.append((obj, "DONE", None))
+    return obj
+
+
+def to_hips(obj, frac):
+    """Hand the fraction frac(p) of each vertex's thigh weights to the hips: a skirt hangs from the
+    belt, it is not dragged along by the legs under it."""
+    vg = obj.vertex_groups
+    if "hips" not in vg:
+        return
+    hips = vg["hips"]
+    legs = {vg[n].index: vg[n] for n in THIGHS if n in vg}
+    for v in obj.data.vertices:
+        t = frac(v.co)
+        if t <= 0.0:
+            continue
+        moved = 0.0
+        for ge in list(v.groups):
+            if ge.group in legs:
+                w = ge.weight
+                legs[ge.group].add([v.index], w * (1.0 - t), "REPLACE")
+                moved += w * t
+        if moved > 0.0:
+            hips.add([v.index], moved, "ADD")
+
+
+def weights_from(obj, src, frac):
+    """Blend each vertex's weights toward those of the nearest face of `src` by frac(p): a garment
+    draped over another (its cloth moved it off the body points its weights came from) moves with
+    the one under it."""
+    tmp = obj.copy()
+    tmp.data = obj.data.copy()
+    bpy.context.scene.collection.objects.link(tmp)
+    kit.transfer(src, tmp)
+    names = [g.name for g in tmp.vertex_groups]
+    for n in names:
+        if n not in obj.vertex_groups:
+            obj.vertex_groups.new(name=n)
+    vg = obj.vertex_groups
+    for v, tv in zip(obj.data.vertices, tmp.data.vertices):
+        t = frac(v.co)
+        if t <= 0.0:
+            continue
+        w = {vg[g.group].name: g.weight * (1 - t) for g in v.groups}
+        for g in tv.groups:
+            n = names[g.group]
+            w[n] = w.get(n, 0.0) + g.weight * t
+        for g in list(v.groups):
+            vg[g.group].remove([v.index])
+        for n, x in w.items():
+            if x > 1e-4:
+                vg[n].add([v.index], x, "REPLACE")
+    me = tmp.data
+    bpy.data.objects.remove(tmp, do_unlink=True)
+    bpy.data.meshes.remove(me)
+
+
+def hang_weights(obj, z0, z1, z_top):
+    """Skirt weights: below z1 a vertex goes with the hips by sm(z, z0, z1) and with the thigh under it
+    for the rest, split between the two across the middle, so each flap of a split skirt moves as one
+    piece with its leg and the skirt above hangs from the belt; from z1 up to z_top the thigh weights go
+    to the hips; above that the weights stay as they are."""
+    vg = obj.vertex_groups
+    for n in ("hips",) + tuple(sorted(THIGHS)):
+        if n not in vg:
+            vg.new(name=n)
+    hips, L, R = vg["hips"], vg["upper_leg.L"], vg["upper_leg.R"]
+    for v in obj.data.vertices:
+        z = v.co.z
+        if z >= z1:
+            continue
+        t = float(real._smooth(z, z0, z1))
+        sL = float(real._smooth(v.co.x, -0.04, 0.04))
+        for ge in list(v.groups):
+            vg[ge.group].remove([v.index])
+        for g, w in ((hips, t), (L, (1 - t) * sL), (R, (1 - t) * (1 - sL))):
+            if w > 1e-4:
+                g.add([v.index], w, "REPLACE")
+    to_hips(obj, lambda p: 1.0 if z1 <= p.z < z_top else 0.0)
+
+
+def mesh_obj(name, bm, kind, texel=None):
+    """An object from a bmesh with the realistic material `kind`, smooth shaded, no bevel."""
+    o = real._bm_obj(name, bm)
+    o.data.materials.append(real.mat(kind))
+    if texel:
+        o["texel"] = texel
+    return o
+
+
+def loft(name, rings, kind, closed=False, cap=True):
+    """A solid swept through cross-section rings (each a closed polygon, all the same length): faces
+    between consecutive rings, the end rings capped. A collar, a rolled cuff, a tool roll."""
+    bm = bmesh.new()
+    vr = [[bm.verts.new(p) for p in r] for r in rings]
+    n = len(rings[0])
+    pairs = list(zip(vr, vr[1:])) + ([(vr[-1], vr[0])] if closed else [])
+    for r0, r1 in pairs:
+        for j in range(n):
+            k = (j + 1) % n
+            bm.faces.new((r0[j], r0[k], r1[k], r1[j]))
+    if cap and not closed:
+        bm.faces.new(vr[0][::-1])
+        bm.faces.new(vr[-1])
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    return mesh_obj(name, bm, kind)
+
+
+def set_attr(obj, name, values):
+    me = obj.data
+    if name in me.attributes:
+        me.attributes.remove(me.attributes[name])
+    at = me.attributes.new(name, "FLOAT", "POINT")
+    at.data.foreach_set("value", [float(v) for v in values])
+
+
+def ring_on(t, centre, normal, offset, n=36, front=(0, -1, 0)):
+    """Points round `centre` in the plane with `normal`, `offset` out from the surface in tree `t`
+    (rays from the centre outward: the first surface they meet). Starts at the front."""
+    nn = Vector(normal).normalized()
+    f = Vector(front)
+    e1 = (f - nn * f.dot(nn)).normalized()
+    e2 = nn.cross(e1).normalized()
+    out = []
+    for i in range(n):
+        a = 2 * math.pi * i / n
+        d = e1 * math.cos(a) + e2 * math.sin(a)
+        loc, _ = pmc.hit(t, centre, d)
+        out.append(loc + d * offset if loc is not None else Vector(centre) + d * 0.1)
+    return out
+
+
+def outermost(trees, origin, d, reach=0.6):
+    """The farthest surface out along d from origin among several trees (a belt over apron and jacket)."""
+    d = Vector(d).normalized()
+    best = None
+    for t in trees:
+        loc, nor, _, dist = t.ray_cast(Vector(origin) + d * reach, -d, reach)
+        if loc is not None and (best is None or dist < best[2]):
+            best = (loc, nor, dist)
+    return (best[0], best[1]) if best else (None, None)
+
+
+def decal(name, t, outline, hole, side, kind, offset=0.0012, thick=0.0007, density=2):
+    """Paint laid on a surface: the flat (x, z) `outline` (with a round `hole` (x, z, r) or None)
+    triangulated, subdivided `density` times and dropped onto tree `t` along Y from the front (side -1)
+    or the back (+1), `offset` off it, `thick` deep. No booleans, so any surface takes it."""
+    bm = bmesh.new()
+    rings = [outline]
+    if hole:
+        hx, hz, hr = hole
+        rings.append([(hx + hr * math.cos(2 * math.pi * i / 20), hz + hr * math.sin(2 * math.pi * i / 20)) for i in range(20)])
+    edges = []
+    for r in rings:
+        vs = [bm.verts.new((x, 0.0, z)) for x, z in r]
+        edges += [bm.edges.new((vs[i], vs[(i + 1) % len(vs)])) for i in range(len(vs))]
+    bmesh.ops.triangle_fill(bm, use_beauty=True, use_dissolve=False, edges=edges)
+    if density:
+        bmesh.ops.subdivide_edges(bm, edges=[e for e in bm.edges if e.calc_length() > 0.008], cuts=density, use_grid_fill=True)
+        bmesh.ops.triangulate(bm, faces=bm.faces[:])
+    for v in bm.verts:
+        loc, nor = pmc.hit(t, Vector((v.co.x, side * 0.6, v.co.z)), (0, -side, 0))
+        if loc is None:
+            loc, nor = nearest(t, Vector((v.co.x, 0, v.co.z)))
+        v.co = loc + nor * offset
+    bm.normal_update()
+    bm.faces.ensure_lookup_table()
+    if bm.faces and bm.faces[0].normal.y * side < 0:
+        bmesh.ops.reverse_faces(bm, faces=bm.faces[:])
+    o = mesh_obj(name, bm, kind)
+    if thick:
+        sm = o.modifiers.new("thick", "SOLIDIFY")
+        sm.thickness = thick
+        sm.offset = -1.0
+        sm.use_rim = True
+        kit.hs._apply(o, sm.name)
+    o["unwrap"] = True
+    return o
+
+
+def nearest(t, p):
+    loc, nor, _, _ = t.find_nearest(Vector(p))
+    return loc, nor
+
+
+# ---------------------------------------------------------------------------------- the face
+
+def moustache(c, man, kind="whiskers.scrap_hair"):
+    """A full moustache over the upper lip, drooping a little past the corners of the mouth: a pad laid
+    on the face with rays, thickest under the nose, thinning out to its edges (where the hair recipe
+    lets the skin show through)."""
+    E, u = man.face()
+    tb = pmc.tree(man.low)
+    ns, nv = 18, 7
+    W = 0.0345
+
+    def F(x, z):
+        return E + Vector((x, 0, z)) * u
+
+    def edge_z(x, v):
+        a = min(1.0, abs(x) / W)
+        top = -0.0515 - 0.011 * a ** 2
+        bot = -0.0655 - 0.0165 * a ** 2.4
+        return top + (bot - top) * v
+    top_rows, bot_rows, seam = [], [], []
+    for j in range(nv + 1):
+        v = j / nv
+        rt, rb = [], []
+        for i in range(ns + 1):
+            s = -1 + 2 * i / ns
+            w = W * (0.86 + 0.14 * v)
+            x = s * w
+            p = F(x, edge_z(x, v))
+            loc, nor = pmc.hit(tb, p + Vector((0, -0.12, 0)), (0, 1, 0))
+            if loc is None:
+                loc, nor = nearest(tb, p)
+            prof = (max(0.0, 1 - abs(s) ** 2.2) ** 0.7) * (math.sin(math.pi * (0.08 + 0.84 * v)) ** 0.5)
+            h = 0.0007 + 0.0048 * u * prof * (1.0 + 0.25 * v)
+            rt.append(loc + nor * h)
+            rb.append(loc + nor * 0.0004)
+            seam.append(min((1 - abs(s)) * w * u, v * 0.016 * u, (1 - v) * 0.016 * u))
+        top_rows.append(rt)
+        bot_rows.append(rb)
+    bm = bmesh.new()
+    T = [[bm.verts.new(p) for p in r] for r in top_rows]
+    B = [[bm.verts.new(p) for p in r] for r in bot_rows]
+    for j in range(nv):
+        for i in range(ns):
+            bm.faces.new((T[j][i], T[j][i + 1], T[j + 1][i + 1], T[j + 1][i]))
+            bm.faces.new((B[j][i], B[j + 1][i], B[j + 1][i + 1], B[j][i + 1]))
+    ring = [(0, i) for i in range(ns)] + [(j, ns) for j in range(nv)] + [(nv, i) for i in range(ns, 0, -1)] + [(j, 0) for j in range(nv, 0, -1)]
+    for k in range(len(ring)):
+        a, b2 = ring[k], ring[(k + 1) % len(ring)]
+        bm.faces.new((T[a[0]][a[1]], B[a[0]][a[1]], B[b2[0]][b2[1]], T[b2[0]][b2[1]]))
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    o = mesh_obj("moustache", bm, kind, texel=1.6)
+    set_attr(o, "seam", seam + [0.0] * len(seam))
+    c.rigid(o, "head")
+    return o
+
+
+# ---------------------------------------------------------------------------------- the build
 
 def build():
-    b = kit.Build(height=1.75, width=1.0, bulk=1.0)
-    c = kit.begin("mechanic", b)
-    k = b.k
-    parts = kit.body(b, skin="skin", gut=0.3, head=False)
-    head = kit.head_mesh(b, "skin", jaw=1.05, brow=1.15, nose=1.08)
-    flesh = c.flesh(parts["body"])
-    c.add(head, kit.HEAD_BONES)
-    hc = b.j("head", 0.45)
-    hip = b.hip_z
-    body = Probe(flesh, skip=ARMS)
+    b = real.Anatomy(height=1.78, body="male", sole=0.034)
+    c = real.begin("mechanic", b)
+    man = real.body(c, stubble=0.8)
+    J, seg, sm = b.j, kit.seg_dist, real._smooth
+    lead = real.bones_at(man)
+    E, u = man.face()
+    hc = man.head_center()
+    tb = pmc.tree(man.low)
+    armpit, crotch = b.at("armpit"), b.at("crotch")
+    LIMBS = UPPER_ARMS | FOREARMS
+    LEGS = THIGHS | SHINS
 
-    # ---------------------------------------------------------------- head: hair, brows, moustache
-    # Cropped hair: a thin cap trimmed by a side-view hairline (forehead, over the ears, down to the nape).
-    line = kit.rounded([(-0.2, hc.z + 0.056 * k), (-0.058 * k, hc.z + 0.05 * k), (-0.037 * k, hc.z + 0.03 * k), (-0.036 * k, hc.z - 0.032 * k),
-                        (-0.017 * k, hc.z - 0.032 * k), (-0.014 * k, hc.z + 0.026 * k), (0.03 * k, hc.z + 0.031 * k),
-                        (0.06 * k, hc.z - 0.01 * k), (0.11 * k, hc.z - 0.062 * k), (0.2, hc.z - 0.09 * k), (0.2, hc.z + 0.3), (-0.2, hc.z + 0.3)], 0.008)
-    face = Probe(head)
+    def on_arm(p):
+        return lead(p) in LIMBS
 
-    def volume(p):
-        top = smoothstep(hc.z + 0.02 * k, hc.z + 0.1 * k, p.z)
-        quiff = smoothstep(-0.02, -0.075 * k, p.y) * smoothstep(hc.z + 0.035 * k, hc.z + 0.08 * k, p.z)
-        return 0.011 * top + 0.007 * quiff
-    hair = hair_cap(head, hc, k, line, volume, material="scrap_hair")
-    c.rigid(hair, "head")
-    # Combed-back ridges from a side parting on the left.
-    ridges = []
-    for gx, sweep in ((0.046, 0.006), (0.022, -0.004), (0.006, -0.008), (-0.01, -0.01), (-0.026, -0.012), (-0.042, -0.012)):
-        pts = []
-        for t in range(9):
-            y = (-0.05 + 0.017 * t) * k
-            x = (gx + sweep * t / 8) * k
-            h = face.hit(Vector((x, y, hc.z)), (x * 3, 0, 1), 0.3)
-            if h:
-                pts.append(h[0] + h[1] * (0.0015 + volume(h[0]) + 0.0072))
-        if len(pts) > 3:
-            ridges.append(tube_path("comb_ridge", pts, 0.0032, "scrap_hair", segs=6, closed=False, taper=True))
-    c.rigid(kit.join(ridges, "comb_ridges"), "head")
-    for sx in (1, -1):
-        pts = []
-        for x, dz in ((0.013, 0.021), (0.031, 0.027), (0.049, 0.02)):
-            s = face.surf(hc + Vector((sx * x * k, 0, dz * k)), (0, -1, 0), 0.25)
-            pts.append(s + Vector((0, -0.0015, 0.0)))
-        c.rigid(kit.rope("brow", pts, 0.0036, "scrap_hair"), "head")
-    els = []
-    for sx in (1, -1):
-        a = face.surf(hc + Vector((0, 0, -0.047 * k)), (0, -1, 0), 0.25) + Vector((0, -0.004, 0))
-        m = face.surf(hc + Vector((sx * 0.017 * k, 0, -0.052 * k)), (0, -1, 0), 0.25) + Vector((0, -0.004, 0))
-        e = face.surf(hc + Vector((sx * 0.03 * k, 0, -0.066 * k)), (sx * 0.5, -1, 0), 0.25) + Vector((sx * 0.002, -0.003, 0))
-        els += [kit.capsule(a, m, 0.0068, r1=0.0058), kit.capsule(m, e, 0.0058, r1=0.0032)]
-    c.rigid(kit.meta("moustache", els, "scrap_hair", res=0.0018, target=900, smooth_iter=2), "head")
+    # ---------------------------------------------------------------- hands and feet
+    real.gloves(c, man, "glove.scrap_suede", cuff=0.05)
+    boot_top = 0.155
+    real.boots(c, man, "leather.scrap_boot", sole_kind="rubber", trim="leather", top=boot_top, lace="scrap_lace", tab="leather")
 
-    # ---------------------------------------------------------------- welding goggles on the forehead
-    gear = Probe([head, hair])
-    sc = hc + Vector((0, 0.01, 0.066 * k))
-    s_axis = Vector((0, 0.34, 1))
-    pts, dirs, a = contour(gear, sc, s_axis, 0.0012 + 0.002, n=36, reach=0.2)
-    c.rigid(ribbon("goggle_strap", pts, dirs, [a] * len(pts), 0.021, 0.004, "leather", closed=True), "head")
-    c.rigid(dashes("strap_stitch", [(p + d * 0.0021 + a * sw * 0.0085, d, pts[(i + 1) % len(pts)] - p)
-                                    for i, (p, d) in enumerate(zip(pts, dirs)) for sw in (1, -1)],
-                   length=0.004, width=0.0009, height=0.0006, material="cream", flat=True), "head")
-    cups = []
-    for sx in (1, -1):
-        p, d = spot(gear, sc, s_axis, 31 * sx, 0.0045)
-        n = (d + UP * 0.1).normalized()
-        t1 = n.cross(UP).normalized()
-        t2 = n.cross(t1).normalized()
-        cup = kit.cyl("goggle_cup", p - n * 0.003, p + n * 0.016, 0.0205, "gunmetal", segs=20, bevel=0.0015)
-        gasket = kit.cyl("gasket", p - n * 0.0055, p + n * 0.002, 0.0222, "leather", segs=20, bevel=0.002)
-        lens = kit.cyl("lens", p + n * 0.012, p + n * 0.0188, 0.0168, "glass", segs=20, bevel=0.0004)
-        bezel = kit.ring("bezel", p + n * 0.0185, n, 0.0236, 0.0163, 0.0055, "brass", segs=24)
-        vent = kit.cyl("vent", p + n * 0.007 + t1 * sx * 0.019, p + n * 0.007 + t1 * sx * 0.0245, 0.0042, "brass", segs=12, bevel=0.0005)
-        screws = rivets("bezel_screws", [(p + n * 0.0212 + (t1 * math.cos(q) + t2 * math.sin(q)) * 0.0199, n)
-                                         for q in (0.4, 0.4 + math.pi / 2, 0.4 + math.pi, 0.4 + 1.5 * math.pi)], r=0.0017, material="steel")
-        c.rigid(kit.join([cup, gasket, lens, bezel, vent, screws], "goggle"), "head")
-        cups.append((p, n, t1))
-    (pl, nl, _), (pr, nr, _) = cups
-    mid_p, mid_d = spot(gear, sc, s_axis, 0, 0.009)
-    bridge = kit.rope("goggle_bridge", [pl + nl * 0.008 + (pr - pl).normalized() * 0.019, mid_p, pr + nr * 0.008 + (pl - pr).normalized() * 0.019], 0.0028, "brass")
-    c.rigid(bridge, "head")
-    bp, bd = spot(gear, sc, s_axis, 180, 0.004)
-    buckle = kit.block("strap_buckle", (0, 0.0, 0), (0.024, 0.004, 0.026), "brass", bevel=0.001)
-    kit.cut(buckle, kit.block("buckle_hole", (0, 0, 0), (0.016, 0.02, 0.016), "steel", bevel=0))
-    c.rigid(onto(buckle, *local(bp, bd, a)), "head")
+    # ---------------------------------------------------------------- duck trousers with turn-ups
+    top_z = b.hip_z + 0.10
+    hem = b.sole + boot_top + 0.02
 
-    # ---------------------------------------------------------------- suede welding gloves
-    hands = parts["hands"]
-    hands.data.materials[0] = kit.mat("scrap_suede")
-    c.add(hands, kit.HAND_BONES)
+    def t_ease(p):
+        band = 0.003 * (1 - sm(top_z - p.z, 0.02, 0.07))
+        return 0.013 + band + 0.007 * sm(top_z - p.z, 0.04, 0.2) + 0.010 * sm(J("lower_leg.L", 0.0).z - p.z, 0.0, 0.15)
 
-    # ---------------------------------------------------------------- work shirt with rolled sleeves
-    lim = 0.058 * k * b.bulk + 0.004
+    def t_pin(p):
+        return 1.0 if p.z > top_z - 0.045 or p.z < hem + 0.012 else 0.0
 
-    def on_forearm(p, t0):
+    def t_slack(p):
+        return 0.6 * sm(hem + 0.12 - p.z, 0.0, 0.09)
+
+    trousers = real.garment(c, man, "trousers", "duck.secondary", lambda p: lead(p) in LEGS | {"hips", "spine"} and hem - 0.03 < p.z < top_z + 0.03,
+                            [((0, 0, top_z), (0, 0, 1)), ((0, 0, hem), (0, 0, -1), lambda p: lead(p) in LEGS)],
+                            ease=t_ease, pin=t_pin, slack=t_slack, bend=18.0, texel=1.0)
+    c.hide_under(trousers.low, 0.06, 2)
+    tt = pmc.tree(trousers.low)
+    for s in ("L", "R"):
+        # Turn-ups: a 4 cm band of the trouser leg folded up outside it.
+        k0, k1 = J("lower_leg." + s, 0.0), J("lower_leg." + s, 1.0)
+        ax = (k1 - k0).normalized()
+        t0 = (hem - k0.z) / (k1.z - k0.z)
+        a, bb = k0.lerp(k1, t0 + 0.004 / (k0.z - k1.z)), k0.lerp(k1, t0 - 0.042 / (k0.z - k1.z))
+        r = pmc._radius(tt, a.lerp(bb, 0.5), ax)
+        cuff = pmc.wrap("turn_up", a, bb, r + 0.004, r + 0.004, -180, 180, 0.0035, "secondary", nt=3, nphi=24, bevel=0.0015, fit=(tt, 0.0025))
+        remat(cuff, "duck.secondary")
+        c.rigid(cuff, "lower_leg." + s)
+
+    # Patched: scraps of the waxed jacket cloth over the knees (not quite matched), brown duck on the back of the right thigh.
+    for s, sx, dz, hw, hh in (("L", 1, 0.004, 40, 0.068), ("R", -1, -0.018, 34, 0.058)):
+        K = J("lower_leg." + s, 0.0)
+
+        def knee(p, K=K, sx=sx, dz=dz, hw=hw, hh=hh):
+            d = p - K
+            if lead(p) not in LEGS or d.y > 0:
+                return False
+            a = math.degrees(math.atan2(d.x, -d.y))
+            return abs(a - sx * 8) < hw and abs(d.z - dz - 0.12 * d.x * sx) < hh
+        real.patch(c, trousers.low, "knee_patch", "waxed.primary", knee, lift=0.0015, puff=0.0025, thick=0.002)
+    ra, rb = J("upper_leg.R", 0.0), J("upper_leg.R", 1.0)
+    around = pmc._limb(ra, rb)
+
+    def seat(p):
+        if lead(p) != "upper_leg.R":
+            return False
+        t, a = around(p)
+        return 0.22 < t < 0.42 and abs(abs(a) - 168) < 30
+    real.patch(c, trousers.low, "seat_patch", "duck.scrap_wax", seat, lift=0.0015, puff=0.002, thick=0.002)
+
+    # ---------------------------------------------------------------- waxed canvas chore jacket
+    neck = J("neck", 0.0)
+    jhem = crotch + 0.07
+    neckline = (Vector((0, 0, neck.z + 0.02)), Vector((0, -0.38, 1)).normalized())
+    cuts = [neckline]
+    for s in ("L", "R"):
+        e, w = J("forearm." + s, 0.0), J("forearm." + s, 1.0)
+        cuts.append((e.lerp(w, 0.88), w - e, lambda p, e=e, w=w: on_arm(p) and seg(p, e, w + (w - e) * 0.6) < 0.09))
+    cuts.append(((0, 0, jhem), (0, 0, -1), lambda p: not on_arm(p)))
+
+    def j_ease(p):
+        if not on_arm(p):
+            return 0.009 + 0.010 * sm(neck.z + 0.01 - p.z, 0.0, 0.09) + 0.006 * sm(armpit - 0.1 - p.z, 0.0, 0.3)
+        arm = min(seg(p, J("upper_arm." + s, 0.3), J("forearm." + s, 1.0)) for s in ("L", "R"))
+        return 0.012 + 0.012 * max(0.0, min(1.0, (0.09 - arm) / 0.03))
+
+    def j_pin(p):
+        w = 0.0
+        if p.z > neck.z - 0.025 and not on_arm(p):
+            w = 1.0
         for s in ("L", "R"):
-            t, d = along(b, "forearm." + s, p)
-            if t > t0 and d < lim:
-                return True
-        return False
-    neck_top = b.j("neck", 0.35).z
-    sleeve_cuts = []
-    for s in ("L", "R"):
-        f0, f1 = b.j("forearm." + s, 0.31), b.j("forearm." + s, 1.3)
-        sleeve_cuts.append(kit.cyl("sleeve_cut", f0, f1, 0.058 * k, "steel", segs=24, bevel=0))
-    shirt = kit.shell(flesh, lambda p: hip - 0.06 < p.z < neck_top and not on_forearm(p, 0.45), "shirt", "primary",
-                      offset=0.011, thick=0.004, smooth_iter=2, bones=TORSO | UPPER_ARMS | FOREARMS | THIGHS | {"neck"}, outside=sleeve_cuts)
-    c.add(shirt)
-    c.cover(TORSO | UPPER_ARMS, lambda p: p.z > hip - 0.03)
-    c.cover(FOREARMS, lambda p: not on_forearm(p, 0.24))
-    neck = Probe(flesh, only={"neck", "chest"})
-    c.add(wrap("collar", neck, b.j("neck", 0.27), Vector((0, 0.12, 1)), 0.042, 0.006, "primary", gap=0.016, n=28))
-    # Neckerchief knotted at the throat.
-    nk = b.j("neck", 0.55)
-    c.add(wrap("neckerchief", neck, nk, Vector((0, 0.18, 1)), 0.028, 0.007, "scrap_kerchief", gap=0.004, n=24), kit.HEAD_BONES)
-    kp, kd = spot(neck, nk, Vector((0, 0.18, 1)), 38, 0.011)
-    c.add(kit.meta("kerchief_knot", [kit.ellipsoid(kp, 0.0085, (1.2, 0.9, 1.0))], "scrap_kerchief", res=0.002, target=300), kit.HEAD_BONES)
-    side = Vector((kd.y, -kd.x, 0)).normalized()
-    for i, sw in enumerate((1, -1)):
-        tail = [kp + side * sw * 0.004 + Vector((0, 0, -0.004)), kp + kd * 0.004 + side * sw * 0.012 + Vector((0, 0, -0.03)), kp + kd * 0.006 + side * sw * (0.016 + 0.006 * i) + Vector((0, 0, -0.05 - 0.01 * i))]
-        c.add(ribbon("kerchief_tail", tail, [kd] * 3, [side] * 3, 0.018, 0.0035, "scrap_kerchief"), ["neck", "chest"])
-    for s in ("L", "R"):
-        fa = Probe(flesh, only={"forearm." + s})
-        ax = b.j("forearm." + s, 1.0) - b.j("forearm." + s, 0.0)
-        for t, g in ((0.305, 0.0215), (0.345, 0.019)):
-            pts, dirs, _ = contour(fa, b.j("forearm." + s, t), ax, g, n=20, reach=0.2)
-            c.add(tube_path("rolled_sleeve", pts, 0.0072, "primary", segs=8), ["forearm." + s, "upper_arm." + s])
-        # Glove gauntlet cuffs.
-        c.rigid(wrap("glove_cuff", fa, b.j("forearm." + s, 0.93), ax, 0.045, 0.006, "scrap_suede", gap=0.004, n=20), "forearm." + s)
-        c.rigid(wrap("glove_cuff_hem", fa, b.j("forearm." + s, 0.885), ax, 0.008, 0.004, "leather", gap=0.0095, n=20), "forearm." + s)
+            e, wr = J("forearm." + s, 0.0), J("forearm." + s, 0.88)
+            d = (wr - e).normalized()
+            if on_arm(p) and seg(p, e, wr) < 0.1 and (p - wr).dot(d) > -0.02:
+                w = 1.0
+        return w
 
-    # ---------------------------------------------------------------- suspenders (accent), crossed at the back
-    sus_gap = 0.018
-    for sx in (1, -1):
-        g = [(sx * 0.068, -0.09, hip + 0.06), (sx * 0.07, -0.095, 1.18 * k), (sx * 0.074, -0.07, 1.33 * k), (sx * 0.078, 0.0, 1.41 * k),
-             (sx * 0.072, 0.07, 1.34 * k), (sx * 0.035, 0.095, 1.18 * k), (-sx * 0.045, 0.1, 1.06 * k), (-sx * 0.075, 0.105, hip + 0.08)]
-        st, pts, ns = strap_over("suspender", body, g, sus_gap + (0.0045 if sx < 0 else 0.0), 0.034, 0.004, "accent")
-        c.add(st, SPINE)
-        end, en = pts[-1], ns[-1]
-        clip = kit.block("suspender_clip", (0, 0, 0), (0.04, 0.006, 0.026), "brass", bevel=0.0012)
-        c.add(onto(clip, *local(end + en * 0.004 + Vector((0, 0, -0.004)), en)), SPINE)
+    def j_slack(p):
+        w = 0.0
+        for s in ("L", "R"):
+            e, wr = J("forearm." + s, 0.0), J("forearm." + s, 0.88)
+            d = wr - e
+            L = d.length
+            d.normalize()
+            t = (p - e).dot(d) / L
+            if on_arm(p) and seg(p, e, wr) < 0.1 and t > 0.25:
+                w = max(w, min(1.0, (t - 0.25) / 0.45))
+        return w
+    jacket = real.garment(c, man, "jacket", "waxed.primary", lambda p: lead(p) in TORSO | LIMBS | THIGHS | {"neck"} and p.z > jhem - 0.05,
+                          cuts, ease=j_ease, pin=j_pin, slack=j_slack, bend=20.0, stiff=1.4, texel=1.25, collide=[trousers.low])
+    c.hide_under(jacket.low, 0.05, 2)
+    # The jacket's skirt hangs from the hips (the thighs would push it out through the apron and the belt).
+    to_hips(jacket.low, lambda p: 1 - float(sm(p.z, b.hip_z - 0.02, b.hip_z + 0.06)))
+    tj = pmc.tree(jacket.low)
 
-    # ---------------------------------------------------------------- heavy leather apron: bib + split legs
-    # Stiff leather hung from the chest: every apron piece sits on one hanging surface, so the pocket,
-    # the paint, the rivets and the stitching follow it exactly.
-    w = b.width
-    T = 0.007  # leather thickness
-    zt, zb = b.j("chest", 0.68).z, hip + 0.012
-    fz0, fz1 = hip + 0.055, b.j("lower_leg.L", 0.04).z
-    field = hang_field(body, -0.24 * w, 0.24 * w, 48, zt + 0.02, fz1 - 0.01, 50)
-    front = Vector((0, -1, 0))
+    # Corduroy collar, turned down over the neckline, open at the throat.
+    col = collar(c, jacket.low, tj, neck, J("neck", 1.0) - neck)
 
-    def bib_pt(x, z, off=0.0):
-        core = max(field(xx * w, z) for xx in (-0.06, -0.03, 0.0, 0.03, 0.06))
-        g = 0.021 + 0.01 * smoothstep(zt, zt - 0.12, z)
-        return Vector((x, -(max(core - 1.8 * x * x, field(x, z)) + g + off), z))
-    bib_line = kit.rounded([(-0.098 * w, zt), (0.098 * w, zt), (0.15 * w, (zt + zb) * 0.5 + 0.02), (0.168 * w, zb), (-0.168 * w, zb),
-                            (-0.15 * w, (zt + zb) * 0.5 + 0.02)], 0.022)
-    c.add(panel("apron_bib", bib_pt, -0.19 * w, 0.19 * w, zb - 0.01, zt + 0.015, bib_line, 0.0, T, "leather", nu=24, nv=24, bevel=0.0025), SPINE)
-    # Bib pocket with a pencil and a screwdriver, a painted cog.
-    px, pz = -0.058 * w, zt - 0.085
-    pocket_line = kit.rounded([(px - 0.048, pz - 0.05), (px + 0.048, pz - 0.05), (px + 0.048, pz + 0.035), (px - 0.048, pz + 0.035)], 0.012)
-    c.add(panel("bib_pocket", bib_pt, px - 0.055, px + 0.055, pz - 0.06, pz + 0.045, pocket_line, T + 0.0003, 0.006, "leather", nu=8, nv=8), SPINE)
-    pin_at = bib_pt(px, pz + 0.035, T + 0.003)
-    pencil = kit.join([kit.cyl("pencil", pin_at + Vector((0.016, 0.0, -0.03)), pin_at + Vector((0.02, -0.002, 0.05)), 0.0042, "yellow", segs=6, bevel=0.0004),
-                       kit.cyl("pencil_tip", pin_at + Vector((0.02, -0.002, 0.05)), pin_at + Vector((0.0205, -0.0022, 0.062)), 0.0042, "kraft", r1=0.0008, segs=6, bevel=0)], "pencil")
-    driver = kit.join([kit.cyl("driver_handle", pin_at + Vector((-0.016, 0.0, 0.0)), pin_at + Vector((-0.019, -0.001, 0.06)), 0.0085, "red", segs=8, bevel=0.0012),
-                       kit.ring("driver_ferrule", pin_at + Vector((-0.016, 0.0, 0.002)), (0.04, 0.0, -1), 0.009, 0.006, 0.006, "steel", segs=12)], "screwdriver")
-    c.add(pencil, SPINE)
-    c.add(driver, SPINE)
-    cx, cz = 0.052 * w, zt - 0.11
-    c.add(panel("bib_cog", bib_pt, cx - 0.05, cx + 0.05, cz - 0.05, cz + 0.05, cog(cx, cz, 0.04), T + 0.0003, 0.0012, "yellow", bevel=0.0, hole=(cx, cz, 0.0145)), SPINE)
-
-    def normal(pt, x, z):
-        e = 0.003
-        n = (pt(x + e, z) - pt(x - e, z)).cross(pt(x, z + e) - pt(x, z - e)).normalized()
-        return -n if n.y > 0 else n
-    spots = [(bib_pt(x, z, T), normal(bib_pt, x, z)) for x, z in ((0.084 * w, zt - 0.014), (-0.084 * w, zt - 0.014), (0.148 * w, zb + 0.014), (-0.148 * w, zb + 0.014))]
-    spots += [(bib_pt(x, pz + 0.025, T + 0.0063), front) for x in (px - 0.04, px + 0.04)]
-    c.add(rivets("bib_rivets", spots, r=0.0042, material="brass"), SPINE)
-    edge = kit.rounded([(-0.086 * w, zt - 0.012), (0.086 * w, zt - 0.012), (0.138 * w, (zt + zb) * 0.5 + 0.02), (0.155 * w, zb + 0.013),
-                        (-0.155 * w, zb + 0.013), (-0.138 * w, (zt + zb) * 0.5 + 0.02)], 0.02)
-    edge.append(edge[0])
-    c.add(dashes("bib_stitch", seam([bib_pt(x, z, T) for x, z in edge], [normal(bib_pt, x, z) for x, z in edge], 0.012), material="cream", flat=True), SPINE)
-
-    # Neck strap and waist ties (accent).
-    nb = b.j("neck", 0.0)
-    ng = [(0.088 * w, -0.11, zt - 0.006), (0.08 * w, -0.07, nb.z - 0.015), (0.07, -0.02, nb.z + 0.03), (0.045, 0.045, nb.z + 0.035), (0.0, 0.065, nb.z + 0.02),
-          (-0.045, 0.045, nb.z + 0.035), (-0.07, -0.02, nb.z + 0.03), (-0.08 * w, -0.07, nb.z - 0.015), (-0.088 * w, -0.11, zt - 0.006)]
-    st, _, _ = strap_over("apron_neck_strap", body, ng, 0.019, 0.026, 0.004, "accent")
-    c.add(st)
-    tz = b.j("spine", 0.15).z
-    for sx in (1, -1):
-        g = [(sx * 0.158 * w, -0.06, tz), (sx * 0.17 * w, 0.0, tz), (sx * 0.13, 0.075, tz), (sx * 0.05, 0.1, tz), (sx * 0.008, 0.105, tz)]
-        st, _, _ = strap_over("apron_tie", body, g, 0.018, 0.018, 0.0035, "accent")
-        c.add(st, SPINE)
-    kh = body.hit(Vector((0, 0, tz)), (0, 1, 0))
-    knot = kit.meta("apron_knot", [kit.ellipsoid(kh[0] + kh[1] * 0.03, 0.016, (1.2, 0.8, 0.8))], "accent", res=0.003, target=300)
-    c.add(knot, SPINE)
-    for sx in (1, -1):
-        tail = [kh[0] + kh[1] * 0.032 + Vector((sx * 0.008, 0, -0.005)), kh[0] + kh[1] * 0.034 + Vector((sx * 0.02, 0, -0.06)), kh[0] + kh[1] * 0.036 + Vector((sx * 0.024, 0, -0.1))]
-        st = ribbon("apron_tie_end", tail, [kh[1]] * 3, [Vector((1, 0, 0))] * 3, 0.017, 0.0035, "accent")
-        c.add(st, ["spine", "hips"])
-
-    # Split leg flaps hanging stiff in front of each thigh, strapped round the thigh; a cog on the left one.
-    x0, x1 = 0.006 * w, 0.205 * w
+    # Leather elbow patches, sewn on.
     for s, sx in (("L", 1), ("R", -1)):
-        thigh = "upper_leg." + s
+        el = J("forearm." + s, 0.0)
+        ua = (J("upper_arm." + s, 0.0) - el).normalized()
+        fa = (J("forearm." + s, 1.0) - el).normalized()
+        back = (Vector((0, 1, 0)) - (ua + fa).normalized()).normalized()  # the point of the elbow
 
-        def flap_pt(x, z, off=0.0, sx=sx):
-            xc = sx * (x0 + x1) / 2
-            core = max(field(sx * (x0 + (x1 - x0) * i / 8), z) for i in range(9))
-            v = (fz0 - z) / (fz0 - fz1)
-            return Vector((x, -(max(core - 2.2 * (x - xc) ** 2, field(x, z)) + 0.042 + 0.012 * v + off), z))
+        def region(p, el=el, back=back, ua=ua, fa=fa):
+            if not on_arm(p):
+                return False
+            d = p - el
+            if d.dot(back) < 0.004:
+                return False
+            a_u, a_f = d.dot(ua), d.dot(fa)
+            along, ax = (a_u, ua) if a_u > a_f else (-a_f, fa)
+            lat = d - ax * d.dot(ax) - back * d.dot(back)
+            return ((along - 0.006) / 0.068) ** 2 + (lat.length / 0.042) ** 2 < 1.0
+        real.patch(c, jacket.low, "elbow_patch", "leather", region, lift=0.0015, puff=0.003, thick=0.0025)
 
-        def wfn(p, thigh=thigh):
-            t = smoothstep(fz0 - 0.03, fz0 - 0.17, p.z)
-            return {"hips": 1 - t, thigh: t}
-        outline = kit.rounded([(sx * (x0 - 0.01), fz0 + 0.01), (sx * (x1 + 0.01), fz0 + 0.01), (sx * x1, fz1), (sx * x0, fz1)], 0.045)
-        lo, hi = sorted((sx * (x0 - 0.012), sx * (x1 + 0.012)))
-        skin(c, panel("apron_flap", flap_pt, lo, hi, fz1 - 0.005, fz0 + 0.012, outline, 0.0, T, "leather", nu=12, nv=22, bevel=0.002), wfn)
-        inset = kit.rounded([(sx * (x0 + 0.012), fz0 - 0.004), (sx * (x1 - 0.012), fz0 - 0.004), (sx * (x1 - 0.012), fz1 + 0.012), (sx * (x0 + 0.012), fz1 + 0.012)], 0.035)
-        inset.append(inset[0])
-        skin(c, dashes("flap_stitch", seam([flap_pt(x, z, T) for x, z in inset], [normal(flap_pt, x, z) for x, z in inset], 0.012), material="cream", flat=True), wfn)
-        if sx > 0:
-            gx, gz = sx * 0.108 * w, fz0 - 0.21
-            skin(c, panel("flap_cog", flap_pt, gx - 0.06, gx + 0.06, gz - 0.06, gz + 0.06, cog(gx, gz, 0.052, teeth=10), T + 0.0003, 0.0012, "yellow",
-                          nu=10, nv=10, bevel=0.0, hole=(gx, gz, 0.019)), wfn)
-        # Thigh strap: from the flap's outer edge round the back of the thigh to its inner edge.
-        tc = b.j(thigh, 0.42)
-        th = Probe(flesh, only={thigh})
-        pts = []
-        for ang in range(70, 300, 10):
-            a2 = math.radians(ang)
-            d = Vector((sx * math.sin(a2), -math.cos(a2), 0))
-            r = th.depth(tc, d, 0.3) or 0.07
-            pts.append(tc + d * (r + 0.031))
-        po = flap_pt(sx * (x1 - 0.004), tc.z, -0.002)
-        pi = flap_pt(sx * (x0 + 0.004), tc.z, -0.002)
-        path = [po] + pts + [pi]
-        ns = [((p - tc) - UP * (p - tc).dot(UP)).normalized() for p in path]
-        c.rigid(ribbon("thigh_strap", path, ns, [UP] * len(path), 0.024, 0.004, "accent"), thigh)
-        bk = pts[len(pts) // 2 - 6]
-        bn = (bk - tc).normalized()
-        tbuckle = kit.block("thigh_buckle", (0, 0, 0), (0.026, 0.004, 0.032), "brass", bevel=0.001)
-        kit.cut(tbuckle, kit.block("hole", (0, 0, 0), (0.018, 0.02, 0.022), "steel", bevel=0))
-        c.rigid(onto(tbuckle, *local(bk + bn * 0.003, bn)), thigh)
-        c.rigid(rivets("flap_rivets", [(flap_pt(sx * (x1 - 0.014), tc.z, T), front), (flap_pt(sx * (x0 + 0.014), tc.z, T), front)], r=0.0045, material="brass"), thigh)
+    # The Scrappers' cog, hand-painted big across the back.
+    cz = armpit + 0.015
+    glue(c, decal("painted_cog", tj, cog(0.0, cz, 0.078, teeth=10, depth=0.25), (0.0, cz, 0.026), 1, "paint.scrap_paint"), jacket.low)
 
-    # ---------------------------------------------------------------- trousers and boots
-    trousers = kit.shell(flesh, lambda p: 0.11 * k < p.z < hip + 0.085, "trousers", "secondary", offset=0.022, thick=0.004, smooth_iter=3,
-                         bones=THIGHS | SHINS | {"hips", "spine"})
-    c.add(trousers)
-    c.cover(THIGHS | SHINS | {"hips"}, lambda p: 0.15 * k < p.z < hip + 0.07)
-    for s in ("L", "R"):
-        sh = Probe(flesh, only={"lower_leg." + s})
-        ax = b.j("lower_leg." + s, 0.0) - b.j("lower_leg." + s, 1.0)
-        for zz, g in ((0.16 * k, 0.03), (0.135 * k, 0.028)):
-            cc = b.j("lower_leg." + s, 0.0).lerp(b.j("lower_leg." + s, 1.0), (b.j("lower_leg." + s, 0).z - zz) / (b.j("lower_leg." + s, 0).z - b.j("lower_leg." + s, 1).z))
-            pts, dirs, _ = contour(sh, cc, ax, g, n=20, reach=0.2)
-            c.add(tube_path("trouser_roll", pts, 0.0085, "secondary", segs=8), ["lower_leg." + s])
-    boots(c, b, flesh, cap="steel")
+    # Placket and brass buttons down the front.
+    pl = []
+    for i in range(16):
+        z = jhem + 0.01 + (neckline[0].z - 0.05 - jhem) * i / 15
+        loc, nor = pmc.hit(tj, (0, -0.5, z), (0, 1, 0))
+        if loc is not None:
+            pl.append(loc + Vector((0, -0.0025, 0)))
+    placket = pmc.sweep("placket", pl, 0.032, 0.004, "primary", lambda p: Vector((0, -1, 0)))
+    glue(c, remat(placket, "waxed.primary"), jacket.low)
+    for k in range(4):
+        q = pl[len(pl) - 1 - k * 4]
+        glue(c, kit.cyl("button", q + Vector((0, -0.002, 0)), q + Vector((0, -0.0065, 0)), 0.0075, "brass", segs=14, bevel=0.0012), jacket.low)
 
-    # ---------------------------------------------------------------- tool belt
-    bz = hip + 0.045
-    bc = Vector((0, 0, bz))
+    # ---------------------------------------------------------------- head: hair, moustache, cap, goggles
+    def F(x, y, z):
+        return E + Vector((x, y, z)) * u
 
-    def bgap(d):
-        return 0.029 + 0.03 * smoothstep(0.25, 0.6, -d.y)
-    c.add(wrap("tool_belt", body, bc, UP, 0.05, 0.009, "leather", gap=bgap, n=40, reach=0.45), ["hips", "spine"])
-    belt_rivets = []
-    for ang in range(0, 360, 20):
-        if abs(((ang + 180) % 360) - 180) < 25:
-            continue
-        p, d = spot(body, bc, UP, ang, 0)
-        g = bgap(d) + 0.009
-        for dz in (0.016, -0.016):
-            belt_rivets.append((p + d * g + Vector((0, 0, dz)), d))
-    c.add(rivets("belt_rivets", belt_rivets, r=0.0032, material="brass"), ["hips", "spine"])
-    p, d = spot(body, bc, UP, 0, 0)
-    bp = p + d * (bgap(d) + 0.009)
-    frame_b = kit.block("belt_buckle", (0, 0.003, 0), (0.06, 0.007, 0.062), "brass", bevel=0.002)
-    kit.cut(frame_b, kit.block("buckle_hole", (0.006, 0.0, 0), (0.034, 0.03, 0.042), "steel", bevel=0))
-    prong = kit.block("buckle_prong", (0.0, 0.006, 0), (0.044, 0.004, 0.005), "steel", bevel=0.001)
-    c.rigid(onto(kit.join([frame_b, prong], "belt_buckle"), *local(bp, d)), "hips")
+    def fx(p):
+        d = (Vector(p) - E) / u
+        return d.x, d.y, d.z
+    hair = real.layer(c, man, "hair", "hair.scrap_hair", lambda p: lead(p) in ("head", "neck") and fx(p)[2] > -0.09,
+                      [(F(0, -0.06, 0.068), Vector((0, -0.8, -1.0))),
+                       (F(0, 0.03, 0.006), Vector((0, -0.7, -1.0))),
+                       (F(0, 0.0, -0.066), Vector((0, -0.15, -1.0)))],
+                      ease=0.004, smooth=1, texel=1.2, seams="hems")
+    c.hide_under(hair, 0.012, 1)
+    moustache(c, man)
 
-    def hang(ang, drop=0.14, extra=0.012):
-        """Belt frame at angle `ang`: origin on the belt face, pushed out so a part hanging `drop` below
-        clears the trousers."""
-        p, d = spot(body, bc, UP, ang, 0)
-        r0 = (p - bc).dot(d) + bgap(d) + 0.009
-        need = 0.0
-        for j in range(1, 8):
-            z = bz - drop * j / 7
-            dd = body.depth(Vector((0, 0, z)), d, 0.6) or 0.0
-            need = max(need, dd + 0.028 - r0)
-        o, x, y, zz = local(bc + d * r0, d)
-        return o, x, y, zz, need + extra
+    # Leather work cap: the skull's shape eased out, a short stiff brim, a band, the goggles on it.
+    plane_p = hc + Vector((0, 0, 0.014))
+    plane_n = Vector((0, 0.17, 1)).normalized()
+    def cap_ease(p):
+        # Snug at the band, a fuller crown above it, fullest toward the front.
+        return 0.0115 + 0.011 * float(sm(p.z, plane_p.z + 0.02, hc.z + 0.1)) * (0.75 + 0.25 * float(sm(-(p.y - hc.y), -0.06, 0.06)))
+    cap = real.layer(c, man, "cap", "oiled.scrap_cap", lambda p: lead(p) == "head" and p.z > hc.z - 0.03, [(plane_p, -plane_n)],
+                     ease=cap_ease, smooth=6, thick=0.0035, texel=1.2, seams="hems")
+    tcap = pmc.tree(cap)
+    crown = cap_panels(cap, tcap, hc)
+    cap_welts(c, tcap, hc, crown[0], crown[1], plane_p, plane_n)
+    c.rigid(kit.cyl("cap_button", crown[0] - crown[1] * 0.003, crown[0] + crown[1] * 0.0045, 0.0085, "scrap_cap", segs=16, bevel=0.002), "head")
+    zb = plane_p.z - plane_n.y / plane_n.z * (hc.y - 0.1 - plane_p.y) + 0.006
+    loc, _ = pmc.hit(tcap, Vector((hc.x, hc.y - 0.4, zb)), (0, 1, 0))
+    front_y = loc.y
+    side_hit, _ = pmc.hit(tcap, Vector((hc.x + 0.3, hc.y, zb)), (-1, 0, 0))
+    rx_in = (side_hit.x - hc.x) * 0.92 if side_hit else 0.081
+    ry_in = hc.y - front_y
+    outer = [(1.08 * rx_in * math.sin(math.radians(a)), -(ry_in + 0.058) * math.cos(math.radians(a))) for a in range(-76, 77, 12)]
+    inner = [(rx_in * math.sin(math.radians(a)), -ry_in * math.cos(math.radians(a))) for a in range(76, -77, -12)]
+    brim = kit.plan("brim", outer + inner, 0.006, "scrap_cap", z=0.0, bevel=0.0022)
+    pmc.slice_x(brim, 0.012)
+    for v in brim.data.vertices:
+        v.co.z -= 3.2 * v.co.x * v.co.x
+    brim.data.transform(Matrix.Translation(Vector((hc.x, front_y + 0.003, zb))) @ Matrix.Rotation(math.radians(16), 4, "X")
+                        @ Matrix.Translation((0, ry_in, 0)))
+    c.rigid(brim, "head")
+    band_pts = ring_on(tcap, plane_p + plane_n * 0.011, plane_n, 0.0035 + 0.0012, n=40)
+    c.rigid(remat(pmc.sweep("cap_band", band_pts, 0.016, 0.0025, "leather", pmc.radial(plane_p, plane_n), closed=True), "leather.scrap_boot"), "head")
+    goggles(c, tcap, hc, plane_p, plane_n, zb)
 
-    # Hammer on the right hip, hanging through a leather loop.
-    o, x, y, z, push = hang(-118, 0.25)
-    parts_h = [kit.block("hammer_loop", (0, 0.004, -0.012), (0.032, 0.008, 0.05), "leather", bevel=0.002),
-               kit.ring("hammer_ring", (0, push + 0.006, -0.03), (0, 0, 1), 0.019, 0.0135, 0.022, "leather", segs=20),
-               kit.cyl("hammer_handle", (0, push + 0.006, 0.03), (0, push + 0.012, -0.235), 0.0118, "scrap_ash", r1=0.0105, segs=12, bevel=0.0015),
-               kit.cyl("hammer_grip", (0, push + 0.011, -0.15), (0, push + 0.012, -0.232), 0.0128, "leather", segs=12, bevel=0.0015),
-               kit.cyl("hammer_face", (-0.062, push + 0.006, 0.046), (-0.02, push + 0.006, 0.046), 0.0135, "bright", segs=16, bevel=0.0018),
-               kit.block("hammer_eye", (0.0, push + 0.006, 0.046), (0.042, 0.024, 0.026), "bright", bevel=0.002),
-               kit.cyl("hammer_peen", (0.02, push + 0.006, 0.046), (0.07, push + 0.006, 0.046), 0.0115, "bright", r1=0.0035, segs=16, bevel=0.001),
-               kit.cyl("hammer_wedge", (0, push + 0.006, 0.058), (0, push + 0.006, 0.0605), 0.0085, "scrap_ash", segs=10, bevel=0)]
-    c.rigid(onto(kit.join(parts_h, "hammer"), o, x, y, z), "hips")
+    # ---------------------------------------------------------------- welding apron, tool belt, gauges
+    ap = apron(c, man, lead, jacket, trousers, col)
+    tool_belt(c, b, [pmc.tree(ap.low), tj, tt])
+    wrist_gauge(c, b, tj)
 
-    # Tool pouch on the left hip: two screwdrivers and a spanner.
-    o, x, y, z, push = hang(98, 0.13)
-    pouch = kit.block("tool_pouch", (0, push + 0.02, -0.07), (0.088, 0.036, 0.11), "leather", bevel=0.006)
-    kit.cut(pouch, kit.block("pouch_mouth", (0, push + 0.02, -0.014), (0.076, 0.026, 0.02), "steel", bevel=0))
-    welt = kit.block("pouch_welt", (0, push + 0.039, -0.07), (0.074, 0.004, 0.09), "leather", bevel=0.0015)
-    strap_p = kit.block("pouch_strap", (0, 0.005, -0.01), (0.034, 0.01, 0.06), "leather", bevel=0.002)
-    tools = [pouch, welt, strap_p]
-    for xx, mat in ((0.012, "red"), (0.031, "yellow")):
-        tools.append(kit.cyl("driver", (xx, push + 0.02, -0.03), (xx, push + 0.021, 0.04), 0.0098, mat, segs=8, bevel=0.0015))
-        tools.append(kit.ring("ferrule", (xx, push + 0.02, -0.026), (0, 0, 1), 0.0105, 0.006, 0.008, "steel", segs=12))
-    sh = kit.block("spanner", (-0.02, push + 0.02, 0.0), (0.014, 0.0045, 0.11), "bright", bevel=0.0012)
-    jaw = kit.cyl("spanner_head", (-0.02, push + 0.0175, 0.062), (-0.02, push + 0.0225, 0.062), 0.0175, "bright", segs=20, bevel=0.0008)
-    kit.cut(jaw, kit.block("jaw", (-0.02, push + 0.02, 0.074), (0.0125, 0.03, 0.03), "steel", bevel=0))
-    tools += [sh, jaw]
-    sp = []
-    for u in range(8):
-        sp.append((Vector((-0.04 + u * 0.0114, push + 0.0385, -0.123)), Vector((0, 1, 0)), Vector((1, 0, 0))))
-    for v in range(8):
-        for xx in (-0.04, 0.04):
-            sp.append((Vector((xx, push + 0.0385, -0.118 + v * 0.0118)), Vector((0, 1, 0)), Vector((0, 0, 1))))
-    tools.append(dashes("pouch_stitch", sp, material="cream", flat=True))
-    tools.append(rivets("pouch_rivets", [(Vector((xx, push + 0.0385, -0.025)), Vector((0, 1, 0))) for xx in (-0.034, 0.034)], r=0.0035, material="brass"))
-    c.rigid(onto(kit.join(tools, "tool_pouch"), o, x, y, z), "hips")
-
-    # Oil can at the back-left, spout up.
-    o, x, y, z, push = hang(148, 0.15)
-    can = [kit.block("can_loop", (0, 0.004, -0.02), (0.03, 0.008, 0.06), "leather", bevel=0.002),
-           kit.cyl("oil_can", (0, push + 0.036, -0.15), (0, push + 0.036, -0.09), 0.034, "brass", segs=16, bevel=0.002),
-           kit.cyl("can_shoulder", (0, push + 0.036, -0.09), (0, push + 0.036, -0.062), 0.034, "brass", r1=0.011, segs=16, bevel=0.0012),
-           kit.ring("can_rim", (0, push + 0.036, -0.148), (0, 0, 1), 0.0355, 0.03, 0.006, "copper", segs=16),
-           kit.ring("can_band", (0, push + 0.036, -0.105), (0, 0, 1), 0.0352, 0.03, 0.008, "copper", segs=16),
-           kit.cyl("can_neck", (0, push + 0.036, -0.064), (0, push + 0.036, -0.05), 0.0095, "copper", segs=16, bevel=0.001),
-           kit.cyl("can_spout", (0, push + 0.036, -0.052), (0.012, push + 0.06, 0.085), 0.0035, "copper", r1=0.0016, segs=10, bevel=0),
-           kit.cyl("can_pump", (0.03, push + 0.036, -0.1), (0.045, push + 0.036, -0.098), 0.009, "steel", segs=12, bevel=0.001),
-           kit.ring("can_strap", (0, push + 0.036, -0.075), (0, 0, 1), 0.024, 0.017, 0.014, "leather", segs=20)]
-    c.rigid(onto(kit.join(can, "oil_can"), o, x, y, z), "hips")
-    can_label = kit.ring("can_paint", (0, 0, 0), (0, 0, 1), 0.0356, 0.034, 0.018, "red", segs=16)
-    c.rigid(onto(can_label, o + y * (push + 0.036) + z * (-0.125), x, y, z), "hips")
-
-    # Shop rag tucked in at the back-right.
-    o, x, y, z, push = hang(-150, 0.17, 0.004)
-
-    def rag_fn(u, v):
-        return Vector(((u - 0.5) * 0.085 * (1 + 0.35 * v), push + 0.004 + 0.006 * math.sin(u * 3 * math.pi + v * 2) + 0.012 * v, 0.02 - 0.18 * v))
-    rag = sheet("rag", rag_fn, 10, 10, 0.003, "red", lambda p: Vector((0, 1, 0)))
-    c.rigid(onto(rag, o, x, y, z), "hips")
-
-    # ---------------------------------------------------------------- brass pressure gauge, left wrist
-    fa = Probe(flesh, only={"forearm.L"})
-    f0, f1 = b.j("forearm.L", 0.0), b.j("forearm.L", 1.0)
-    ax = (f1 - f0).normalized()
-    out = (Vector((1, 0, 0.0)) - ax * ax.x).normalized()
-    wc = f0.lerp(f1, 0.7)
-    c.rigid(wrap("gauge_cuff", fa, wc, ax, 0.05, 0.008, "leather", gap=0.003, n=24), "forearm.L")
-    c.rigid(wrap("gauge_cuff_strap", fa, wc + ax * 0.0, ax, 0.018, 0.004, "leather", gap=0.0115, n=24), "forearm.L")
-    gb = fa.surf(wc, out, 0.2) + out * 0.0105
-    e1 = -ax
-    g = gauge(gb, out, e1, r=0.0235, depth=0.013) + [
-        kit.cyl("gauge_stem", gb + e1 * 0.022, gb + e1 * 0.03, 0.0045, "brass", segs=12, bevel=0.0005),
-        kit.cyl("gauge_nut", gb + e1 * 0.029, gb + e1 * 0.037, 0.0062, "brass", segs=6, bevel=0.0005),
-        kit.cyl("gauge_pipe", gb + e1 * 0.036 - out * 0.003, gb + e1 * 0.085 - out * 0.004, 0.003, "copper", segs=10, bevel=0),
-        kit.cyl("gauge_union", gb + e1 * 0.083 - out * 0.004, gb + e1 * 0.093 - out * 0.004, 0.0055, "brass", segs=6, bevel=0.0005)]
-    c.rigid(kit.join(g, "wrist_gauge"), "forearm.L")
+    economise(c)
     return c
 
 
-SPEC = {"build": build, "faction": "scrappers", "budget": (25000, 75000), "loadout": "shotgun",
+def economise(c):
+    """Single-segment bevels on every small or finely bevelled part (as the Contractor does)."""
+    pmc.economise(c)
+
+
+def collar(c, jacket, tj, neck, neck_axis, kind="corduroy.scrap_cord", gap=9.0, n=44):
+    """A turned-down collar on the jacket's neckline: a stand up the neck and a fall folded down over it
+    onto the shoulders, its points spreading onto the chest; open at the throat. Stitched along its
+    edge."""
+    loops = real.boundary_loops(jacket)
+    me = jacket.data
+    top = max(loops, key=lambda L: sum(me.vertices[i].co.z for i in L) / len(L))
+    yc = neck.y
+    pts = sorted(((math.degrees(math.atan2(me.vertices[i].co.x, -(me.vertices[i].co.y - yc))) % 360, me.vertices[i].co.copy()) for i in top),
+                 key=lambda t: t[0])
+
+    def at(th):
+        th %= 360
+        for k in range(len(pts)):
+            a0, p0 = pts[k - 1]
+            a1, p1 = pts[k]
+            if k == 0:
+                a0 -= 360
+            if a0 <= th <= a1:
+                return p0.lerp(p1, (th - a0) / max(a1 - a0, 1e-6))
+        return pts[0][1]
+    up = Vector(neck_axis).normalized()
+    rings, seam, su = [], [], []
+    for i in range(n + 1):
+        th = gap + (360 - 2 * gap) * i / n
+        tf = min(th, 360 - th)
+        p = at(th)
+        d = Vector((math.sin(math.radians(th)), -math.cos(math.radians(th)), 0))
+        back = (1 - math.cos(math.radians(th))) / 2
+        tip = float(real._smooth(tf, 42.0, 10.0))
+        h = 0.013 + 0.012 * back
+        q0 = p + d * (0.028 + 0.004 * tip) - up * (0.008 + 0.004 * back + 0.02 * tip)
+        Fp, nF = nearest(tj, q0)
+        Fo = Fp + nF * 0.0032
+        Fi = Fp + nF * 0.0006
+        crown_in = p - d * 0.0045 + up * h
+        crown = p - d * 0.0012 + up * (h + 0.0035)
+        crown_out = p + d * 0.0035 + up * (h + 0.0012)
+        mid_o = crown_out.lerp(Fo, 0.5) + nF * 0.003
+        mid_i = (p + d * 0.0035 + up * (h - 0.005)).lerp(Fi, 0.5)
+        prof = [p - d * 0.0015, crown_in, crown, crown_out, mid_o, Fo, Fi, mid_i, p + d * 0.0035 + up * (h - 0.005), p + d * 0.002 + up * 0.002]
+        rings.append(prof)
+        L = [0.0]
+        for k in range(1, len(prof)):
+            L.append(L[-1] + (prof[k] - prof[k - 1]).length)
+        iF = 5
+        seam += [abs(L[k] - L[iF]) if k <= 6 else abs(L[k] - L[6]) for k in range(len(prof))]
+        su += [th / 360 * 0.4] * len(prof)
+    o = loft("collar", rings, kind)
+    set_attr(o, "seam", seam)
+    set_attr(o, "seam_u", su)
+    o["texel"] = 1.2
+    glue(c, o, jacket)
+    return o
+
+
+def cap_panels(cap, tcap, hc, panels=6):
+    """Stitch the cap into `panels` gores meeting at the crown (the stitching and the seam's roll come
+    from the seam attributes, joined with the hem's). Returns (crown point, axis)."""
+    top, _ = pmc.hit(tcap, hc + Vector((0, 0.012, 0.4)), (0, 0, -1))
+    axis = (top - (hc + Vector((0, 0.012, 0)))).normalized()
+    f = Vector((0, -1, 0))
+    f = (f - axis * f.dot(axis)).normalized()
+    sd = axis.cross(f)
+    me = cap.data
+    seam = [d.value for d in me.attributes["seam"].data]
+    su = [d.value for d in me.attributes["seam_u"].data]
+    step = 2 * math.pi / panels
+    for i, v in enumerate(me.vertices):
+        q = v.co - top
+        r = q - axis * q.dot(axis)
+        phi = math.atan2(r.dot(sd), r.dot(f)) - step / 2  # a gore, not a seam, at the front
+        k = round(phi / step)
+        dist = abs(phi - k * step) * r.length
+        if dist < seam[i]:
+            seam[i] = dist
+            su[i] = (v.co - top).length
+    set_attr(cap, "seam", seam)
+    set_attr(cap, "seam_u", su)
+    return top, axis
+
+
+def cap_welts(c, tcap, hc, top, axis, plane_p, plane_n, panels=6, thick=0.0035):
+    """A raised welt of leather over each gore seam, from the crown button down to the band."""
+    f = Vector((0, -1, 0))
+    f = (f - axis * f.dot(axis)).normalized()
+    sd = axis.cross(f)
+    o = hc + Vector((0, 0.012, 0))
+    stop = 0.011 + 0.0075  # the band's top edge above the cap plane
+    for k in range(panels):
+        phi = (k + 0.5) * 2 * math.pi / panels
+        r = f * math.cos(phi) + sd * math.sin(phi)
+        pts = []
+        for j in range(24):
+            e = math.radians(5.5 + 100 * j / 23)
+            d = axis * math.cos(e) + r * math.sin(e)
+            loc, _ = pmc.hit(tcap, o, d)
+            if loc is None:
+                continue
+            q = loc + d * (thick + 0.0009)
+            if (q - plane_p).dot(plane_n) < stop:
+                break
+            pts.append(q)
+        if len(pts) > 3:
+            w = pmc.sweep("cap_welt", pts, 0.0065, 0.0018, "scrap_cap", lambda p: Vector(p) - o, bevel=0.0007)
+            c.rigid(w, "head")
+
+
+def goggles(c, tcap, hc, plane_p, plane_n, zb):
+    """Brass welding goggles pushed up on the cap: blackened steel eyecups with leather gaskets, dark
+    green glass in screwed brass bezels, a hinged brass bridge, a tan strap round the crown."""
+    zg = zb + 0.03
+    cups = []
+    for sx in (1, -1):
+        loc, nor = pmc.hit(tcap, Vector((hc.x + sx * 0.035, hc.y - 0.4, zg)), (0, 1, 0))
+        n = (nor + Vector((0, 0, 0.35))).normalized()
+        X = Vector((sx, 0, 0))
+        t1 = (X - n * n.dot(X)).normalized()  # outward
+        t2 = n.cross(t1).normalized()
+        p = loc + n * 0.002
+        parts = [kit.cyl("gasket", p - n * 0.001, p + n * 0.005, 0.0235, "leather", r1=0.0225, segs=20, bevel=0.0015),
+                 kit.cyl("eyecup", p + n * 0.004, p + n * 0.017, 0.0215, "steel", r1=0.0195, segs=20, bevel=0.0012),
+                 kit.ring("bezel", p + n * 0.0175, n, 0.0222, 0.0158, 0.0048, "brass", segs=24),
+                 kit.cyl("lens", p + n * 0.0155, p + n * 0.0185, 0.0162, "scrap_lens", segs=20, bevel=0.0004)]
+        parts.append(rivets("bezel_screws", [(p + n * 0.0199 + (t1 * math.cos(q) + t2 * math.sin(q)) * 0.019, n) for q in (0.5, 0.5 + math.pi / 2, 0.5 + math.pi, 0.5 + 1.5 * math.pi)],
+                            r=0.0015, material="steel", segs=6))
+        lug = p + n * 0.009 + t1 * 0.023
+        parts.append(kit.block("strap_lug", (0, 0, 0), (0.008, 0.012, 0.01), "brass", bevel=0.001))
+        parts[-1].data.transform(Matrix.Translation(lug))
+        c.rigid(kit.join(parts, "goggle"), "head")
+        cups.append((p, n, t1, lug))
+    (pl, nl, tl, gl), (pr, nr, tr, gr) = cups
+    a = pl + nl * 0.010 - tl * 0.021
+    bq = pr + nr * 0.010 - tr * 0.021
+    mid = (a + bq) / 2 + (nl + nr).normalized() * 0.004
+    c.rigid(kit.rope("goggle_bridge", [a, mid, bq], 0.0024, "brass"), "head")
+    c.rigid(kit.cyl("bridge_hinge", mid - Vector((0.004, 0, 0)), mid + Vector((0.004, 0, 0)), 0.0036, "brass", segs=10, bevel=0.0006), "head")
+    # The strap: from each lug round the back of the crown, just above the band.
+    sn = Vector((0, 0.2, 1)).normalized()
+    y_f = (gl.y + gr.y) / 2
+    cen = Vector((hc.x, hc.y, (gl.z + gr.z) / 2 - 0.2 * (hc.y - y_f)))
+    ring = ring_on(tcap, cen, sn, 0.0035 + 0.0025, n=48)
+    keep = [q for q in ring if q.y > min(gl.y, gr.y) + 0.004]
+    keep.sort(key=lambda q: math.atan2(q.x - hc.x, q.y - hc.y))
+    path = [gr] + keep + [gl] if keep and keep[0].x < 0 else [gl] + keep + [gr]
+    c.rigid(remat(pmc.sweep("goggle_strap", path, 0.02, 0.003, "accent", pmc.radial(cen, sn)), "leather.accent"), "head")
+
+
+def apron(c, man, lead, jacket, trousers, col):
+    """A split-leg welding apron of heavy leather: a bib from the chest, a skirt round the front of the
+    hips, a flap down the front of each thigh; cut from the body and draped stiff over the jacket and
+    trousers. Tan neck, waist and thigh straps with brass buckles and rivets, a bib pocket holding a
+    pencil and a brass gauge, the Scrappers' cog painted on the left flap."""
+    b = c.b
+    J, sm = b.j, real._smooth
+    armpit, crotch = b.at("armpit"), b.at("crotch")
+    z_top = armpit + 0.09
+    z_w1, z_w2 = b.hip_z + 0.26, b.hip_z + 0.13
+    z_bot = J("lower_leg.L", 0.0).z + 0.115  # clear of the knee patches when the knee bends
+    yc = J("spine", 0.0).y
+    x_bib, x_skirt = 0.118, 0.162
+    z_strap = {s: J("upper_leg." + s, 0.0).lerp(J("upper_leg." + s, 1.0), 0.52).z for s in ("L", "R")}
+    LIMBS = UPPER_ARMS | FOREARMS | {"hand.L", "hand.R"}
+    LEGS = THIGHS | SHINS
+
+    def keep(p):
+        if not (z_bot - 0.03 < p.z < z_top + 0.03):
+            return False
+        L = lead(p)
+        if L in LIMBS or L in ("neck", "head"):
+            return False
+        if p.z > crotch + 0.01:
+            return p.y < yc + 0.01
+        return L in LEGS
+    # The outline, all in lines seen from the front (planes along Y), so the skirt runs straight down
+    # into the flaps: the bib's sides, a taper out to the skirt, one outer edge from the waist to the
+    # hem, and a split between the legs, its inner edges rising to a shallow point over the crotch.
+    xo_bot = x_skirt - 0.012
+    xi_top, xi_bot = 0.036, 0.06
+    z_split, z_apex = crotch, crotch + 0.025
+
+    def line(p0, p1, side):
+        """The plane through the front-view line p0 -> p1 ((x, z)), removing the side that `side` (x, z) points to."""
+        d = Vector((p1[0] - p0[0], 0, p1[1] - p0[1]))
+        n = Vector((-d.z, 0, d.x)).normalized()
+        if n.dot(Vector((side[0], 0, side[1]))) < 0:
+            n = -n
+        return Vector((p0[0], 0, p0[1])), n
+    cuts = [((0, 0, z_top), (0, 0, 1)), ((0, 0, z_bot), (0, 0, -1))]
+    for sx in (1, -1):
+        cuts.append(((sx * x_bib, 0, 0), (sx, 0, 0), lambda p: p.z > z_w1))
+        cuts.append(line((sx * x_bib, z_w1), (sx * x_skirt, z_w2), (sx, 1)) + (lambda p: z_w2 - 0.01 < p.z <= z_w1,))
+        cuts.append(line((sx * x_skirt, z_w2), (sx * xo_bot, z_bot), (sx, 0)) + (lambda p, sx=sx: p.z <= z_w2 + 0.01 and p.x * sx > 0,))
+    for s, sx in (("L", 1), ("R", -1)):
+        # The back of the leg off (the flap covers the front half of the thigh) ...
+        a = J("upper_leg." + s, 0.0)
+        A = (J("upper_leg." + s, 1.0) - a).normalized()
+        N = (Vector((0, 1, 0)) - A * A.y).normalized()
+        cuts.append((a + N * 0.012, N, lambda p, s=s: p.z < crotch + 0.012 and lead(p) in {"upper_leg." + s, "lower_leg." + s}))
+        # ... its inner edge, then the top of the split.
+        cuts.append(line((sx * xi_top, z_split), (sx * xi_bot, z_bot), (-sx, 0)) + (lambda p, sx=sx: p.z < z_split + 0.006 and p.x * sx > 0,))
+        cuts.append(line((0.0, z_apex), (sx * xi_top, z_split), (0, -1))
+                    + (lambda p, sx=sx: crotch - 0.04 < p.z < z_apex + 0.012 and 0 <= p.x * sx < xi_top,))
+
+    under = [pmc.tree(jacket.low), pmc.tree(trousers.low)]
+    # The skirt hangs flat across the front from the belt, not into the groin: at each height, the
+    # front it bridges is the most forward point of the clothes under it, curving back a little to the sides.
+    flat = {}
+    for i in range(-8, 21):
+        z = crotch + 0.01 * i
+        ys = [outermost(under, (x, yc, z), (0, -1, 0))[0] for x in [-0.13 + 0.26 * k / 16 for k in range(17)]]
+        flat[i] = min(q.y for q in ys if q is not None) - 0.016
+
+    def ease(p):
+        # Off the body by at least this, and always 1.4 cm clear of the jacket and trousers under it.
+        e = 0.032 + 0.008 * float(sm(p.z, crotch, crotch + 0.12))
+        _, n, _, _ = man.tree.find_nearest(p)
+        for t in under:
+            loc, _, _, d = t.ray_cast(p + n * 0.001, n, 0.2)
+            if loc is not None:
+                e = max(e, d + 0.014)
+        k = float(sm(p.z, crotch - 0.035, crotch + 0.025)) * (1 - float(sm(p.z, crotch + 0.16, crotch + 0.2))) \
+            * (1 - float(sm(abs(p.x), 0.09, 0.14)))  # forward over the groin, not out at the hips
+        if k > 0 and n.y < -0.45:
+            f = (p.z - crotch) / 0.01
+            i0 = max(-8, min(19, int(math.floor(f))))
+            yt = flat[i0] + (flat[i0 + 1] - flat[i0]) * max(0.0, min(1.0, f - i0)) + 1.6 * p.x * p.x
+            e = max(e, min(0.1, k * (p.y - yt) / -n.y))
+        return e
+
+    def pin(p):
+        if p.z > z_top - 0.03:
+            return 1.0
+        if p.z > crotch and abs(p.z - (b.hip_z + 0.02)) < 0.028:
+            return 1.0  # under the tool belt
+        if p.z < crotch and abs(p.z - z_strap["L" if p.x > 0 else "R"]) < 0.016:
+            return 1.0
+        return 0.0
+    ap = real.garment(c, man, "apron", "leather", keep, cuts, ease=ease, smooth=3, pin=pin, bend=70.0, stiff=3.0, mass=0.5,
+                      texel=1.15, seams=False, collide=[jacket.low, trousers.low])
+    for o in (ap.low, ap.high):
+        real.seam_attrs(o, uv_seams=False)
+    # The skirt hangs from the belt; the flaps go with the thighs from just below the crotch.
+    hang_weights(ap.low, crotch - 0.03, crotch + 0.06, b.hip_z + 0.04)
+    # The bib moves with the jacket it lies on.
+    weights_from(ap.low, jacket.low, lambda p: float(sm(p.z, b.hip_z + 0.03, b.hip_z + 0.10)))
+    ta = pmc.tree(ap.low)
+    tj, tt, tcol = pmc.tree(jacket.low), pmc.tree(trousers.low), pmc.tree(col)
+
+    def on_front(x, z, off):
+        loc, nor = pmc.hit(ta, (x, -0.6, z), (0, 1, 0))
+        return (loc + nor * off, nor) if loc is not None else (None, None)
+
+    # Bib pocket (the wearer's right) with a pencil and a brass gauge standing in it.
+    px0, px1, pz0, pz1 = -0.092, -0.014, z_top - 0.135, z_top - 0.04
+    real.patch(c, ap.low, "bib_pocket", "leather", lambda p: px0 < p.x < px1 and pz0 < p.z < pz1 and p.y < 0, lift=0.002, puff=0.006, thick=0.003)
+    pm, pn = on_front(-0.05, pz1, 0.006)
+    if pm is not None:
+        c.rigid(kit.join([kit.cyl("pencil", pm + Vector((0.022, 0.004, -0.04)), pm + Vector((0.026, 0.0, 0.048)), 0.0042, "scrap_ash", segs=6, bevel=0.0004),
+                          kit.cyl("pencil_tip", pm + Vector((0.026, 0.0, 0.048)), pm + Vector((0.0265, -0.0002, 0.06)), 0.0042, "black", r1=0.0008, segs=6, bevel=0)],
+                         "pencil"), "chest")
+        g0 = pm + Vector((-0.012, 0.002, 0.012))
+        gp = gauge(g0, Vector((0, -1, 0.25)), Vector((0, 0, 1)), r=0.0195, depth=0.011, needle=-30)
+        gp.append(kit.cyl("gauge_stem", g0 + Vector((0, 0.004, -0.018)), g0 + Vector((0, 0.004, -0.05)), 0.004, "brass", segs=10, bevel=0.0004))
+        c.rigid(kit.join(gp, "pocket_gauge"), "chest")
+    rivets_at = []
+    for x, z in ((px0 + 0.006, pz1 - 0.006), (px1 - 0.006, pz1 - 0.006)):
+        q, n = on_front(x, z, 0.0085)
+        if q is not None:
+            rivets_at.append((q, n))
+
+    # Neck strap: from the bib's top corners up over the collar and round the back of the neck.
+    neck = J("neck", 0.0)
+    path = []
+    for sx in (1, -1):
+        side = []
+        q, n = on_front(sx * (x_bib - 0.016), z_top - 0.012, 0.004)
+        if q is not None:
+            side.append(q)
+            rivets_at.append((q + n * 0.0025, n))
+        for x, z in ((x_bib - 0.02, z_top + 0.045), (x_bib - 0.028, z_top + 0.09)):
+            loc, _ = outermost([tj, tcol], (sx * x, 0.0, z), (0, -1, 0), 0.4)
+            if loc is not None:
+                side.append(loc + Vector((0, -0.004, 0)))
+        for th, z in ((68, neck.z - 0.006), (100, neck.z + 0.014), (135, neck.z + 0.026), (172, neck.z + 0.03)):
+            d = Vector((sx * math.sin(math.radians(th)), -math.cos(math.radians(th)), 0))
+            o = Vector((0, neck.y, z))
+            loc, nor = outermost([tj, tcol], o, d, 0.4)
+            if loc is not None:
+                side.append(loc + d * 0.004)
+        path.append(side)
+    strap = path[0] + path[1][::-1]
+    strap = pmc.smooth_path(strap, 3)
+    c.rigid(remat(pmc.sweep("neck_strap", strap, 0.022, 0.0035, "accent", pmc.radial((0, neck.y, 0))), "leather.accent"), "chest")
+
+    # Thigh straps round the back of each leg, from the flap's outer edge to its inner edge.
+    for s, sx in (("L", 1), ("R", -1)):
+        a, b1 = J("upper_leg." + s, 0.0), J("upper_leg." + s, 1.0)
+        A = (b1 - a).normalized()
+        cc = a + A * ((z_strap[s] - a.z) / A.z)
+        pts = []
+        for i in range(21):
+            th = 70 + 220 * i / 20 if s == "L" else -70 - 220 * i / 20
+            d = Vector((math.sin(math.radians(th)), -math.cos(math.radians(th)), 0))
+            loc, nor = outermost([tt, ta], cc, d, 0.25)
+            if loc is not None:
+                pts.append(loc + d * 0.0035)
+        c.rigid(remat(pmc.sweep("thigh_strap", pts, 0.022, 0.0035, "accent", pmc.radial(cc)), "leather.accent"), "upper_leg." + s)
+        q = pts[len(pts) // 2 + 3 * (1 if s == "L" else -1)]
+        tq = (pts[len(pts) // 2 + 4] - pts[len(pts) // 2 + 2]).normalized()
+        nq = Vector((q.x - cc.x, q.y - cc.y, 0)).normalized()
+        c.rigid(buckle("thigh_buckle", q + nq * 0.003, tq, nq, 0.028), "upper_leg." + s)
+        for q2 in (pts[0], pts[-1]):
+            n2 = Vector((q2.x - cc.x, q2.y - cc.y, 0)).normalized()
+            rivets_at.append((q2 + n2 * 0.0022, n2))
+    glue(c, rivets("apron_rivets", rivets_at, r=0.0042, material="brass"), ap.low)
+
+    # The Scrappers' cog, hand-painted on the left flap.
+    ul = J("upper_leg.L", 0.0).lerp(J("upper_leg.L", 1.0), 0.60)
+    cx, cz = ul.x + 0.01, ul.z
+    paint = decal("painted_cog", ta, cog(cx, cz, 0.046, teeth=9, depth=0.26), (cx, cz, 0.0165), -1, "paint.scrap_paint")
+    glue(c, paint, ap.low)
+    return ap
+
+
+def buckle(name, at, along, out, w=0.03):
+    """A forged brass roller buckle: a frame with a centre bar and a tongue, lying on a strap running
+    `along`, facing `out`."""
+    u, n = Vector(along).normalized(), Vector(out).normalized()
+    s = n.cross(u).normalized()
+    M = Matrix((u, s, n)).transposed().to_4x4()
+    M.translation = Vector(at)
+    fr = kit.block(name, (0, 0, 0.001), (w * 0.9, w * 1.15, 0.004), "brass", bevel=0.001)
+    kit.cut(fr, kit.block("hole", (0.0, 0, 0.001), (w * 0.62, w * 0.85, 0.01), "steel", bevel=0))
+    bar = kit.cyl(name, (0, -w * 0.5, 0.002), (0, w * 0.5, 0.002), 0.0022, "brass", segs=8, bevel=0)
+    tongue = kit.block(name, (w * 0.2, 0, 0.0028), (w * 0.42, 0.0026, 0.002), "steel", bevel=0.0005)
+    o = kit.join([fr, bar, tongue], name)
+    o.data.transform(M)
+    return o
+
+
+def tool_belt(c, b, trees):
+    """A wide leather tool belt over the apron and the jacket: a brass buckle, a hammer through a loop on
+    the right hip, a tool pouch on the left, an oil can behind it and a waxed tool roll across the back."""
+    yc = b.j("spine", 0.0).y
+    zb = b.hip_z + 0.02
+    pts, dirs = [], []
+    n = 40
+    for i in range(n):
+        th = 360 * i / n
+        d = Vector((math.sin(math.radians(th)), -math.cos(math.radians(th)), 0))
+        loc, _ = outermost(trees, (0, yc, zb), d)
+        pts.append((loc if loc is not None else Vector((0, yc, zb)) + d * 0.17) + d * 0.006)
+        dirs.append(d)
+    for _ in range(2):
+        pts = [(pts[i - 1] + pts[i] * 2 + pts[(i + 1) % n]) / 4 for i in range(n)]
+    belt = pmc.sweep("tool_belt", pts, 0.048, 0.008, "leather", pmc.radial((0, yc, 0)), closed=True)
+    c.add(belt, ["hips", "spine"])
+    spots = []
+    for i in range(n):
+        th = 360 * i / n
+        if 25 < th < 335 and i % 2 == 0:
+            for dz in (0.017, -0.017):
+                spots.append((pts[i] + dirs[i] * 0.0042 + Vector((0, 0, dz)), dirs[i]))
+    c.add(rivets("belt_rivets", spots, r=0.003, material="brass"), ["hips", "spine"])
+    front = pts[0] + dirs[0] * 0.004
+    frame_b = kit.block("belt_buckle", (0, 0, 0), (0.062, 0.007, 0.064), "brass", bevel=0.0022)
+    kit.cut(frame_b, kit.block("buckle_hole", (0.007, 0.0, 0), (0.036, 0.03, 0.044), "steel", bevel=0))
+    prong = kit.block("buckle_prong", (-0.006, -0.0045, 0), (0.046, 0.004, 0.005), "steel", bevel=0.001)
+    o = kit.join([frame_b, prong], "belt_buckle")
+    o.data.transform(Matrix.Translation(front + Vector((0, -0.002, 0))))
+    c.rigid(o, "hips")
+
+    def hang(th, drop, extra=0.012):
+        """A frame on the belt at angle th (x along it, y out, z up), pushed out so a part hanging
+        `drop` below clears what is under it."""
+        i = int(round(th / 360 * n)) % n
+        d = dirs[i]
+        r0 = (Vector((pts[i].x, pts[i].y - yc, 0))).length + 0.004
+        need = 0.0
+        for j in range(1, 8):
+            z = zb - drop * j / 7
+            loc, _ = outermost(trees, (0, yc, z), d)
+            if loc is not None:
+                need = max(need, (Vector((loc.x, loc.y - yc, 0))).length + 0.022 - r0)
+        x = Vector((0, 0, 1)).cross(d).normalized()
+        return Vector((0, yc, zb)) + d * r0, -x, d, Vector((0, 0, 1)), need + extra
+
+    # Hammer on the right hip, hanging through a leather loop, head forward.
+    o, x, y, z, push = hang(-112 % 360, 0.24)
+    parts_h = [kit.block("hammer_loop", (0, 0.004, -0.014), (0.034, 0.008, 0.056), "leather", bevel=0.002),
+               kit.ring("hammer_ring", (0, push + 0.006, -0.036), (0, 0, 1), 0.019, 0.0135, 0.022, "leather", segs=20),
+               kit.cyl("hammer_handle", (0, push + 0.006, 0.03), (0, push + 0.012, -0.22), 0.0118, "scrap_ash", r1=0.0105, segs=12, bevel=0.0015),
+               kit.cyl("hammer_face", (-0.062, push + 0.006, 0.046), (-0.02, push + 0.006, 0.046), 0.0135, "bright", segs=16, bevel=0.0018),
+               kit.block("hammer_eye", (0.0, push + 0.006, 0.046), (0.042, 0.024, 0.026), "steel", bevel=0.002),
+               kit.cyl("hammer_peen", (0.02, push + 0.006, 0.046), (0.07, push + 0.006, 0.046), 0.0115, "steel", r1=0.0035, segs=16, bevel=0.001)]
+    c.rigid(onto(kit.join(parts_h, "hammer"), o, x, y, z), "hips")
+
+    # Tool pouch on the left hip: two screwdrivers and a spanner standing in it.
+    o, x, y, z, push = hang(100, 0.14)
+    pouch = kit.block("tool_pouch", (0, push + 0.02, -0.072), (0.09, 0.036, 0.11), "leather", bevel=0.006)
+    kit.cut(pouch, kit.block("pouch_mouth", (0, push + 0.02, -0.014), (0.078, 0.026, 0.02), "steel", bevel=0))
+    tools = [pouch, kit.block("pouch_strap", (0, 0.005, -0.012), (0.036, 0.01, 0.062), "leather", bevel=0.002),
+             kit.block("pouch_welt", (0, push + 0.039, -0.072), (0.076, 0.004, 0.092), "leather", bevel=0.0015)]
+    for xx in (0.012, 0.031):
+        tools.append(kit.cyl("driver", (xx, push + 0.02, -0.03), (xx, push + 0.021, 0.042), 0.0098, "scrap_ash", segs=8, bevel=0.0015))
+        tools.append(kit.ring("ferrule", (xx, push + 0.02, -0.024), (0, 0, 1), 0.0105, 0.006, 0.008, "brass", segs=12))
+    tools.append(kit.block("spanner", (-0.02, push + 0.02, 0.0), (0.014, 0.0045, 0.11), "steel", bevel=0.0012))
+    jaw = kit.cyl("spanner_head", (-0.02, push + 0.0175, 0.062), (-0.02, push + 0.0225, 0.062), 0.0175, "steel", segs=20, bevel=0.0008)
+    kit.cut(jaw, kit.block("jaw", (-0.02, push + 0.02, 0.074), (0.0125, 0.03, 0.03), "steel", bevel=0))
+    tools.append(jaw)
+    tools.append(rivets("pouch_rivets", [(Vector((xx, push + 0.0385, -0.03)), Vector((0, 1, 0))) for xx in (-0.034, 0.034)], r=0.0035, material="brass"))
+    c.rigid(onto(kit.join(tools, "tool_pouch"), o, x, y, z), "hips")
+
+    # Oil can behind the left hip, spout up.
+    o, x, y, z, push = hang(146, 0.16)
+    can = [kit.block("can_loop", (0, 0.004, -0.022), (0.03, 0.008, 0.064), "leather", bevel=0.002),
+           kit.cyl("oil_can", (0, push + 0.036, -0.155), (0, push + 0.036, -0.095), 0.034, "brass", segs=18, bevel=0.002),
+           kit.cyl("can_shoulder", (0, push + 0.036, -0.095), (0, push + 0.036, -0.066), 0.034, "brass", r1=0.011, segs=18, bevel=0.0012),
+           kit.ring("can_rim", (0, push + 0.036, -0.153), (0, 0, 1), 0.0355, 0.03, 0.006, "scrap_copper", segs=18),
+           kit.cyl("can_neck", (0, push + 0.036, -0.068), (0, push + 0.036, -0.054), 0.0095, "scrap_copper", segs=12, bevel=0.001),
+           kit.cyl("can_spout", (0, push + 0.036, -0.056), (0.012, push + 0.06, 0.07), 0.0035, "scrap_copper", r1=0.0016, segs=10, bevel=0),
+           kit.cyl("can_pump", (0.03, push + 0.036, -0.105), (0.045, push + 0.036, -0.103), 0.009, "steel", segs=12, bevel=0.001),
+           kit.ring("can_strap", (0, push + 0.036, -0.08), (0, 0, 1), 0.024, 0.017, 0.014, "leather", segs=20)]
+    c.rigid(onto(kit.join(can, "oil_can"), o, x, y, z), "hips")
+
+    # Tool roll: waxed cloth rolled round the tools, strapped under the belt across the small of the back.
+    o, x, y, z, push = hang(180, 0.1, 0.004)
+    L, R = 0.30, 0.036
+    ctr = Vector((0.015, push + R, -0.03 - R))
+    rings = []
+    for i in range(13):
+        t = i / 12
+        xx = -L / 2 + L * t
+        bul = 1.0 + 0.06 * math.sin(math.pi * t) - 0.03 * (abs(2 * t - 1) > 0.9)
+        rings.append([ctr + Vector((xx, R * bul * math.cos(2 * math.pi * k / 18) * (1 + 0.04 * math.sin(3 * k)),
+                                    R * bul * math.sin(2 * math.pi * k / 18))) for k in range(18)])
+    roll = loft("tool_roll", rings, "waxed.scrap_wax")
+    roll["texel"] = 1.0
+    bits = [kit.cyl("roll_end", ctr + Vector((L / 2 - 0.002, 0, 0)), ctr + Vector((L / 2 + 0.004, 0, 0)), R * 0.82, "scrap_wax", segs=18, bevel=0.002),
+            kit.ring("roll_layer", ctr + Vector((L / 2 + 0.003, 0, 0)), (1, 0, 0), R * 0.55, R * 0.47, 0.004, "scrap_wax", segs=16),
+            kit.cyl("roll_end", ctr - Vector((L / 2 - 0.002, 0, 0)), ctr - Vector((L / 2 + 0.003, 0, 0)), R * 0.9, "scrap_wax", segs=18, bevel=0.002)]
+    for k, (dy, dz, mat_, r_) in enumerate(((0.012, 0.01, "scrap_ash", 0.0075), (-0.01, 0.014, "scrap_ash", 0.0065), (0.004, -0.012, "steel", 0.0045))):
+        p0 = ctr + Vector((-L / 2 + 0.02, dy, dz))
+        p1 = ctr + Vector((-L / 2 - 0.045 - 0.012 * k, dy * 1.2, dz * 1.2))
+        bits.append(kit.cyl("roll_tool", p0, p1, r_, mat_, segs=10, bevel=0.0012))
+    bits.append(kit.block("wrench_end", ctr + Vector((-L / 2 - 0.05, 0.004, -0.012)), (0.012, 0.022, 0.006), "steel", bevel=0.0012))
+    for xx in (-0.085, 0.09):
+        strap = [ctr + Vector((xx, (R + 0.003) * math.cos(a), (R + 0.003) * math.sin(a))) for a in [2 * math.pi * k / 20 for k in range(20)]]
+        bits.append(remat(pmc.sweep("roll_strap", strap, 0.02, 0.003, "accent", pmc.radial(ctr, (1, 0, 0)), closed=True), "leather.accent"))
+        bits.append(kit.block("roll_hanger", Vector((xx + 0.015, 0.004 + push / 2, -0.012 - R * 0.3)), (0.022, push + 0.006, 0.05), "leather", bevel=0.0015))
+        bits.append(buckle("roll_buckle", ctr + Vector((xx, R + 0.006, -0.008)), (0, 0, 1), (0, 1, 0), 0.022))
+    for p_ in bits + [roll]:
+        onto(p_, o, x, y, z)
+        c.rigid(p_, "hips")
+
+
+def wrist_gauge(c, b, tj):
+    """A brass pressure gauge on a riveted leather cuff, strapped over the left jacket sleeve."""
+    f0, f1 = b.j("forearm.L", 0.0), b.j("forearm.L", 1.0)
+    ax = (f1 - f0).normalized()
+    wc = f0.lerp(f1, 0.70)
+    r = pmc._radius(tj, wc, ax)
+    cuff = pmc.wrap("gauge_cuff", wc - ax * 0.024, wc + ax * 0.024, r + 0.004, r + 0.004, -180, 180, 0.005, "leather", nt=2, nphi=24,
+                    bevel=0.0015, fit=(tj, 0.002))
+    c.rigid(cuff, "forearm.L")
+    out = (Vector((1, 0, 0.25)) - ax * Vector((1, 0, 0.25)).dot(ax)).normalized()
+    loc, nor = pmc.hit(tj, wc + out * 0.2, -out)
+    gb = (loc if loc is not None else wc + out * r) + out * 0.0075
+    e1 = -ax
+    g = gauge(gb, out, e1, r=0.0225, depth=0.012, needle=40)
+    g += [kit.cyl("gauge_stem", gb + e1 * 0.021, gb + e1 * 0.029, 0.0045, "brass", segs=12, bevel=0.0005),
+          kit.cyl("gauge_nut", gb + e1 * 0.028, gb + e1 * 0.036, 0.0062, "brass", segs=6, bevel=0.0005),
+          kit.cyl("gauge_pipe", gb + e1 * 0.035 - out * 0.003, gb + e1 * 0.08 - out * 0.005, 0.0028, "scrap_copper", segs=10, bevel=0),
+          kit.cyl("gauge_union", gb + e1 * 0.078 - out * 0.005, gb + e1 * 0.088 - out * 0.005, 0.0052, "brass", segs=6, bevel=0.0005)]
+    c.rigid(kit.join(g, "wrist_gauge"), "forearm.L")
+    spots = []
+    for k in range(10):
+        a = 2 * math.pi * k / 10
+        d = (out * math.cos(a) + out.cross(ax) * math.sin(a)).normalized()
+        if math.cos(a) > 0.3:
+            continue
+        q, _ = pmc.hit(pmc.tree(cuff), wc + d * 0.2, -d)
+        if q is not None:
+            spots.append((q, d))
+    if spots:
+        c.rigid(rivets("cuff_rivets", spots, r=0.0028, material="brass"), "forearm.L")
+
+
+SPEC = {"build": build, "faction": "scrappers", "budget": (25000, 80000), "loadout": "shotgun",
         "colors": {"primary": "#6e6450", "secondary": "#3d3a33", "accent": "#9a6a35"}}

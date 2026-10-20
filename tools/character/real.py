@@ -1459,6 +1459,7 @@ def patch(c, src, name, kind, region, lift=0.004, puff=0.0, thick=0.003, subdivi
         sm.offset = -1.0
         sm.use_rim = True
         sm.use_even_offset = True
+        sm.use_quality_normals = True  # plain normals blow the even offset up where a patch folds (a spike off a toe cap)
         kit.hs._apply(o, sm.name)
     o["unwrap"] = True
     o["texel"] = texel
