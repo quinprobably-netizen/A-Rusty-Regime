@@ -57,8 +57,8 @@ loadout = "harpoon"
 name = "Runner"
 faction = "deserters"
 primary = "#141413"
-secondary = "#D4A27F"
-accent = "#D97757"
+secondary = "#D97757"
+accent = "#D4A27F"
 loadout = "smg"
 
 [character.breaker]
