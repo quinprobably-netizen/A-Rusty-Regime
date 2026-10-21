@@ -478,7 +478,7 @@ BARE = ["att.optic.irons", "att.muzzle.bare", "att.grip.standard", "att.stock.st
 
 SPEC = {"build": build, "length": (0.60, 0.75), "tris": (20000, 70000),
         "bones": ["root", "pump", "bolt", "lifter", "trigger", "mag", "key"],
-        "sockets": ["muzzle", "eject", "optic", "under", "stock"], "attachments": SLOT_ATTS + BARE,
+        "sockets": ["muzzle", "eject", "optic", "under", "stock", "scope.eye", "reddot.lens"], "attachments": SLOT_ATTS + BARE,
         "parts": {"mesh.root": "root", "mesh.pump": "pump", "mesh.bolt": "bolt", "mesh.lifter": "lifter", "mesh.trigger": "trigger",
                   "mesh.mag": "mag", "mesh.key": "key"},
         "moves": {"idle": ["root"], "fire": ["root", "pump", "bolt", "lifter", "trigger"], "reload": ["root", "mag", "key", "pump", "bolt"],

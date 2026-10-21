@@ -833,7 +833,9 @@ fn recoil(time: Res<Time>, mut recoil: ResMut<Recoil>, mut view: ResMut<ViewAngl
 
 /// Aim down sights settles in `ads_time`; only the hitscan guns aim, and not while driving.
 fn aim(time: Res<Time>, tuning: Res<Tuning>, input: Res<PlayerInput>, arsenal: Res<Arsenal>, player: Single<Has<crate::vehicle::Driving>, With<Player>>, mut aim: ResMut<Aim>) {
-    let want = input.aim_held && !*player && tuning.gun(arsenal.kind()).is_some();
+    // Dev aid: `RUST_REGIME_SCREENSHOT_AIM` holds the aim for screenshots of the sights.
+    let dev = std::env::var_os("RUST_REGIME_SCREENSHOT_AIM").is_some();
+    let want = (input.aim_held || dev) && !*player && tuning.gun(arsenal.kind()).is_some();
     let target = if want { 1.0 } else { 0.0 };
     let k = (time.delta_secs() / tuning.ads_time.max(0.01)).min(1.0);
     aim.level += (target - aim.level) * k;

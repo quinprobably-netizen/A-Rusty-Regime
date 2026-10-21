@@ -526,7 +526,7 @@ SHOW = ("att.optic.irons", "att.muzzle.bare", "att.grip.standard", "att.stock.st
 
 SPEC = {"build": build, "length": (0.27, 0.36), "tris": (20000, 70000),
         "bones": ["root", "breech", "cylinder", "extractor", "rounds", "hammer", "trigger"],
-        "sockets": ["muzzle", "optic", "under", "stock"],
+        "sockets": ["muzzle", "optic", "under", "stock", "scope.eye", "reddot.lens"],
         "attachments": SLOT_ATTS + list(SHOW),
         "parts": {"mesh.root": "root", "mesh.breech": "breech", "mesh.cylinder": "cylinder", "mesh.extractor": "extractor",
                   "mesh.rounds": "rounds", "mesh.hammer": "hammer", "mesh.trigger": "trigger"},

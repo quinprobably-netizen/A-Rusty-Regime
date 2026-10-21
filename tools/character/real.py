@@ -60,7 +60,7 @@ BODIES = {
     "male": ("GEO-body_male_realistic", ("GEO-body_male_realistic.eye.L", "GEO-body_male_realistic.eye.R")),
     "female": ("GEO-body_female_realistic", ("GEO-body_female_realistic.eye.L", "GEO-body_female_realistic.eye.R")),
 }
-FINGERS = ("thumb", "index", "middle", "ring", "pinky")
+FINGERS = kit.FINGERS
 
 # Realistic surfaces on top of the kit palette. name: (base, worn, metallic, roughness, wear, emission)
 kit.hs.PALETTE.update({
@@ -501,6 +501,10 @@ class Anatomy(kit.Build):
         self.hip_z = game["hips"][0][2]
         self.bones = {n: v for n, v in game.items() if not n.endswith(".R")}
         self.all = dict(game)
+        # The finger bones, curled into the rest fists.
+        for n, (h, t, p) in self.base.items():
+            if n.startswith("f_"):
+                self.all[n] = (tuple(fit[n] @ h), tuple(fit[n] @ t), p)
         for side in ("L", "R"):
             at, fwd, up = self.grips[side]
             self.all["prop_hand." + side] = (tuple(at), tuple(at + fwd * 0.08), "hand." + side, tuple(up))
@@ -762,17 +766,6 @@ def body(c, sex=None, high_level=3, skin="skin", face_detail=2.0, stubble=1.0):
     _deform(low, rig)
     _deform(high, rig)
     bpy.data.objects.remove(rig, do_unlink=True)
-    # Finger weights belong to the hands in the game rig.
-    for side in ("L", "R"):
-        hand = low.vertex_groups.get("hand." + side) or low.vertex_groups.new(name="hand." + side)
-        fg = [g for g in low.vertex_groups if g.name.startswith("f_") and g.name.endswith("." + side)]
-        idx = {g.index for g in fg}
-        for v in low.data.vertices:
-            w = sum(g.weight for g in v.groups if g.group in idx)
-            if w > 0:
-                hand.add([v.index], w, "ADD")
-        for g in fg:
-            low.vertex_groups.remove(g)
     for g in list(high.vertex_groups):
         high.vertex_groups.remove(g)
     for o in (low, high):
@@ -1684,6 +1677,8 @@ class Char(kit.Char):
         for m in mats:
             m.name = m.name + ".baked"
         print(f"wrote {path}: {os.path.getsize(path) // 1024} KB, {n} tris ({time.time() - t0:.0f}s)")
+        import grips  # every weapon's finger poses for this rig
+        grips.solve(self, out_dir)
         if not budget[0] <= n <= budget[1]:
             print(f"WARNING {self.id}: {n} triangles, budget {budget[0]}..{budget[1]}")
         return path

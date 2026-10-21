@@ -1,0 +1,42 @@
+# Where each weapon model's hands go, in the weapon's glTF space (-Z down the barrel, +Y up, the
+# trigger at the origin): the right fist's centre, and the support hand's with the bone it rides
+# (like the shotgun's pump) for weapons held in two hands. Read by the game (src/character.rs) and by
+# the finger solver (tools/character/grips.py), which writes each character's finger poses.
+
+[rifle]
+right = [0.0, -0.038, 0.030]
+left = [0.0, 0.03, -0.20]
+
+[shotgun]
+right = [0.0, -0.085, 0.068]
+left = [0.0, 0.0, -0.30]
+left_bone = "pump"
+
+[pistol]
+right = [0.0, -0.05, 0.055]
+
+[smg]
+right = [0.0, -0.05, 0.045]
+left = [0.0, 0.03, -0.15]
+
+[dmr]
+right = [0.0, -0.045, 0.03]
+left = [0.0, 0.025, -0.28]
+
+[revolver]
+right = [0.0, -0.058, 0.045]
+
+[grenade]
+right = [0.0, -0.04, 0.035]
+left = [0.0, 0.02, -0.16]
+
+[harpoon]
+right = [0.0, -0.04, 0.03]
+left = [0.0, 0.02, -0.25]
+
+[rocket]
+right = [0.0, -0.03, 0.03]
+left = [0.0, -0.05, -0.28]
+
+[fist]
+right = [0.0, 0.0, 0.0]

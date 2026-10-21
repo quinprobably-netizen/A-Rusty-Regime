@@ -69,26 +69,32 @@ impl Pose {
 /// Where a weapon model's hands go, in the weapon's glTF space (-Z down the barrel, +Y up, the
 /// trigger at the origin): the right fist's centre, and the support hand's (with the bone it rides,
 /// like the shotgun's pump) for weapons held in two hands. Each grip frame in the character rig
-/// points down the barrel with the weapon's up as its Z, so only the points are needed.
+/// points down the barrel with the weapon's up as its Z, so only the points are needed. The table is
+/// `assets/grips.toml`, shared with the finger solver in `tools/character`.
 pub struct Hands {
     pub right: Vec3,
-    pub left: Option<(Vec3, &'static str)>,
+    pub left: Option<(Vec3, String)>,
 }
 
-pub fn hands(kind: WeaponKind) -> Hands {
-    let two = |r: Vec3, l: Vec3| Hands { right: r, left: Some((l, "root")) };
-    match kind {
-        WeaponKind::Rifle => two(Vec3::new(0.0, -0.038, 0.030), Vec3::new(0.0, 0.03, -0.20)),
-        WeaponKind::Shotgun => Hands { right: Vec3::new(0.0, -0.085, 0.068), left: Some((Vec3::new(0.0, 0.0, -0.30), "pump")) },
-        WeaponKind::Pistol => Hands { right: Vec3::new(0.0, -0.05, 0.055), left: None },
-        WeaponKind::Smg => two(Vec3::new(0.0, -0.05, 0.045), Vec3::new(0.0, 0.03, -0.15)),
-        WeaponKind::Dmr => two(Vec3::new(0.0, -0.045, 0.03), Vec3::new(0.0, 0.025, -0.28)),
-        WeaponKind::Revolver => Hands { right: Vec3::new(0.0, -0.058, 0.045), left: None },
-        WeaponKind::Grenade => two(Vec3::new(0.0, -0.04, 0.035), Vec3::new(0.0, 0.02, -0.16)),
-        WeaponKind::Harpoon => two(Vec3::new(0.0, -0.04, 0.03), Vec3::new(0.0, 0.02, -0.25)),
-        WeaponKind::RocketLauncher => two(Vec3::new(0.0, -0.03, 0.03), Vec3::new(0.0, -0.05, -0.28)),
-        WeaponKind::Fist => Hands { right: Vec3::ZERO, left: None },
-    }
+#[derive(Deserialize)]
+struct GripDef {
+    right: [f32; 3],
+    left: Option<[f32; 3]>,
+    left_bone: Option<String>,
+}
+
+pub fn hands(kind: WeaponKind) -> &'static Hands {
+    static TABLE: std::sync::OnceLock<HashMap<String, Hands>> = std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        let defs: HashMap<String, GripDef> = toml::from_str(include_str!("../assets/grips.toml")).expect("assets/grips.toml");
+        defs.into_iter()
+            .map(|(id, d)| {
+                let left = d.left.map(|l| (Vec3::from_array(l), d.left_bone.unwrap_or_else(|| "root".into())));
+                (id, Hands { right: Vec3::from_array(d.right), left })
+            })
+            .collect()
+    });
+    table.get(kind.id()).unwrap_or_else(|| panic!("assets/grips.toml has no [{}]", kind.id()))
 }
 
 /// Weapon space to grip-frame space: the barrel (-Z) runs down the frame's +Y, up (+Y) along its +Z.
@@ -100,6 +106,12 @@ pub fn grip_rotation() -> Quat {
 pub fn held_transform(kind: WeaponKind) -> Transform {
     let rot = grip_rotation();
     Transform { translation: -(rot * hands(kind).right), rotation: rot, scale: Vec3::ONE }
+}
+
+/// The same for a solved right-hand pose: its grip frame at `at`, turned by `rot`, in weapon space.
+pub fn held_transform_solved(pose: &crate::fingers::HandPose) -> Transform {
+    let rot = pose.rot.inverse();
+    Transform { translation: -(rot * pose.at), rotation: rot, scale: Vec3::ONE }
 }
 
 // ------------------------------------------------------------------------------------------- data
@@ -344,6 +356,11 @@ impl Rig {
         self.dressed = false;
     }
 
+    /// The character whose model is spawned.
+    pub fn character(&self) -> Option<&str> {
+        self.character.as_deref()
+    }
+
     /// The model's root entity, once spawned.
     pub fn model(&self) -> Option<Entity> {
         self.model.filter(|_| self.player.is_some())
@@ -563,6 +580,7 @@ fn hold(
     mut rigs: Query<(&mut Rig, Has<FirstPerson>, Has<ArmsOnly>)>,
     children: Query<&Children>,
     names: Query<&Name>,
+    solved: Option<Res<crate::fingers::Solved>>,
 ) {
     let Some(assets) = assets else { return };
     for (mut rig, first_person, arms_only) in &mut rigs {
@@ -579,7 +597,9 @@ fn hold(
         let Some(kind) = rig.weapon else { continue };
         let Some(grip) = children.iter_descendants(root).find(|e| names.get(*e).is_ok_and(|n| n.as_str() == GRIP_R)) else { continue };
         let Some(scene) = assets.weapons.get(&kind) else { continue };
-        let held = commands.spawn((Held { first_person }, WorldAssetRoot(scene.clone()), held_transform(kind), Visibility::default(), ChildOf(grip))).id();
+        let pose = solved.as_ref().zip(rig.character()).and_then(|(s, c)| s.get(c, kind, "R"));
+        let at = pose.map_or_else(|| held_transform(kind), held_transform_solved);
+        let held = commands.spawn((Held { first_person }, WorldAssetRoot(scene.clone()), at, Visibility::default(), ChildOf(grip))).id();
         rig.held = Some((kind, held));
     }
 }
@@ -686,12 +706,30 @@ mod tests {
     }
 
     #[test]
+    fn grip_points_match_the_old_table() {
+        assert_eq!(hands(WeaponKind::Rifle).right, Vec3::new(0.0, -0.038, 0.030));
+        assert_eq!(hands(WeaponKind::Shotgun).left.as_ref().map(|l| l.1.as_str()), Some("pump"));
+        assert_eq!(hands(WeaponKind::Rifle).left.as_ref().map(|l| l.1.as_str()), Some("root"));
+        assert!(hands(WeaponKind::Pistol).left.is_none());
+        assert!(hands(WeaponKind::Fist).left.is_none());
+    }
+
+    #[test]
     fn weapons_land_in_the_fist() {
         for kind in WEAPONS {
             let t = held_transform(kind);
             assert!(t.transform_point(hands(kind).right).length() < 1e-5, "{kind:?} grip at the frame origin");
             // The barrel (-Z) runs down the frame's +Y.
             assert!((t.rotation * Vec3::NEG_Z).distance(Vec3::Y) < 1e-5);
+        }
+    }
+
+    #[test]
+    fn solved_hold_matches_the_default_frame() {
+        for kind in WEAPONS {
+            let pose = crate::fingers::HandPose { at: hands(kind).right, rot: grip_rotation().inverse(), joints: [Quat::IDENTITY; 15] };
+            let (a, b) = (held_transform(kind), held_transform_solved(&pose));
+            assert!(a.translation.distance(b.translation) < 1e-5 && a.rotation.dot(b.rotation).abs() > 1.0 - 1e-6, "{kind:?}");
         }
     }
 

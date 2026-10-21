@@ -7,6 +7,7 @@ Runs inside Blender's Python (`bpy`), headless:
     tools/character/build.sh --check            # verify every glb (bones, clips, meshes, triangles)
     tools/character/build.sh --preview runner   # also render look-dev images to screenshots/characters/
     tools/character/build.sh --no-bake runner   # skip the wear texture bake (fast iteration)
+    tools/character/build.sh --grips runner     # re-solve only the finger poses on each weapon
 
 Each character lives in chars/<id>.py with a `build()` returning a kit.Char and a `SPEC` dict. The
 contract (skeleton, grip frames, meshes, clips): docs/superpowers/specs/2026-10-18-character-roster-design.md.
@@ -30,6 +31,29 @@ def spec(cid):
     return importlib.import_module(f"chars.{cid}").SPEC
 
 
+def solve_grips(ids):
+    """Re-solve only the finger poses: each character's rig is all the solver needs, so its build
+    stops as soon as the rig exists."""
+    import grips
+    import real
+
+    class Rigged(Exception):
+        pass
+    begin = real.begin
+
+    def stop(cid, build):
+        raise Rigged(begin(cid, build))
+    real.begin = stop
+    try:
+        for cid in ids:
+            try:
+                spec(cid)["build"]()
+            except Rigged as r:
+                grips.solve(r.args[0])
+    finally:
+        real.begin = begin
+
+
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     ids = args or [c for c in ORDER if os.path.exists(os.path.join(HERE, "chars", f"{c}.py"))]
@@ -41,6 +65,9 @@ def main():
             print(f"{cid}: {'ok' if not problems else '; '.join(problems)} {stats}")
             bad += bool(problems)
         sys.exit(1 if bad else 0)
+    if "--grips" in sys.argv:
+        solve_grips(ids)
+        return
     for cid in ids:
         s = spec(cid)
         c = s["build"]()

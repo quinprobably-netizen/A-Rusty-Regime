@@ -13,6 +13,8 @@ use bevy::world_serialization::WorldInstanceReady;
 use crate::abilities::Class;
 use crate::camera::PlayerCamera;
 use crate::character::{self, ArmsOnly, CharacterAssets, Characters, GRIP_L, GRIP_R, Rig, grip_rotation, hands};
+use crate::fingers::{FingerBones, HandPose, Solved, left_pose};
+use crate::gunsmith::Loadout;
 use crate::controller::Player;
 use crate::vehicle::Driving;
 use crate::viewmodel::{ViewModel, WeaponModel, model_space};
@@ -50,7 +52,7 @@ struct ArmBones {
 /// A weapon model's bones the hands ride, with the inverse of each one's rest transform in model
 /// space.
 #[derive(Component)]
-struct Grips(HashMap<&'static str, (Entity, Affine3A)>);
+struct Grips(HashMap<String, (Entity, Affine3A)>);
 
 fn spawn(mut commands: Commands, assets: Option<Res<CharacterAssets>>, characters: Res<Characters>, class: Res<Class>, camera: Single<Entity, With<PlayerCamera>>) {
     // No render assets in headless tests: no arms.
@@ -66,13 +68,13 @@ fn spawn(mut commands: Commands, assets: Option<Res<CharacterAssets>>, character
 fn on_weapon_ready(ready: On<WorldInstanceReady>, mut commands: Commands, models: Query<&WeaponModel>, children: Query<&Children>, parents: Query<&ChildOf>, transforms: Query<&Transform>, names: Query<&Name>) {
     let Ok(model) = models.get(ready.entity) else { return };
     let h = hands(WEAPONS[model.index]);
-    let wanted = ["root"].into_iter().chain(h.left.map(|l| l.1));
+    let wanted = ["root"].into_iter().chain(h.left.as_ref().map(|l| l.1.as_str()));
     let mut grips = HashMap::new();
     for e in children.iter_descendants(ready.entity) {
         if let Ok(name) = names.get(e)
-            && let Some(bone) = wanted.clone().find(|w| *w == name.as_str())
+            && wanted.clone().any(|w| w == name.as_str())
         {
-            grips.insert(bone, (e, model_space(e, ready.entity, &parents, &transforms).compute_affine().inverse()));
+            grips.insert(name.as_str().to_string(), (e, model_space(e, ready.entity, &parents, &transforms).compute_affine().inverse()));
         }
     }
     commands.entity(ready.entity).insert(Grips(grips));
@@ -88,13 +90,15 @@ fn pose(
     vm: Single<(&ViewModel, &Visibility)>,
     driving: Query<(), (With<Player>, With<Driving>)>,
     weapons: Query<(&WeaponModel, &Grips)>,
-    arms: Single<(Entity, &Rig, &mut Transform, &mut Visibility, Option<&ArmBones>), (With<Arms>, Without<ViewModel>)>,
+    arms: Single<(Entity, &Rig, &mut Transform, &mut Visibility, Option<&ArmBones>, Option<&FingerBones>), (With<Arms>, Without<ViewModel>)>,
+    solved: Option<Res<Solved>>,
+    loadout: Option<Res<Loadout>>,
     children: Query<&Children>,
     names: Query<&Name>,
     locals: Query<&Transform, Without<Arms>>,
     mut globals: Query<&mut GlobalTransform>,
 ) {
-    let (entity, rig, mut tf, mut vis, bones) = arms.into_inner();
+    let (entity, rig, mut tf, mut vis, bones, fingers) = arms.into_inner();
     let (view, view_vis) = *vm;
     let grips = arsenal.and_then(|a| weapons.iter().find(|(m, _)| m.index == a.current));
     let shown = *view_vis != Visibility::Hidden && view.presented() < 0.05 && driving.is_empty() && grips.is_some() && rig.model().is_some();
@@ -118,14 +122,19 @@ fn pose(
     };
     let Ok(cam) = globals.get(*camera).map(|g| g.compute_transform()) else { return };
 
-    // The grip frames on the weapon: its model space carried along by the bone each hand rides.
-    let h = hands(WEAPONS[model.index]);
-    let frame = |bone: &str, at: Vec3| -> Option<Transform> {
+    // The grip frames on the weapon: its model space carried along by the bone each hand rides, where
+    // this character's solved poses put them (the shared grip points otherwise).
+    let kind = WEAPONS[model.index];
+    let h = hands(kind);
+    let pose = |p: &str| solved.as_ref().zip(rig.character()).and_then(|(s, c)| s.get(c, kind, p));
+    let frame = |bone: &str, at: Vec3, solved: Option<&HandPose>| -> Option<Transform> {
         let (e, rest_inv) = grips.get(bone)?;
         let now = globals.get(*e).ok()?.affine() * *rest_inv;
-        Some(Transform::from_matrix(Mat4::from(now)) * Transform::from_translation(at).with_rotation(grip_rotation().inverse()))
+        let (at, rot) = solved.map_or((at, grip_rotation().inverse()), |p| (p.at, p.rot));
+        Some(Transform::from_matrix(Mat4::from(now)) * Transform::from_translation(at).with_rotation(rot))
     };
-    let targets = [frame("root", h.right), h.left.and_then(|(at, bone)| frame(bone, at))];
+    let left = pose(left_pose(kind, loadout.as_deref())).or_else(|| pose("L"));
+    let targets = [frame("root", h.right, pose("R")), h.left.as_ref().and_then(|(at, bone)| frame(bone, *at, left))];
 
     // Keep the shoulders where they belong under the eye, whatever the character's height.
     let rest = |side: &[Entity; 5]| -> Option<Transform> { Some(globals.get(side[0]).ok()?.compute_transform() * *locals.get(side[1]).ok()?) };
@@ -171,6 +180,19 @@ fn pose(
         ] {
             if let Ok(mut g) = globals.get_mut(e) {
                 *g = GlobalTransform::from(t);
+            }
+        }
+        // The fingers ride the moved hand, each joint on its parent.
+        if let Some(f) = fingers {
+            for chain in f.joints[i].chunks(3) {
+                let mut parent = hand_g;
+                for e in chain {
+                    let Ok(local) = locals.get(*e) else { break };
+                    parent = parent * *local;
+                    if let Ok(mut g) = globals.get_mut(*e) {
+                        *g = GlobalTransform::from(parent);
+                    }
+                }
             }
         }
     }

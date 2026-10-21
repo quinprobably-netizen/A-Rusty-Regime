@@ -90,6 +90,17 @@ struct Rig {
     optic: Option<Vec3>,
     /// The harpoon's spear, hidden while it is out on the line.
     spear: Option<Entity>,
+    /// The scope's eyepiece and the red dot's window (`scope.eye`, `reddot.lens`), with where each
+    /// rests in model space; `scope.rs` draws the sight pictures on them.
+    eye: Option<(Entity, Vec3)>,
+    dot: Option<(Entity, Vec3)>,
+}
+
+impl WeaponModel {
+    /// The model's scope eyepiece and red dot window sockets, once its scene is in.
+    pub(crate) fn sights(&self) -> (Option<Entity>, Option<Entity>) {
+        self.rig.as_ref().map_or((None, None), |r| (r.eye.map(|e| e.0), r.dot.map(|d| d.0)))
+    }
 }
 
 /// The muzzle flash on a model: a small hot sphere shown for a few frames after each shot.
@@ -102,8 +113,23 @@ const REST: Vec3 = Vec3::new(0.16, -0.19, -0.36);
 const AIMED_DEPTH: f32 = -0.3;
 /// Where the gun sits in the gunsmith: right of centre, turned to show its side.
 const SHOWCASE: Vec3 = Vec3::new(0.22, -0.02, -0.95);
-/// Sight line above the optic rail for each optic part: flip-up irons, red dot, scope.
-const SIGHT_HEIGHT: [f32; 3] = [0.012, 0.021, 0.026];
+/// Sight line above the optic rail for the flip-up irons (the red dot and scope use their sockets).
+const IRONS_HEIGHT: f32 = 0.012;
+/// How far in front of the eye a scope's eyepiece sits when aimed.
+const EYE_RELIEF: f32 = 0.13;
+
+/// Where the viewmodel sits when fully aimed with optic part `optic` fitted (irons, red dot, scope).
+fn aimed_at(rig: &Rig, kind: WeaponKind, optic: usize) -> Option<Vec3> {
+    let h = hold(kind);
+    match (optic, rig.eye, rig.dot) {
+        (2, Some((_, e)), _) => Some(-(h + e) - Vec3::Z * EYE_RELIEF),
+        (1, _, Some((_, d))) => Some(Vec3::new(-(h + d).x, -(h + d).y, AIMED_DEPTH)),
+        _ => rig.optic.map(|o| {
+            let s = h + o + Vec3::Y * IRONS_HEIGHT;
+            Vec3::new(-s.x, -s.y, AIMED_DEPTH)
+        }),
+    }
+}
 
 /// Per-weapon nudge from `REST` (the launchers ride higher on the shoulder, the fist sits low).
 fn hold(kind: WeaponKind) -> Vec3 {
@@ -177,7 +203,7 @@ fn hook_up(
         let Some(gltf) = gltfs.get(&model.gltf) else { continue };
         let Some(player) = children.iter_descendants(root).find(|e| players.contains(*e)) else {
             warn!("weapon model {} has no animation player", WEAPONS[model.index].id());
-            model.rig = Some(Rig { player: root, clips: HashMap::new(), playing: Clip::Idle, parts: vec![], muzzle: None, optic: None, spear: None });
+            model.rig = Some(Rig { player: root, clips: HashMap::new(), playing: Clip::Idle, parts: vec![], muzzle: None, optic: None, spear: None, eye: None, dot: None });
             continue;
         };
         let mut graph = AnimationGraph::new();
@@ -190,7 +216,7 @@ fn hook_up(
         }
         commands.entity(player).insert((AnimationGraphHandle(graphs.add(graph)), AnimationTransitions::new()));
         let mut parts = vec![];
-        let (mut muzzle, mut optic, mut spear) = (None, None, None);
+        let (mut muzzle, mut optic, mut spear, mut eye, mut dot) = (None, None, None, None, None);
         for e in children.iter_descendants(root) {
             let Ok(name) = names.get(e) else { continue };
             for (slot, meshes) in MESHES.iter().enumerate() {
@@ -202,6 +228,15 @@ fn hook_up(
                 "muzzle" => muzzle = Some(e),
                 "mesh.spear" => spear = Some(e),
                 "optic" => optic = Some(model_space(e, root, &parents, &transforms).translation),
+                // The sight sockets show with their optic part.
+                "scope.eye" => {
+                    eye = Some((e, model_space(e, root, &parents, &transforms).translation));
+                    parts.push((e, 0, 2));
+                }
+                "reddot.lens" => {
+                    dot = Some((e, model_space(e, root, &parents, &transforms).translation));
+                    parts.push((e, 0, 1));
+                }
                 _ => {}
             }
         }
@@ -211,7 +246,7 @@ fn hook_up(
                 commands.entity(m).with_child((Flash, Mesh3d(fx.mesh.clone()), MeshMaterial3d(fx.mat.clone()), Transform::default(), Visibility::Hidden));
             }
         }
-        model.rig = Some(Rig { player, clips: nodes, playing: Clip::Idle, parts, muzzle, optic, spear });
+        model.rig = Some(Rig { player, clips: nodes, playing: Clip::Idle, parts, muzzle, optic, spear, eye, dot });
     }
 }
 
@@ -272,13 +307,11 @@ fn animate(
     vm.bob += dt * speed * 1.7;
     let bob = Vec3::new(vm.bob.cos(), -(vm.bob * 2.0).sin().abs() * 0.6, 0.0) * 0.012 * amount;
 
-    // Aimed: the current weapon's sight line on the screen centre.
+    // Aimed: the current weapon's sight line on the screen centre, a scope's eyepiece close to the eye.
     let kind = arsenal.kind();
-    let sight = models.iter().find(|(m, _)| m.index == arsenal.current).and_then(|(m, _)| m.rig.as_ref()?.optic).map(|o| {
-        let optic = if customizable(kind) { loadout.part(kind, 0) } else { 0 };
-        hold(kind) + o + Vec3::Y * SIGHT_HEIGHT[optic]
-    });
-    let aimed = sight.map_or(Vec3::new(0.0, -0.08, AIMED_DEPTH), |s| Vec3::new(-s.x, -s.y, AIMED_DEPTH));
+    let optic = if customizable(kind) { loadout.part(kind, 0) } else { 0 };
+    let aimed = models.iter().find(|(m, _)| m.index == arsenal.current).and_then(|(m, _)| aimed_at(m.rig.as_ref()?, kind, optic));
+    let aimed = aimed.unwrap_or(Vec3::new(0.0, -0.08, AIMED_DEPTH));
 
     let ads = aim.as_ref().map_or(0.0, |a| a.level);
     let rest = REST.lerp(aimed, ads);

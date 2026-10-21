@@ -9,7 +9,7 @@ import bpy
 from mathutils import Matrix, Vector
 
 from kit import _apply, _obj, _orient, apply_modifiers, begin, block, cyl, hole_through, join, mat, mlok, pin, prism, rail, ring, screw, slots, tube
-from parts import MAKER, SLOT_ATTS, grip_parts, muzzle_parts, optic_reddot, stock_parts, mag_drop
+from parts import MAKER, SLOT_ATTS, grip_parts, lens_socket, muzzle_parts, optic_reddot, stock_parts, mag_drop
 
 BORE = 0.042
 RAIL_Z = 0.064          # top of the receiver/handguard, base of the top rail
@@ -658,6 +658,7 @@ def long_scope(g, top):
     parts.append(label("MRAD", (x - 0.0136, y, zc + 0.022), 0.0026, "bright"))
     o = assemble(parts, "att.optic.scope")
     o.name = "att.optic.scope"
+    lens_socket(g, "scope.eye", P(-0.2), (0.0186, 0.0186, 0.0186), "root")
     return g.add(o, "root")
 
 
@@ -712,7 +713,7 @@ VIEW = {"cam": (-1.45, 0.15, 0.50), "look": (0, 0.15, 0.0), "lens": 50, "show": 
 
 SPEC = {"build": build, "length": (0.85, 0.98), "tris": (20000, 70000),
         "bones": ["root", "bolt", "charge", "mag", "trigger"],
-        "sockets": ["muzzle", "eject", "optic", "under", "stock"], "attachments": SLOT_ATTS + STANDARD,
+        "sockets": ["muzzle", "eject", "optic", "under", "stock", "scope.eye", "reddot.lens"], "attachments": SLOT_ATTS + STANDARD,
         "parts": {"mesh.root": "root", "mesh.bolt": "bolt", "mesh.charge": "charge", "mesh.mag": "mag", "mesh.trigger": "trigger"},
         "moves": {"fire": ["root", "bolt", "trigger"], "reload": ["root", "mag", "charge", "bolt"], "draw": ["root"],
                   "inspect": ["root", "charge", "bolt"]},

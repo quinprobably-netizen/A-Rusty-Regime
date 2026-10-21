@@ -531,7 +531,7 @@ def clips(g):
 
 SPEC = {"build": build, "length": (0.74, 0.84), "tris": (20000, 70000),
         "bones": ["root", "bolt", "charge", "mag", "trigger", "selector"],
-        "sockets": ["muzzle", "eject", "optic", "under", "stock"],
+        "sockets": ["muzzle", "eject", "optic", "under", "stock", "scope.eye", "reddot.lens"],
         "attachments": SLOT_ATTS + ["att.optic.irons", "att.muzzle.bare", "att.grip.standard", "att.stock.standard"],
         "parts": {"mesh.root": "root", "mesh.bolt": "bolt", "mesh.charge": "charge", "mesh.mag": "mag", "mesh.trigger": "trigger",
                   "mesh.selector": "selector"},

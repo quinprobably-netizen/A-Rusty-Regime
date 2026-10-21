@@ -31,7 +31,16 @@ def optic_reddot(g, top, bone="root", length=0.05):
     turret = cyl("turret", (x - 0.015, y, z + 0.022), (x - 0.021, y, z + 0.022), 0.006, "black", segs=20)
     cap = cyl("cap", (x - 0.021, y, z + 0.022), (x - 0.023, y, z + 0.022), 0.005, "steel", segs=20)
     o = join([base, clamp, knob, hood, lens, dot, turret, cap, screw((x + 0.016, y - 0.005, z + 0.003), "x", 0.0015)], "att.optic.reddot")
+    lens_socket(g, "reddot.lens", (x, y + length / 2 - 0.0048, z + 0.021), (0.011, 1.0, 0.0095), bone)
     return g.add(o, bone)
+
+
+def lens_socket(g, name, at, scale, bone):
+    """The game draws a sight's picture on this socket: `scope.eye` at the eyepiece's centre scaled by
+    its radius, `reddot.lens` at the window's centre scaled by its half width and height."""
+    e = g.socket(name, at, bone)
+    e.scale = scale
+    return e
 
 
 def optic_scope(g, top, bone="root", length=0.17, mag=0.019):
@@ -54,6 +63,8 @@ def optic_scope(g, top, bone="root", length=0.17, mag=0.019):
     parts.append(label("6X", (x - 0.0085, y - length * 0.36, zc + 0.012), 0.004, "bright"))
     o = join(parts, "att.optic.scope")
     o.name = "att.optic.scope"
+    r = mag - 0.002
+    lens_socket(g, "scope.eye", (x, y - length / 2 + 0.0015, zc), (r, r, r), bone)
     return g.add(o, bone)
 
 
