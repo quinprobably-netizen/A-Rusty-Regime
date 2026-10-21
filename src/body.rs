@@ -1,6 +1,6 @@
-//! The player's own body: our character standing under the first-person camera, so you see your
-//! legs when you look down and cast a shadow. It is driven by the controller's move state (idle,
-//! walk, sprint, jump, fall, crouch/slide). The head renders only into shadow maps (see `character`).
+//! The player's own body: our character standing under the first-person camera, casting your
+//! shadow. It is driven by the controller's move state (idle, walk, sprint, jump, fall,
+//! crouch/slide). It renders only into shadow maps (see `character`); the arms are their own rig.
 
 use std::f32::consts::PI;
 
