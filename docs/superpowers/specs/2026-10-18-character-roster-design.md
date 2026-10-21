@@ -49,7 +49,7 @@ characters; the wardrobe picks a character and its three colours.
   22-bone skeleton with the same bone names as today. Each character sets its own proportions (bone
   lengths, height 1.65-2.05 m, bulk); the kit builds the skeleton from those and keys the 12 clips on
   it, so every character runs the same animations. The gameplay capsule and hitbox stay the same for
-  everyone. The old `character.glb` stays only until the game is switched over.
+  everyone. The old shared `character.glb` is gone.
 - Faces: stylised hard-surface heads, not sculpted portraits. Tattoos, ports and scars come from the
   bake and small modelled inserts.
 - Detail budget: 30-70k triangles per complete character. One baked 2048 texture per character.

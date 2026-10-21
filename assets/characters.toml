@@ -32,25 +32,25 @@ loadout = "dmr"
 [character.mechanic]
 name = "Mechanic"
 faction = "scrappers"
-primary = "#5a4632"
-secondary = "#3e4a3a"
-accent = "#a8743a"
+primary = "#6e6450"
+secondary = "#3d3a33"
+accent = "#9a6a35"
 loadout = "shotgun"
 
 [character.bruiser]
 name = "Bruiser"
 faction = "scrappers"
-primary = "#4a3e30"
-secondary = "#2f3a44"
-accent = "#9a6a2c"
+primary = "#55606a"
+secondary = "#4f4536"
+accent = "#a0743c"
 loadout = "fist"
 
 [character.trapper]
 name = "Trapper"
 faction = "scrappers"
-primary = "#4e4a36"
-secondary = "#5a4a38"
-accent = "#8e5a2a"
+primary = "#544632"
+secondary = "#3f433b"
+accent = "#8b5a2b"
 loadout = "harpoon"
 
 [character.runner]
@@ -80,25 +80,25 @@ loadout = "pistol"
 [character.contractor]
 name = "Contractor"
 faction = "pmc"
-primary = "#2e3640"
-secondary = "#6a6a62"
-accent = "#1e7ab8"
+primary = "#b9bec6"
+secondary = "#33383f"
+accent = "#c9a227"
 loadout = "rifle"
 
 [character.juggernaut]
 name = "Juggernaut"
 faction = "pmc"
-primary = "#262c34"
-secondary = "#4a4e54"
-accent = "#1e7ab8"
+primary = "#33383f"
+secondary = "#2b2f35"
+accent = "#c9a227"
 loadout = "rocket"
 
 [character.handler]
 name = "Handler"
 faction = "pmc"
-primary = "#3a4048"
-secondary = "#7a7666"
-accent = "#1e7ab8"
+primary = "#b9bec6"
+secondary = "#33383f"
+accent = "#c9a227"
 loadout = "smg"
 
 [faction.regime]
