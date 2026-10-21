@@ -126,7 +126,7 @@ def build():
 
 SPEC = {"build": build, "length": (0.18, 0.28), "tris": (8000, 80000),
                "bones": ["root", "slide", "hammer", "trigger", "mag", "stop"],
-               "sockets": ["muzzle", "eject", "optic", "under", "stock"], "attachments": SLOT_ATTS,
+               "sockets": ["muzzle", "eject", "optic", "under", "stock", "reddot.lens"], "attachments": SLOT_ATTS,
                "parts": {"mesh.slide": "slide", "mesh.root": "root", "mesh.mag": "mag", "mesh.hammer": "hammer", "mesh.trigger": "trigger"},
                "moves": {"fire": ["slide", "hammer", "trigger"], "reload": ["mag", "slide", "root"], "draw": ["root"], "inspect": ["root"]},
                "view": {"cam": (-0.42, 0.16, 0.13), "look": (0, 0.03, -0.02)}}
