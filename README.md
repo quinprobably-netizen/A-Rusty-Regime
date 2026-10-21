@@ -30,7 +30,7 @@ First build takes a while. Linux needs `libasound2-dev libudev-dev libwayland-de
 | Menu / pause | Esc | Start |
 | Jump / wall jump / double jump | Space | A / Cross |
 | Grapple (fire, press again to let go) | G or mouse 4 | L3 |
-| Wardrobe (at the camp locker) | E, then Tab, arrows, 1 2 3 | |
+| Wardrobe (at the camp locker) | E, then arrows, 1 2 3 | |
 | Crouch / slide | Ctrl, Shift or C | B / Circle, L3 or LT |
 | Fire | Left mouse | RT |
 | Aim down sights | Right mouse | LT |
@@ -48,8 +48,7 @@ First build takes a while. Linux needs `libasound2-dev libudev-dev libwayland-de
 The game boots to a title screen over the live island; Esc pauses (time stops, the cursor comes
 back). Both lists lead to the same screens: **Gunsmith** (four attachment slots per hitscan gun,
 parts change spread, recoil, rate, velocity and damage and show on the viewmodel; stat bars compare
-the bare gun), **Wardrobe** (the camp locker's slots as tiles, with the character shown from the
-front), **Settings** (mouse sensitivity, invert Y, FOV, five volumes, sky, bloom, ambient
+the bare gun), **Wardrobe** (pick a character and its three colours, shown from the front), **Settings** (mouse sensitivity, invert Y, FOV, five volumes, sky, bloom, ambient
 occlusion, anti-aliasing, shadow distance, grass, trees; saved to `settings.toml`, which lays over
 `tuning.toml` so F5 keeps your choices) and **Controls**. Navigate with W/S or arrows, adjust with
 A/D, Enter picks, Esc backs out; the d-pad, A and B do the same on a pad; the mouse works too.
@@ -69,20 +68,29 @@ crosshair that opens with the gun's real spread. The Esc hint fades after a few 
 - **Grapple** (the pilot class ability): G fires a hook at anything within 30 m. You are pulled toward it, the pull bends toward where you look, gravity keeps working so looking below the anchor swings you. Press again or jump to let go and keep all your speed; jumping off adds a boost. It runs on a power meter like Titanfall 2's, tuned under `[grapple]` to be nearly free.
 - **Rocket jumps**: rockets knock you and props around. Aim at your feet and jump.
 
-## Character, outfits and classes
-The player and the soldiers are our own character: a hooded parkour mercenary built by
-`tools/character/build.py`, a headless Blender script (`tools/character/build.sh` sets up
-`bpy` on Python 3.11 and writes `assets/models/character/character.glb` plus preview renders in
-`screenshots/`). One 22-bone skeleton, every piece of clothing a named node (`head.hood`,
-`torso.carrier`, `gear.launcher`, ...), and twelve procedural clips: idle, walk, run, sprint,
-jump, fall, crouch, slide, wall run left/right, mantle, grapple. `build.sh --check` re-imports
-the glb and verifies bones, parts and clips.
+## Characters, factions and classes
+Twelve characters in four factions, all our own, built in code with headless Blender like the
+guns: the **Regime** (a death cult that worships the Algorithm: Acolyte, Zealot, Choir), the
+**Scrappers** (luddite tinkerers: Mechanic, Bruiser, Trapper), the **Deserters** (ex-cult parkour
+pilots, your side: Runner, Breaker, Ghost) and the **PMC** (contractors who sell to everyone:
+Contractor, Juggernaut, Handler). `tools/character/build.sh [ids] [--no-bake] [--preview]
+[--check]` sets up `bpy` on Python 3.11 and writes one `assets/models/character/<id>.glb` per
+character from `tools/character/chars/<id>.py` and the shared kit (`kit.py`). Each has its own
+body and proportions on one 22-bone skeleton with twelve procedural clips (idle, walk, run,
+sprint, jump, fall, crouch, slide, wall run left/right, mantle, grapple), baked edge wear and dirt,
+and three skinned meshes (`mesh.body`, `mesh.head`, `mesh.arms`). `--check` verifies bones,
+meshes, clips and the triangle budget. Design notes:
+`docs/superpowers/specs/2026-10-18-character-roster-design.md`.
 
-`assets/characters.toml` holds outfits (which style sits in each slot, three colours) and classes
-(outfit, ability, health). Edit it and press F5. The locker at the base camp opens the wardrobe:
-Tab picks a slot, left/right cycles its style, 1/2/3 cycle the colours, E saves it to `save.toml`.
-Your body stands under the camera, so you see your legs when you look down and your shadow on
-the ground; the head is drawn only into the shadow map so it never covers the screen.
+`assets/characters.toml` holds each character's faction, default colours and the weapon bots
+wearing it carry, which factions each soldier team fields (team 0 is your side: Deserters; team 1
+the Regime, Scrappers and PMC), and the classes (character, ability, health). Edit it and press F5.
+The locker at the base camp opens the wardrobe: left/right picks the character, 1/2/3 cycle its
+colours, E saves it to `save.toml`. Your body stands under the camera, so you see your legs when
+you look down and your shadow on the ground; head and arms are drawn only into the shadow map.
+In first person a second copy of your character shows just its arms, with both hands placed on
+the current weapon every frame (two-bone IK on hand points in `character::hands`), so the arms
+follow every weapon clip.
 
 ## Weapons
 | Slot | Weapon | Notes |

@@ -1,45 +1,135 @@
-# Outfits and classes. Edit and press F5 in game.
+# The roster: characters, factions, which factions each team fields, and classes. Edit and press F5
+# in game.
 #
-# Slots: head, face, torso, hands, legs, feet, back, gear, weapon (held in the right hand, not in the wardrobe). A slot takes one style or a list (base
-# layer first, overlays after). Styles are the part names in character.glb without the slot prefix:
-#   head: hood beanie cap helmet     face: mask goggles        torso: jacket shirt carrier
-#   hands: gloves bare               legs: cargo kneepads      feet: boots sneakers
-#   back: rope pack                  gear: launcher chalkbag   weapon: rifle
-# Colours tint the cloth materials: primary (main cloth), secondary (trousers, second cloth), accent (straps, gear).
+# Every character has its own model, models/character/<id>.glb. Colours tint its cloth: primary
+# (main cloth), secondary (second cloth), accent (straps, trim). `loadout` is the weapon bots
+# wearing the character carry (rifle shotgun pistol smg dmr revolver grenade harpoon rocket fist).
 
-[outfit.runner]
-head = "hood"
-face = "mask"
-torso = ["jacket", "carrier"]
-hands = "gloves"
-legs = ["cargo", "kneepads"]
-feet = "boots"
-back = "rope"
-gear = ["launcher", "chalkbag"]
-weapon = "rifle"
-primary = "#2b2f33"
-secondary = "#4a5a48"
-accent = "#d98b2b"
+[character.acolyte]
+name = "Acolyte"
+faction = "regime"
+primary = "#1a1a1d"
+secondary = "#2a2a2e"
+accent = "#7a1010"
+loadout = "rifle"
 
-[outfit.soldier]
-head = "helmet"
-torso = ["shirt", "carrier"]
-legs = "cargo"
-feet = "boots"
-back = "pack"
-weapon = "rifle"
-primary = "#4c5a3a"
-secondary = "#3a3a3a"
-accent = "#8a7a50"
+[character.zealot]
+name = "Zealot"
+faction = "regime"
+primary = "#1c1a1e"
+secondary = "#3a3036"
+accent = "#8a1414"
+loadout = "revolver"
+
+[character.choir]
+name = "Choir"
+faction = "regime"
+primary = "#202024"
+secondary = "#34343a"
+accent = "#6e1212"
+loadout = "dmr"
+
+[character.mechanic]
+name = "Mechanic"
+faction = "scrappers"
+primary = "#6e6450"
+secondary = "#3d3a33"
+accent = "#9a6a35"
+loadout = "shotgun"
+
+[character.bruiser]
+name = "Bruiser"
+faction = "scrappers"
+primary = "#55606a"
+secondary = "#4f4536"
+accent = "#a0743c"
+loadout = "fist"
+
+[character.trapper]
+name = "Trapper"
+faction = "scrappers"
+primary = "#544632"
+secondary = "#3f433b"
+accent = "#8b5a2b"
+loadout = "harpoon"
+
+[character.runner]
+name = "Runner"
+faction = "deserters"
+primary = "#141413"
+secondary = "#D97757"
+accent = "#D4A27F"
+loadout = "smg"
+
+[character.breaker]
+name = "Breaker"
+faction = "deserters"
+primary = "#141413"
+secondary = "#F0EEE6"
+accent = "#D97757"
+loadout = "grenade"
+
+[character.ghost]
+name = "Ghost"
+faction = "deserters"
+primary = "#141413"
+secondary = "#D4A27F"
+accent = "#F0EEE6"
+loadout = "pistol"
+
+[character.contractor]
+name = "Contractor"
+faction = "pmc"
+primary = "#b9bec6"
+secondary = "#33383f"
+accent = "#c9a227"
+loadout = "rifle"
+
+[character.juggernaut]
+name = "Juggernaut"
+faction = "pmc"
+primary = "#33383f"
+secondary = "#2b2f35"
+accent = "#c9a227"
+loadout = "rocket"
+
+[character.handler]
+name = "Handler"
+faction = "pmc"
+primary = "#b9bec6"
+secondary = "#33383f"
+accent = "#c9a227"
+loadout = "smg"
+
+[faction.regime]
+name = "Regime"
+characters = ["acolyte", "zealot", "choir"]
+
+[faction.scrappers]
+name = "Scrappers"
+characters = ["mechanic", "bruiser", "trapper"]
+
+[faction.deserters]
+name = "Deserters"
+characters = ["runner", "breaker", "ghost"]
+
+[faction.pmc]
+name = "PMC"
+characters = ["contractor", "juggernaut", "handler"]
+
+# Factions each soldier team draws from. Team 0 fights on the player's side.
+[teams]
+"0" = ["deserters"]
+"1" = ["regime", "scrappers", "pmc"]
 
 [class.pilot]
-outfit = "runner"
+character = "runner"
 ability = "grapple"
 health = 100.0
 sprint_mult = 1.0
 
 [class.grunt]
-outfit = "soldier"
+character = "acolyte"
 ability = "none"
 health = 100.0
 sprint_mult = 0.9

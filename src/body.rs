@@ -7,7 +7,7 @@ use std::f32::consts::PI;
 use bevy::prelude::*;
 
 pub use crate::character::{Pose, SHADOW_ONLY_LAYER};
-use crate::character::{self, CharacterAssets, FirstPerson, RigPose};
+use crate::character::{self, CharacterAssets, FirstPerson, Rig, RigPose};
 use crate::controller::{MoveState, Player};
 use crate::input::ViewAngles;
 use crate::tuning::Tuning;
@@ -67,7 +67,7 @@ pub struct BodyPlugin;
 impl Plugin for BodyPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn)
-            .add_systems(Update, animate)
+            .add_systems(Update, (animate, arm))
             .add_systems(PostUpdate, follow.before(TransformSystems::Propagate));
     }
 }
@@ -77,9 +77,19 @@ pub struct Body;
 
 fn spawn(mut commands: Commands, assets: Option<Res<CharacterAssets>>, characters: Res<character::Characters>, class: Res<crate::abilities::Class>) {
     // No render assets in headless tests: no body.
-    let Some(assets) = assets else { return };
-    let outfit = characters.class.get(&class.0).map_or("runner", |c| c.outfit.as_str());
-    commands.spawn((Name::new("Player body"), Body, FirstPerson, character::bundle(&assets, outfit, Transform::default())));
+    if assets.is_none() {
+        return;
+    }
+    let outfit = characters.class.get(&class.0).map_or("runner", |c| c.character.as_str());
+    commands.spawn((Name::new("Player body"), Body, FirstPerson, character::bundle(outfit, Transform::default())));
+}
+
+/// The body holds the weapon in hand.
+fn arm(arsenal: Option<Res<crate::weapon::Arsenal>>, mut body: Single<&mut Rig, With<Body>>) {
+    let kind = arsenal.map(|a| a.kind());
+    if body.weapon != kind {
+        body.weapon = kind;
+    }
 }
 
 /// Stand at the interpolated feet position, facing the view yaw.

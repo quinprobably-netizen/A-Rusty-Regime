@@ -1,14 +1,14 @@
-//! The camp wardrobe: stand at the locker, press E, and change clothes slot by slot. Tab picks the
-//! slot, left/right cycle its style (including nothing, for slots that allow it), 1/2/3 cycle the
-//! three colours. The result is saved in `save.toml` as an outfit over the class default and worn
-//! again next time.
+//! The camp wardrobe: stand at the locker, press E, pick a character with left/right and cycle its
+//! three colours with 1/2/3. The result is saved in `save.toml` as an outfit over the class default
+//! and worn again next time; saves naming no known character fall back to the class default.
 
 use bevy::prelude::*;
 
 use crate::abilities::Class;
 use crate::body::Body;
-use crate::character::{Characters, OutfitDef, Rig, Styles, WEARABLE, styles_for};
+use crate::character::{ArmsOnly, CHARACTERS, Characters, OutfitDef, Rig};
 use crate::controller::Player;
+use crate::dressing::Mannequin;
 use crate::input::PlayerInput;
 use crate::loot::{Save, SaveFile};
 use crate::vehicle::{Driving, VehicleSet};
@@ -17,9 +17,9 @@ use crate::vehicle::{Driving, VehicleSet};
 pub const CUSTOM: &str = "custom";
 /// How close to the locker E opens it.
 const REACH: f32 = 2.5;
-/// Slots that may be left empty.
-const OPTIONAL: [&str; 4] = ["face", "back", "gear", "hands"];
-pub const PALETTE: [&str; 10] = ["#2b2f33", "#4a5a48", "#d98b2b", "#8a2b2b", "#1f3a5f", "#5a4632", "#c9c2b4", "#3a3a3a", "#6d8a3a", "#7a3a7a"];
+pub const PALETTE: [&str; 14] = [
+    "#141413", "#D97757", "#F0EEE6", "#D4A27F", "#2b2f33", "#4a5a48", "#d98b2b", "#8a2b2b", "#1f3a5f", "#5a4632", "#c9c2b4", "#3a3a3a", "#6d8a3a", "#7a3a7a",
+];
 
 #[derive(Component)]
 pub struct Locker;
@@ -27,7 +27,6 @@ pub struct Locker;
 #[derive(Resource, Debug, Default)]
 pub struct Wardrobe {
     pub open: bool,
-    pub slot: usize,
     /// What the player wears over the class default; `None` until they change something.
     pub outfit: Option<OutfitDef>,
     applied: bool,
@@ -57,24 +56,13 @@ impl Plugin for WardrobePlugin {
 
 // --------------------------------------------------------------------------------------- logic
 
-/// The style list for `slot`, with `None` first when the slot may be empty.
-pub fn options(slot: &str) -> Vec<Option<Styles>> {
-    let mut out: Vec<Option<Styles>> = vec![];
-    if OPTIONAL.contains(&slot) {
-        out.push(None);
+/// Step to the next (`dir` +1) or previous (-1) character in roster order, in its own colours.
+pub fn cycle_character(characters: &Characters, outfit: &mut OutfitDef, dir: i32) {
+    let at = CHARACTERS.iter().position(|c| *c == outfit.character).unwrap_or(0) as i32;
+    let next = CHARACTERS[(at + dir).rem_euclid(CHARACTERS.len() as i32) as usize];
+    if let Some(o) = characters.default_outfit(next) {
+        *outfit = o;
     }
-    out.extend(styles_for(slot).into_iter().map(|s| Some(Styles::One(s.into()))));
-    out
-}
-
-/// Step the slot's style by `dir` (+1 / -1) through `options`. A stacked style (jacket + carrier)
-/// counts as its base style.
-pub fn cycle_style(outfit: &mut OutfitDef, slot: &str, dir: i32) {
-    let opts = options(slot);
-    let current = outfit.slot(slot).and_then(|s| s.list().first().map(|b| b.to_string()));
-    let at = opts.iter().position(|o| o.as_ref().and_then(|s| s.list().first().map(|b| b.to_string())) == current).unwrap_or(0) as i32;
-    let next = (at + dir).rem_euclid(opts.len() as i32) as usize;
-    outfit.set_slot(slot, opts[next].clone());
 }
 
 /// Step one of the three colours through the palette.
@@ -93,9 +81,8 @@ pub fn class_outfit(characters: &Characters, class: &Class) -> OutfitDef {
     characters
         .class
         .get(&class.0)
-        .and_then(|c| characters.outfit.get(&c.outfit))
-        .or_else(|| characters.outfit.get("runner"))
-        .cloned()
+        .and_then(|c| characters.default_outfit(&c.character))
+        .or_else(|| characters.default_outfit("runner"))
         .unwrap_or_default()
 }
 
@@ -122,11 +109,11 @@ fn toggle(mut input: ResMut<PlayerInput>, mut wardrobe: ResMut<Wardrobe>, file: 
 }
 
 /// Pick up the saved outfit once the save has loaded.
-fn restore(save: Option<Res<Save>>, mut wardrobe: ResMut<Wardrobe>, mut done: Local<bool>) {
+fn restore(save: Option<Res<Save>>, characters: Res<Characters>, mut wardrobe: ResMut<Wardrobe>, mut done: Local<bool>) {
     let Some(save) = save else { return };
     if !*done {
         *done = true;
-        if let Some(o) = &save.outfit {
+        if let Some(o) = save.outfit.as_ref().filter(|o| characters.character.contains_key(&o.character)) {
             wardrobe.outfit = Some(o.clone());
             wardrobe.applied = false;
         }
@@ -138,14 +125,10 @@ fn edit(keys: Res<ButtonInput<KeyCode>>, characters: Res<Characters>, class: Res
         return;
     }
     let mut outfit = wardrobe.outfit.clone().unwrap_or_else(|| class_outfit(&characters, &class));
-    let slot = WEARABLE[wardrobe.slot];
     let mut changed = false;
-    if keys.just_pressed(KeyCode::Tab) {
-        wardrobe.slot = (wardrobe.slot + 1) % WEARABLE.len();
-    }
     for (key, dir) in [(KeyCode::ArrowRight, 1), (KeyCode::ArrowLeft, -1)] {
         if keys.just_pressed(key) {
-            cycle_style(&mut outfit, slot, dir);
+            cycle_character(&characters, &mut outfit, dir);
             changed = true;
         }
     }
@@ -161,16 +144,17 @@ fn edit(keys: Res<ButtonInput<KeyCode>>, characters: Res<Characters>, class: Res
     }
 }
 
-/// Write the custom outfit into `Characters` and put it on the player's body.
-fn apply(mut characters: ResMut<Characters>, mut wardrobe: ResMut<Wardrobe>, mut body: Query<&mut Rig, With<Body>>) {
+/// Write the custom outfit into `Characters` and put it on the player's body, first-person arms and
+/// the dressing room's mannequin.
+fn apply(mut characters: ResMut<Characters>, mut wardrobe: ResMut<Wardrobe>, mut body: Query<&mut Rig, Or<(With<Body>, With<ArmsOnly>, With<Mannequin>)>>) {
     // F5 reloads `Characters` without the custom entry: put it back.
-    let missing = wardrobe.outfit.is_some() && !characters.outfit.contains_key(CUSTOM);
+    let missing = wardrobe.outfit.is_some() && !characters.custom.contains_key(CUSTOM);
     if wardrobe.applied && !missing {
         return;
     }
     wardrobe.applied = true;
     let Some(outfit) = wardrobe.outfit.clone() else { return };
-    characters.outfit.insert(CUSTOM.into(), outfit);
+    characters.custom.insert(CUSTOM.into(), outfit);
     for mut rig in &mut body {
         rig.wear(CUSTOM);
     }
@@ -195,11 +179,8 @@ fn show_ui(wardrobe: Res<Wardrobe>, characters: Res<Characters>, class: Res<Clas
     }
     **vis = Visibility::Inherited;
     let outfit = wardrobe.outfit.clone().unwrap_or_else(|| class_outfit(&characters, &class));
-    let mut lines = vec!["WARDROBE   Tab: next slot   Left/Right: style   1/2/3: colours   E: done".to_string()];
-    for (i, slot) in WEARABLE.iter().enumerate() {
-        let worn = outfit.slot(slot).map_or("none".to_string(), |s| s.list().join(" + "));
-        lines.push(format!("{} {slot}: {worn}", if i == wardrobe.slot { ">" } else { " " }));
-    }
+    let mut lines = vec!["WARDROBE   Left/Right: character   1/2/3: colours   E: done".to_string()];
+    lines.push(format!("  character: {}", characters.label(&outfit.character)));
     lines.push(format!("  colours: {} {} {}", outfit.primary, outfit.secondary, outfit.accent));
     text.0 = lines.join("\n");
 }
@@ -209,18 +190,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn styles_cycle_through_every_option_and_back() {
-        let mut o = OutfitDef::default();
-        o.set_slot("torso", Some(Styles::Many(vec!["jacket".into(), "carrier".into()])));
-        cycle_style(&mut o, "torso", 1);
-        assert_eq!(o.torso, Some(Styles::One("shirt".into())));
-        cycle_style(&mut o, "torso", 1);
-        assert_eq!(o.torso, Some(Styles::One("carrier".into())));
-        cycle_style(&mut o, "torso", 1);
-        assert_eq!(o.torso, Some(Styles::One("jacket".into())), "wraps; torso can't be empty");
-        o.set_slot("face", Some(Styles::One("mask".into())));
-        cycle_style(&mut o, "face", -1);
-        assert_eq!(o.face, None, "face can be bare");
+    fn characters_cycle_in_roster_order_with_their_colours() {
+        let c = Characters::parse(include_str!("../assets/characters.toml")).unwrap();
+        let mut o = c.default_outfit("runner").unwrap();
+        o.primary = "#ff0000".into();
+        cycle_character(&c, &mut o, 1);
+        assert_eq!(o, c.default_outfit("breaker").unwrap());
+        cycle_character(&c, &mut o, -1);
+        cycle_character(&c, &mut o, -1);
+        assert_eq!(o.character, "trapper");
+        let mut o = c.default_outfit(CHARACTERS[CHARACTERS.len() - 1]).unwrap();
+        cycle_character(&c, &mut o, 1);
+        assert_eq!(o.character, CHARACTERS[0], "wraps");
     }
 
     #[test]
