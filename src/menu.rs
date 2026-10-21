@@ -7,7 +7,6 @@
 
 use bevy::app::AppExit;
 use bevy::audio::{GlobalVolume, Volume};
-use bevy::camera::visibility::RenderLayers;
 use bevy::light::CascadeShadowConfigBuilder;
 use bevy::prelude::*;
 use bevy::ui::{ColorStop, LinearGradient, BackgroundGradient};
@@ -16,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::abilities::Class;
 use crate::camera::PlayerCamera;
-use crate::character::{Characters, OutfitDef, SHADOW_ONLY_LAYER};
+use crate::character::{Characters, OutfitDef};
 use crate::gunsmith::{self, Loadout, PARTS, SLOTS, TUNE_MAX, TUNES};
 use crate::hud::HudRoot;
 use crate::loot::{Save, SaveFile};
@@ -50,7 +49,7 @@ pub enum Showcase {
     None,
     /// The first-person weapon turned to the camera (gunsmith).
     Gun,
-    /// The player's body from the front (wardrobe).
+    /// The worn character in the dressing room (wardrobe).
     Body,
 }
 
@@ -385,7 +384,7 @@ impl Plugin for MenuPlugin {
             .add_systems(OnEnter(Screen::Playing), enter_play)
             .add_systems(OnEnter(Screen::Paused), enter_menu)
             .add_systems(OnEnter(Screen::Title), enter_menu)
-            .add_systems(Update, (read_input.run_if(resource_exists::<ButtonInput<KeyCode>>), act, sync, apply_live, showcase_layers, rebuild).chain());
+            .add_systems(Update, (read_input.run_if(resource_exists::<ButtonInput<KeyCode>>), act, sync, apply_live, rebuild).chain());
     }
 }
 
@@ -733,19 +732,6 @@ fn apply_live(
     }
     for sun in &suns {
         commands.entity(sun).insert(CascadeShadowConfigBuilder { num_cascades: 4, maximum_distance: settings.shadow_distance, first_cascade_far_bound: 20.0, ..default() }.build());
-    }
-}
-
-/// The wardrobe looks at the player from the front, so the camera must draw the head too.
-fn showcase_layers(mut commands: Commands, menu: Res<Menu>, camera: Option<Single<Entity, With<PlayerCamera>>>) {
-    if !menu.is_changed() {
-        return;
-    }
-    let Some(camera) = camera else { return };
-    if menu.showcase() == Showcase::Body {
-        commands.entity(*camera).insert(RenderLayers::from_layers(&[0, SHADOW_ONLY_LAYER]));
-    } else {
-        commands.entity(*camera).remove::<RenderLayers>();
     }
 }
 

@@ -83,20 +83,19 @@ fn follow(
         cam.roll = 0.0;
     }
 
-    // Wardrobe: stand in front of the player, a little to their left so they fill the
-    // centre-right of the screen beside the slot tiles, and drift slowly.
-    if menu.as_ref().is_some_and(|m| m.showcase() == crate::menu::Showcase::Body) {
-        let sway = (real.elapsed_secs() * 0.4).sin() * 0.15;
-        let (fwd, right) = view.flat_basis();
-        let chest = body + Vec3::Y * 1.0;
-        let eye = chest + fwd * 2.4 - right * (0.55 + sway) + Vec3::Y * 0.2;
+    // Wardrobe: stand in the dressing room beside the mannequin, drifting slowly.
+    let dressing = menu.as_ref().is_some_and(|m| m.showcase() == crate::menu::Showcase::Body);
+    if dressing {
+        use crate::dressing::{EYE, LOOK, STUDIO};
+        let sway = Vec3::new((real.elapsed_secs() * 0.4).sin() * 0.12, 0.0, 0.0);
+        let eye = STUDIO + EYE + sway;
         tf.translation = eye;
-        tf.rotation = Transform::from_translation(eye).looking_to(-fwd, Vec3::Y).rotation;
+        tf.rotation = Transform::from_translation(eye).looking_at(STUDIO + LOOK + sway, Vec3::Y).rotation;
         cam.roll = 0.0;
     }
 
     if let Projection::Perspective(persp) = &mut *projection {
         let ads = aim.as_ref().map_or(0.0, |a| a.level);
-        persp.fov = tuning.fov_degrees.to_radians() * (1.0 - ads * (1.0 - tuning.ads_fov));
+        persp.fov = if dressing { crate::dressing::FOV } else { tuning.fov_degrees.to_radians() * (1.0 - ads * (1.0 - tuning.ads_fov)) };
     }
 }

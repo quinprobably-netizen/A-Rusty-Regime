@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use bevy::asset::LoadState;
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::gltf::GltfMaterialName;
 use bevy::prelude::*;
@@ -297,10 +298,16 @@ pub struct Model {
 }
 
 /// glTF handles for every character and held weapon; absent in headless tests.
+///
+/// Characters load one at a time (`stream`): each has three textures, which Bevy's glTF loader
+/// decodes in a task scope that runs other pending loads on the same thread, so twelve at once
+/// nest twelve deep and overflow the IO thread's stack.
 #[derive(Resource)]
 pub struct CharacterAssets {
     pub models: HashMap<&'static str, Model>,
     weapons: HashMap<WeaponKind, Handle<WorldAsset>>,
+    /// Characters not started yet, next first.
+    queue: Vec<&'static str>,
 }
 
 /// A character model wearing the outfit called `outfit` (or, for a soldier, one picked for its team),
@@ -386,24 +393,37 @@ impl Plugin for CharacterPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(Characters::load())
             .add_systems(PreStartup, load)
-            .add_systems(Update, (reload.run_if(resource_exists::<ButtonInput<KeyCode>>), dress, hold, animate).chain())
+            .add_systems(Update, (reload.run_if(resource_exists::<ButtonInput<KeyCode>>), stream, dress, hold, animate).chain())
             .add_observer(on_ready)
             .add_observer(on_held_ready);
     }
 }
 
-fn load(mut commands: Commands, server: Res<AssetServer>, graphs: Option<ResMut<Assets<AnimationGraph>>>) {
+fn load(mut commands: Commands, server: Res<AssetServer>, graphs: Option<Res<Assets<AnimationGraph>>>) {
     // No render assets in headless tests: no models.
-    let Some(mut graphs) = graphs else { return };
-    let mut models = HashMap::new();
-    for id in CHARACTERS {
-        let path = model_path(id);
-        let clips = Pose::ALL.map(|p| server.load(GltfAssetLabel::Animation(p.index()).from_asset(path.clone())));
-        let (graph, nodes) = AnimationGraph::from_clips(clips);
-        models.insert(id, Model { scene: server.load(GltfAssetLabel::Scene(0).from_asset(path)), graph: graphs.add(graph), nodes: nodes.try_into().expect("one node per pose") });
+    if graphs.is_none() {
+        return;
     }
     let weapons = WEAPONS.iter().map(|k| (*k, server.load(GltfAssetLabel::Scene(0).from_asset(format!("models/weapons/{}.glb", k.id()))))).collect();
-    commands.insert_resource(CharacterAssets { models, weapons });
+    commands.insert_resource(CharacterAssets { models: HashMap::new(), weapons, queue: CHARACTERS.to_vec() });
+}
+
+/// Start the next character's load once the last one is in, sooner for characters a rig is
+/// waiting on.
+fn stream(server: Res<AssetServer>, assets: Option<ResMut<CharacterAssets>>, mut graphs: Option<ResMut<Assets<AnimationGraph>>>, data: Res<Characters>, rigs: Query<&Rig>) {
+    let (Some(mut assets), Some(graphs)) = (assets, graphs.as_mut()) else { return };
+    let busy = assets.models.values().any(|m| !matches!(server.load_state(&m.scene), LoadState::Loaded | LoadState::Failed(_)));
+    if busy || assets.queue.is_empty() {
+        return;
+    }
+    let wanted = |id: &&str| rigs.iter().any(|r| r.team.is_none() && data.outfit(&r.outfit).is_some_and(|o| o.character == *id));
+    let at = assets.queue.iter().position(wanted).unwrap_or(0);
+    let id = assets.queue.remove(at);
+    let path = model_path(id);
+    let clips = Pose::ALL.map(|p| server.load(GltfAssetLabel::Animation(p.index()).from_asset(path.clone())));
+    let (graph, nodes) = AnimationGraph::from_clips(clips);
+    let model = Model { scene: server.load(GltfAssetLabel::Scene(0).from_asset(path)), graph: graphs.add(graph), nodes: nodes.try_into().expect("one node per pose") };
+    assets.models.insert(id, model);
 }
 
 fn reload(keys: Res<ButtonInput<KeyCode>>, mut data: ResMut<Characters>, mut rigs: Query<&mut Rig>) {
@@ -482,8 +502,11 @@ fn dress(
         }
         if rig.character.as_deref() != Some(outfit.character.as_str()) {
             let Some(model) = assets.models.get(outfit.character.as_str()) else {
-                warn!("no model for character {}", outfit.character);
-                rig.dressed = true;
+                // Still queued: try again next frame.
+                if !assets.queue.contains(&outfit.character.as_str()) {
+                    warn!("no model for character {}", outfit.character);
+                    rig.dressed = true;
+                }
                 continue;
             };
             if let Some(old) = rig.model.take() {

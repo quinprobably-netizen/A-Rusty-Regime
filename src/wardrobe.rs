@@ -8,6 +8,7 @@ use crate::abilities::Class;
 use crate::body::Body;
 use crate::character::{ArmsOnly, CHARACTERS, Characters, OutfitDef, Rig};
 use crate::controller::Player;
+use crate::dressing::Mannequin;
 use crate::input::PlayerInput;
 use crate::loot::{Save, SaveFile};
 use crate::vehicle::{Driving, VehicleSet};
@@ -143,8 +144,9 @@ fn edit(keys: Res<ButtonInput<KeyCode>>, characters: Res<Characters>, class: Res
     }
 }
 
-/// Write the custom outfit into `Characters` and put it on the player's body and first-person arms.
-fn apply(mut characters: ResMut<Characters>, mut wardrobe: ResMut<Wardrobe>, mut body: Query<&mut Rig, Or<(With<Body>, With<ArmsOnly>)>>) {
+/// Write the custom outfit into `Characters` and put it on the player's body, first-person arms and
+/// the dressing room's mannequin.
+fn apply(mut characters: ResMut<Characters>, mut wardrobe: ResMut<Wardrobe>, mut body: Query<&mut Rig, Or<(With<Body>, With<ArmsOnly>, With<Mannequin>)>>) {
     // F5 reloads `Characters` without the custom entry: put it back.
     let missing = wardrobe.outfit.is_some() && !characters.custom.contains_key(CUSTOM);
     if wardrobe.applied && !missing {
