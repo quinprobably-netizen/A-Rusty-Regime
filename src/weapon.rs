@@ -1,5 +1,6 @@
-//! Weapons: a rocket launcher (slow projectile, splash knockback for rocket
-//! jumps) and three hitscan guns. Hits push props and damage targets.
+//! Weapons: a rocket launcher (slow projectile, splash knockback for rocket jumps), six hitscan
+//! guns, a bouncing grenade launcher, a harpoon that yanks you or what it hits, and a power fist.
+//! Everything but the fist has a magazine; R reloads and an empty weapon reloads itself.
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -15,12 +16,14 @@ impl Plugin for WeaponPlugin {
         app.add_message::<Rumble>()
             .add_message::<Damage>()
             .add_message::<WeaponFired>()
+            .add_message::<Detonate>()
+            .init_resource::<Muzzle>()
             .init_resource::<Arsenal>()
             .init_resource::<crate::gunsmith::Loadout>()
             .add_systems(Startup, load_assets)
             .init_resource::<Recoil>()
             .init_resource::<Aim>()
-            .add_systems(FixedUpdate, (switch_weapon, fire, fly_rockets, fly_bullets).chain().before(ControllerSet))
+            .add_systems(FixedUpdate, (switch_weapon, fire, fly_rockets, fly_grenades, fly_spears, detonate, fly_bullets).chain().before(ControllerSet))
             .add_systems(Update, (fade_explosions, fade_tracers, recoil, aim));
     }
 }
@@ -31,22 +34,90 @@ pub enum WeaponKind {
     Rifle,
     Shotgun,
     Pistol,
+    Smg,
+    Dmr,
+    Revolver,
+    Grenade,
+    Harpoon,
+    Fist,
 }
 
-pub const WEAPONS: [WeaponKind; 4] = [WeaponKind::RocketLauncher, WeaponKind::Rifle, WeaponKind::Shotgun, WeaponKind::Pistol];
+/// Number keys 1-9 then 0. The first four keep their old slots so saved loadouts stay valid.
+pub const WEAPONS: [WeaponKind; 10] = [
+    WeaponKind::RocketLauncher,
+    WeaponKind::Rifle,
+    WeaponKind::Shotgun,
+    WeaponKind::Pistol,
+    WeaponKind::Smg,
+    WeaponKind::Dmr,
+    WeaponKind::Revolver,
+    WeaponKind::Grenade,
+    WeaponKind::Harpoon,
+    WeaponKind::Fist,
+];
 
 impl WeaponKind {
     pub fn name(self) -> &'static str {
         match self {
             WeaponKind::RocketLauncher => "ROCKET LAUNCHER",
-            WeaponKind::Rifle => "RIFLE",
-            WeaponKind::Shotgun => "SHOTGUN",
-            WeaponKind::Pistol => "PISTOL",
+            WeaponKind::Rifle => "MA-14 RIFLE",
+            WeaponKind::Shotgun => "BREACHER",
+            WeaponKind::Pistol => "SMITE",
+            WeaponKind::Smg => "STINGER",
+            WeaponKind::Dmr => "LONGSHOT",
+            WeaponKind::Revolver => "WARDEN",
+            WeaponKind::Grenade => "THUMPER",
+            WeaponKind::Harpoon => "HARPOON",
+            WeaponKind::Fist => "POWER FIST",
         }
     }
-    /// The gun's tuning with the gunsmith's parts fitted; `None` for the rocket launcher.
+    /// The model's file name in `assets/models/weapons/`.
+    pub fn id(self) -> &'static str {
+        match self {
+            WeaponKind::RocketLauncher => "rocket",
+            WeaponKind::Rifle => "rifle",
+            WeaponKind::Shotgun => "shotgun",
+            WeaponKind::Pistol => "pistol",
+            WeaponKind::Smg => "smg",
+            WeaponKind::Dmr => "dmr",
+            WeaponKind::Revolver => "revolver",
+            WeaponKind::Grenade => "grenade",
+            WeaponKind::Harpoon => "harpoon",
+            WeaponKind::Fist => "fist",
+        }
+    }
+    /// The gun's tuning with the gunsmith's parts fitted; `None` for everything that isn't a hitscan gun.
     fn gun(self, t: &Tuning, loadout: &crate::gunsmith::Loadout) -> Option<Gun> {
         t.gun(self).map(|g| loadout.gun(self, g))
+    }
+    /// Rounds per magazine; 0 for the fist, which never runs dry.
+    pub fn mag(self, t: &Tuning) -> u32 {
+        match self {
+            WeaponKind::RocketLauncher => t.rocket_mag,
+            WeaponKind::Grenade => t.grenade.mag,
+            WeaponKind::Harpoon => t.harpoon.mag,
+            WeaponKind::Fist => 0,
+            _ => t.gun(self).map_or(0, |g| g.mag),
+        }
+    }
+    pub fn reload_time(self, t: &Tuning) -> f32 {
+        match self {
+            WeaponKind::RocketLauncher => t.rocket_reload,
+            WeaponKind::Grenade => t.grenade.reload,
+            WeaponKind::Harpoon => t.harpoon.reload,
+            WeaponKind::Fist => 0.0,
+            _ => t.gun(self).map_or(0.0, |g| g.reload),
+        }
+    }
+    /// Seconds between shots, for pacing the fire animation.
+    pub fn cooldown(self, t: &Tuning, loadout: &crate::gunsmith::Loadout) -> f32 {
+        match self {
+            WeaponKind::RocketLauncher => t.rocket_cooldown,
+            WeaponKind::Grenade => t.grenade.cooldown,
+            WeaponKind::Harpoon => t.harpoon.cooldown,
+            WeaponKind::Fist => t.fist.cooldown,
+            _ => self.gun(t, loadout).map_or(0.1, |g| g.cooldown),
+        }
     }
 }
 
@@ -61,11 +132,15 @@ pub struct Arsenal {
     /// Counts down after a swap.
     pub switch_time: f32,
     pub shots: u32,
+    /// Rounds fired from each weapon's magazine since its last reload.
+    pub spent: [u32; WEAPONS.len()],
+    /// Seconds left on the reload in progress, 0 when not reloading.
+    pub reload: f32,
 }
 
 impl Default for Arsenal {
     fn default() -> Self {
-        Self { current: 0, last: 1, cooldown: 0.0, switch_time: 0.0, shots: 0 }
+        Self { current: 0, last: 1, cooldown: 0.0, switch_time: 0.0, shots: 0, spent: [0; WEAPONS.len()], reload: 0.0 }
     }
 }
 
@@ -73,11 +148,17 @@ impl Arsenal {
     pub fn kind(&self) -> WeaponKind {
         WEAPONS[self.current]
     }
+    /// Rounds left and magazine size for the current weapon, or `None` for the fist.
+    pub fn rounds(&self, t: &Tuning) -> Option<(u32, u32)> {
+        let mag = self.kind().mag(t);
+        (mag > 0).then(|| (mag.saturating_sub(self.spent[self.current]), mag))
+    }
     pub fn select(&mut self, slot: usize) {
         if slot < WEAPONS.len() && slot != self.current {
             self.last = self.current;
             self.current = slot;
             self.switch_time = SWITCH_TIME;
+            self.reload = 0.0;
         }
     }
 }
@@ -94,6 +175,25 @@ pub struct Damage {
 #[derive(Message)]
 pub struct WeaponFired {
     pub kick: f32,
+}
+
+/// An explosion at `center`: rockets and grenades both end in one.
+#[derive(Message)]
+pub struct Detonate {
+    pub center: Vec3,
+    pub radius: f32,
+    pub damage: f32,
+    pub self_knockback: f32,
+}
+
+/// Where shots leave the visible weapon, in the camera's frame; the viewmodel keeps it on the muzzle.
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct Muzzle(pub Vec3);
+
+impl Default for Muzzle {
+    fn default() -> Self {
+        Self(Vec3::new(0.2, -0.15, -0.6))
+    }
 }
 
 /// A bullet in flight: it drops under 9.81 m/s², slows by `drag` per metre, and does
@@ -148,6 +248,10 @@ pub fn spawn_bullet(commands: &mut Commands, fx: Option<&FxAssets>, from: Vec3, 
 pub struct FxAssets {
     rocket_mesh: Handle<Mesh>,
     rocket_mat: Handle<StandardMaterial>,
+    grenade_mesh: Handle<Mesh>,
+    grenade_mat: Handle<StandardMaterial>,
+    spear_mesh: Handle<Mesh>,
+    spear_mat: Handle<StandardMaterial>,
     blast_mesh: Handle<Mesh>,
     tracer_mesh: Handle<Mesh>,
     tracer_mat: Handle<StandardMaterial>,
@@ -155,6 +259,18 @@ pub struct FxAssets {
 
 #[derive(Component)]
 struct Rocket {
+    velocity: Vec3,
+    life: f32,
+}
+
+#[derive(Component)]
+struct GrenadeShell {
+    velocity: Vec3,
+    fuse: f32,
+}
+
+#[derive(Component)]
+struct Spear {
     velocity: Vec3,
     life: f32,
 }
@@ -189,6 +305,10 @@ fn load_assets(
             emissive: LinearRgba::rgb(8.0, 3.0, 0.5),
             ..default()
         }),
+        grenade_mesh: meshes.add(Sphere::new(0.06)),
+        grenade_mat: materials.add(StandardMaterial { base_color: Color::srgb(0.3, 0.33, 0.2), emissive: LinearRgba::rgb(1.5, 1.0, 0.1), ..default() }),
+        spear_mesh: meshes.add(Cuboid::new(0.012, 0.012, 0.6)),
+        spear_mat: materials.add(StandardMaterial { base_color: Color::srgb(0.55, 0.56, 0.58), metallic: 1.0, perceptual_roughness: 0.3, ..default() }),
         blast_mesh: meshes.add(Sphere::new(1.0)),
         tracer_mesh: meshes.add(Cuboid::from_length(1.0)),
         tracer_mat: materials.add(StandardMaterial {
@@ -255,53 +375,126 @@ fn fire(
     mut input: ResMut<PlayerInput>,
     view: Res<ViewAngles>,
     fx: Option<Res<FxAssets>>,
+    muzzle_at: Res<Muzzle>,
+    spatial: SpatialQuery,
     mut arsenal: ResMut<Arsenal>,
     loadout: Res<crate::gunsmith::Loadout>,
     mut recoil: ResMut<Recoil>,
     aim_level: Res<Aim>,
-    player: Single<(Entity, &Player, &Transform)>,
-    mut fired: MessageWriter<WeaponFired>,
-    mut rumble: MessageWriter<Rumble>,
+    mut player: Single<(Entity, &mut Player, &Transform)>,
+    mut bodies: Query<(&RigidBody, &mut LinearVelocity, &ComputedMass), Without<Player>>,
+    writers: (MessageWriter<Damage>, MessageWriter<WeaponFired>, MessageWriter<Rumble>),
     mut seed: Local<u64>,
 ) {
+    let (mut damage, mut fired, mut rumble) = writers;
     let t = &*tuning;
     let dt = time.delta_secs();
     arsenal.cooldown -= dt;
     recoil.heat = (recoil.heat - dt * 0.6).max(0.0);
     let fire_pressed = std::mem::take(&mut input.fire_pressed);
+    let reload_pressed = std::mem::take(&mut input.reload_pressed);
     if arsenal.switch_time > 0.0 {
         arsenal.switch_time -= dt;
         return;
     }
     let kind = arsenal.kind();
-    let automatic = kind.gun(t, &loadout).is_none_or(|g| g.automatic);
+    let slot = arsenal.current;
+    if arsenal.reload > 0.0 {
+        arsenal.reload -= dt;
+        if arsenal.reload <= 0.0 {
+            arsenal.reload = 0.0;
+            arsenal.spent[slot] = 0;
+        }
+        return;
+    }
+    // Rockets and the fist repeat while held; the grenade launcher and harpoon fire per press.
+    let automatic = match kind {
+        WeaponKind::Grenade | WeaponKind::Harpoon => false,
+        _ => kind.gun(t, &loadout).is_none_or(|g| g.automatic),
+    };
     let wants_fire = if automatic { input.fire_held } else { fire_pressed };
+    // Reload on R, on an empty trigger pull, or by itself once the last round is gone.
+    if let Some((left, mag)) = arsenal.rounds(t)
+        && arsenal.cooldown <= 0.0
+        && (left == 0 || (reload_pressed && left < mag))
+    {
+        arsenal.reload = kind.reload_time(t);
+        return;
+    }
     if !wants_fire || arsenal.cooldown > 0.0 {
         return;
     }
     arsenal.shots += 1;
+    if kind.mag(t) > 0 {
+        arsenal.spent[slot] += 1;
+    }
 
-    let (player_entity, p, tf) = *player;
+    let (player_entity, p, tf) = &mut *player;
+    let player_entity = *player_entity;
     let eye = tf.translation + Vec3::Y * p.eye_offset(t);
     let aim = view.rotation();
     let forward = aim * Vec3::NEG_Z;
-    // Where tracers start: roughly the viewmodel's muzzle.
-    let muzzle = eye + aim * Vec3::new(0.2, -0.15, -0.6);
+    // Where tracers start: the viewmodel's muzzle.
+    let muzzle = eye + aim * muzzle_at.0;
+    let filter = SpatialQueryFilter::from_excluded_entities([player_entity]);
 
-    let Some(gun) = kind.gun(t, &loadout) else {
-        arsenal.cooldown = t.rocket_cooldown;
-        let start = eye + forward * 0.3;
-        let mut e = commands.spawn((
-            Rocket { velocity: forward * t.rocket_speed, life: 5.0 },
-            Transform::from_translation(start),
-        ));
-        if let Some(fx) = &fx {
-            e.insert((Mesh3d(fx.rocket_mesh.clone()), MeshMaterial3d(fx.rocket_mat.clone())));
+    match kind {
+        WeaponKind::RocketLauncher => {
+            arsenal.cooldown = t.rocket_cooldown;
+            let mut e = commands.spawn((Rocket { velocity: forward * t.rocket_speed, life: 5.0 }, Transform::from_translation(eye + forward * 0.3)));
+            if let Some(fx) = &fx {
+                e.insert((Mesh3d(fx.rocket_mesh.clone()), MeshMaterial3d(fx.rocket_mat.clone())));
+            }
+            fired.write(WeaponFired { kick: 1.5 });
+            rumble.write(Rumble { strength: 0.4, seconds: 0.12 });
+            return;
         }
-        fired.write(WeaponFired { kick: 1.5 });
-        rumble.write(Rumble { strength: 0.4, seconds: 0.12 });
-        return;
-    };
+        WeaponKind::Grenade => {
+            let g = &t.grenade;
+            arsenal.cooldown = g.cooldown;
+            let velocity = forward * g.speed + Vec3::Y * g.lift + p.velocity * 0.5;
+            let mut e = commands.spawn((GrenadeShell { velocity, fuse: g.fuse }, Transform::from_translation(muzzle)));
+            if let Some(fx) = &fx {
+                e.insert((Mesh3d(fx.grenade_mesh.clone()), MeshMaterial3d(fx.grenade_mat.clone())));
+            }
+            fired.write(WeaponFired { kick: 2.0 });
+            rumble.write(Rumble { strength: 0.45, seconds: 0.14 });
+            return;
+        }
+        WeaponKind::Harpoon => {
+            let h = &t.harpoon;
+            arsenal.cooldown = h.cooldown;
+            let mut e = commands.spawn((Spear { velocity: forward * h.speed, life: h.life }, Transform::from_translation(muzzle).looking_to(forward, Vec3::Y)));
+            if let Some(fx) = &fx {
+                e.insert((Mesh3d(fx.spear_mesh.clone()), MeshMaterial3d(fx.spear_mat.clone())));
+            }
+            fired.write(WeaponFired { kick: 1.2 });
+            rumble.write(Rumble { strength: 0.3, seconds: 0.1 });
+            return;
+        }
+        WeaponKind::Fist => {
+            let f = &t.fist;
+            arsenal.cooldown = f.cooldown;
+            fired.write(WeaponFired { kick: 0.8 });
+            let Some(hit) = spatial.cast_ray(eye, Dir3::new(forward).unwrap(), f.range, true, &filter) else { return };
+            damage.write(Damage { entity: hit.entity, amount: f.damage, impulse: forward * f.knockback + Vec3::Y * 2.0 });
+            if let Ok((body, mut lv, mass)) = bodies.get_mut(hit.entity)
+                && *body == RigidBody::Dynamic
+            {
+                lv.0 += (forward * f.knockback + Vec3::Y * 2.0) * (t.prop_ref_mass * mass.inverse()).min(1.0);
+            }
+            // Punching anything throws you back off it: off a wall, off the floor, off a soldier.
+            p.velocity += -forward * f.launch;
+            p.knockback_lock = 0.1;
+            if p.state != MoveState::Mantle {
+                p.state = MoveState::Air;
+            }
+            rumble.write(Rumble { strength: 0.7, seconds: 0.15 });
+            return;
+        }
+        _ => {}
+    }
+    let Some(gun) = kind.gun(t, &loadout) else { return };
 
     arsenal.cooldown = gun.cooldown;
     // Spread: the gun's, wider with heat and on the move, tighter crouched or aiming.
@@ -314,7 +507,11 @@ fn fire(
     recoil.heat = (recoil.heat + 0.12).min(1.0);
     recoil.since_shot = 0.0;
     let side = ((arsenal.shots as f32) * 0.9).sin();
-    let ads = 1.0 - aim_level.level * 0.5;
+    let mut ads = 1.0 - aim_level.level * 0.5;
+    // The marksman rifle's folded bipod: braced while crouched, it kicks far less.
+    if kind == WeaponKind::Dmr && p.crouched {
+        ads *= 0.5;
+    }
     recoil.pending += Vec2::new(gun.recoil_side.to_radians() * side, gun.recoil_up.to_radians()) * ads;
     for _ in 0..gun.pellets.max(1) {
         // Uniform point in a disc, as yaw/pitch offsets.
@@ -327,31 +524,23 @@ fn fire(
     rumble.write(Rumble { strength: (0.15 * gun.kick).min(0.6), seconds: 0.08 });
 }
 
-#[allow(clippy::too_many_arguments)]
 fn fly_rockets(
     mut commands: Commands,
     time: Res<Time>,
     tuning: Res<Tuning>,
     spatial: SpatialQuery,
-    fx: Option<Res<FxAssets>>,
-    mut materials: Option<ResMut<Assets<StandardMaterial>>>,
-    mut rockets: Query<(Entity, &mut Rocket, &mut Transform), Without<Player>>,
-    mut player: Single<(Entity, &mut Player, &Transform)>,
-    mut bodies: Query<(&RigidBody, &Position, &mut LinearVelocity, &ComputedMass), Without<Player>>,
-    mut damage: MessageWriter<Damage>,
-    mut rumble: MessageWriter<Rumble>,
+    mut rockets: Query<(Entity, &mut Rocket, &mut Transform)>,
+    player: Single<Entity, With<Player>>,
+    mut detonate: MessageWriter<Detonate>,
 ) {
     let t = &*tuning;
     let dt = time.delta_secs();
-    let (player_entity, p, player_tf) = &mut *player;
-    let filter = SpatialQueryFilter::from_excluded_entities([*player_entity]);
-
+    let filter = SpatialQueryFilter::from_excluded_entities([*player]);
     for (entity, mut rocket, mut tf) in &mut rockets {
         rocket.life -= dt;
         let step = rocket.velocity * dt;
         let Ok(dir) = Dir3::new(step) else { continue };
-        let hit = spatial.cast_ray(tf.translation, dir, step.length(), true, &filter);
-        let Some(hit) = hit else {
+        let Some(hit) = spatial.cast_ray(tf.translation, dir, step.length(), true, &filter) else {
             tf.translation += step;
             if rocket.life <= 0.0 {
                 commands.entity(entity).despawn();
@@ -360,28 +549,142 @@ fn fly_rockets(
         };
         commands.entity(entity).despawn();
         let center = tf.translation + dir * hit.distance + hit.normal * 0.05;
+        detonate.write(Detonate { center, radius: t.blast_radius, damage: t.rocket_damage, self_knockback: t.self_knockback });
+    }
+}
 
+/// Frags lob under gravity, bounce off the world, and burst on a fuse or on hitting a target.
+fn fly_grenades(
+    mut commands: Commands,
+    time: Res<Time>,
+    tuning: Res<Tuning>,
+    spatial: SpatialQuery,
+    mut shells: Query<(Entity, &mut GrenadeShell, &mut Transform)>,
+    player: Single<Entity, With<Player>>,
+    targets: Query<(), With<crate::targets::Target>>,
+    mut detonate: MessageWriter<Detonate>,
+) {
+    let g = &tuning.grenade;
+    let dt = time.delta_secs();
+    let filter = SpatialQueryFilter::from_excluded_entities([*player]);
+    for (entity, mut shell, mut tf) in &mut shells {
+        shell.fuse -= dt;
+        shell.velocity.y -= g.gravity * dt;
+        let step = shell.velocity * dt;
+        let mut burst = shell.fuse <= 0.0;
+        if let Ok(dir) = Dir3::new(step)
+            && let Some(hit) = spatial.cast_ray(tf.translation, dir, step.length(), true, &filter)
+        {
+            tf.translation += dir * hit.distance + hit.normal * 0.04;
+            if targets.contains(hit.entity) {
+                burst = true;
+            } else {
+                let v = shell.velocity;
+                shell.velocity = (v - 2.0 * v.dot(hit.normal) * hit.normal) * g.bounce;
+            }
+        } else {
+            tf.translation += step;
+        }
+        if burst {
+            commands.entity(entity).despawn();
+            detonate.write(Detonate { center: tf.translation, radius: g.radius, damage: g.damage, self_knockback: g.self_knockback });
+        }
+    }
+}
+
+/// The harpoon's spear: stuck in the world it yanks you to it; in a target or a prop it yanks that to you.
+#[allow(clippy::too_many_arguments)]
+fn fly_spears(
+    mut commands: Commands,
+    time: Res<Time>,
+    tuning: Res<Tuning>,
+    spatial: SpatialQuery,
+    mut spears: Query<(Entity, &mut Spear, &mut Transform), Without<Player>>,
+    mut player: Single<(Entity, &mut Player, &Transform)>,
+    targets: Query<(), With<crate::targets::Target>>,
+    mut bodies: Query<(&RigidBody, &mut LinearVelocity, &ComputedMass), Without<Player>>,
+    mut damage: MessageWriter<Damage>,
+    mut rumble: MessageWriter<Rumble>,
+) {
+    let h = &tuning.harpoon;
+    let dt = time.delta_secs();
+    let (player_entity, p, player_tf) = &mut *player;
+    let filter = SpatialQueryFilter::from_excluded_entities([*player_entity]);
+    for (entity, mut spear, mut tf) in &mut spears {
+        spear.life -= dt;
+        spear.velocity.y -= h.gravity * dt;
+        let step = spear.velocity * dt;
+        let Ok(dir) = Dir3::new(step) else { continue };
+        let Some(hit) = spatial.cast_ray(tf.translation, dir, step.length(), true, &filter) else {
+            tf.translation += step;
+            tf.look_to(dir, Vec3::Y);
+            if spear.life <= 0.0 {
+                commands.entity(entity).despawn();
+            }
+            continue;
+        };
+        commands.entity(entity).despawn();
+        let point = tf.translation + dir * hit.distance;
+        let to_player = (player_tf.translation - point).normalize_or(Vec3::Y);
+        let dynamic = bodies.get(hit.entity).is_ok_and(|(b, _, _)| *b == RigidBody::Dynamic);
+        if targets.contains(hit.entity) || dynamic {
+            damage.write(Damage { entity: hit.entity, amount: h.damage, impulse: to_player * h.pull_target + Vec3::Y * 2.0 });
+            if let Ok((body, mut lv, mass)) = bodies.get_mut(hit.entity)
+                && *body == RigidBody::Dynamic
+            {
+                lv.0 += (to_player * h.pull_target + Vec3::Y * 2.0) * (tuning.prop_ref_mass * mass.inverse()).min(1.0);
+            }
+        } else {
+            p.velocity = -to_player * h.pull_player + Vec3::Y * 2.5;
+            p.knockback_lock = 0.15;
+            if p.state != MoveState::Mantle {
+                p.state = MoveState::Air;
+            }
+        }
+        rumble.write(Rumble { strength: 0.35, seconds: 0.12 });
+    }
+}
+
+/// Every explosion: TF2-style self knockback, splash damage and a push on props.
+#[allow(clippy::too_many_arguments)]
+fn detonate(
+    mut commands: Commands,
+    tuning: Res<Tuning>,
+    spatial: SpatialQuery,
+    fx: Option<Res<FxAssets>>,
+    mut materials: Option<ResMut<Assets<StandardMaterial>>>,
+    mut blasts: MessageReader<Detonate>,
+    mut player: Single<(Entity, &mut Player, &Transform)>,
+    mut bodies: Query<(&RigidBody, &Position, &mut LinearVelocity, &ComputedMass), Without<Player>>,
+    mut damage: MessageWriter<Damage>,
+    mut rumble: MessageWriter<Rumble>,
+) {
+    let t = &*tuning;
+    let (player_entity, p, player_tf) = &mut *player;
+    let filter = SpatialQueryFilter::from_excluded_entities([*player_entity]);
+    for b in blasts.read() {
+        let center = b.center;
         // Player knockback, TF2-style linear falloff to 50% at the edge.
         let to_player = player_tf.translation - center;
         let d = to_player.length();
-        if d < t.blast_radius {
-            let falloff = 1.0 - 0.5 * d / t.blast_radius;
-            p.velocity += to_player.normalize_or(Vec3::Y) * t.self_knockback * falloff;
+        if d < b.radius {
+            let falloff = 1.0 - 0.5 * d / b.radius;
+            p.velocity += to_player.normalize_or(Vec3::Y) * b.self_knockback * falloff;
             p.knockback_lock = 0.1;
             if p.state != MoveState::Mantle {
                 p.state = MoveState::Air;
             }
         }
-        rumble.write(Rumble { strength: (1.0 - d / (t.blast_radius * 3.0)).max(0.15), seconds: 0.2 });
+        rumble.write(Rumble { strength: (1.0 - d / (b.radius * 3.0)).max(0.15), seconds: 0.2 });
 
         // Props and targets
-        let blast = Collider::sphere(t.blast_radius);
+        let blast = Collider::sphere(b.radius);
         for e in spatial.shape_intersections(&blast, center, Quat::IDENTITY, &filter) {
             let Ok((body, pos, mut lv, mass)) = bodies.get_mut(e) else { continue };
             let offset = pos.0 - center;
-            let falloff = 1.0 - 0.5 * (offset.length() / t.blast_radius).min(1.0);
+            let falloff = 1.0 - 0.5 * (offset.length() / b.radius).min(1.0);
             let push = (offset.normalize_or(Vec3::Y) + Vec3::Y * 0.3) * t.prop_knockback * falloff;
-            damage.write(Damage { entity: e, amount: t.rocket_damage * falloff, impulse: push });
+            damage.write(Damage { entity: e, amount: b.damage * falloff, impulse: push });
             if *body != RigidBody::Dynamic {
                 continue;
             }
@@ -390,7 +693,7 @@ fn fly_rockets(
         }
 
         if let (Some(fx), Some(materials)) = (&fx, materials.as_mut()) {
-            spawn_blast(&mut commands, fx, materials, center, t.blast_radius);
+            spawn_blast(&mut commands, fx, materials, center, b.radius);
         }
     }
 }
@@ -528,9 +831,9 @@ fn recoil(time: Res<Time>, mut recoil: ResMut<Recoil>, mut view: ResMut<ViewAngl
     }
 }
 
-/// Aim down sights settles in `ads_time`; driving or the rocket launcher can't aim.
+/// Aim down sights settles in `ads_time`; only the hitscan guns aim, and not while driving.
 fn aim(time: Res<Time>, tuning: Res<Tuning>, input: Res<PlayerInput>, arsenal: Res<Arsenal>, player: Single<Has<crate::vehicle::Driving>, With<Player>>, mut aim: ResMut<Aim>) {
-    let want = input.aim_held && !*player && arsenal.kind() != WeaponKind::RocketLauncher;
+    let want = input.aim_held && !*player && tuning.gun(arsenal.kind()).is_some();
     let target = if want { 1.0 } else { 0.0 };
     let k = (time.delta_secs() / tuning.ads_time.max(0.01)).min(1.0);
     aim.level += (target - aim.level) * k;

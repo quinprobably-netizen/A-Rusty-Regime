@@ -22,6 +22,10 @@ pub struct PlayerInput {
     /// Latched like `jump_pressed`; semi-auto guns fire once per press.
     pub fire_pressed: bool,
     pub reset_pressed: bool,
+    /// Reload (R / R3), latched.
+    pub reload_pressed: bool,
+    /// Turn the weapon over to look at it (V), latched.
+    pub inspect_pressed: bool,
     /// Weapon slot (0-based) picked with the number keys this frame.
     pub weapon_select: Option<usize>,
     /// +1 / -1 steps from the mouse wheel, bumpers or d-pad, accumulated until a tick reads them.
@@ -116,9 +120,22 @@ fn gather(
     let mut fire_held = false;
     let mut aim_held = false;
     let mut fire_pressed = false;
-    let mut reset = keys.just_pressed(KeyCode::KeyR);
+    let mut reset = keys.just_pressed(KeyCode::Backspace);
+    let mut reload = keys.just_pressed(KeyCode::KeyR);
     let mut weapon_select = None;
-    for (i, key) in [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4].into_iter().enumerate() {
+    let digits = [
+        KeyCode::Digit1,
+        KeyCode::Digit2,
+        KeyCode::Digit3,
+        KeyCode::Digit4,
+        KeyCode::Digit5,
+        KeyCode::Digit6,
+        KeyCode::Digit7,
+        KeyCode::Digit8,
+        KeyCode::Digit9,
+        KeyCode::Digit0,
+    ];
+    for (i, key) in digits.into_iter().enumerate() {
         if keys.just_pressed(key) {
             weapon_select = Some(i);
         }
@@ -180,6 +197,7 @@ fn gather(
             }
         }
         reset |= pad.just_pressed(GamepadButton::Select);
+        reload |= pad.just_pressed(GamepadButton::RightThumb);
     }
 
     // Aiming down sights narrows the view, so the mouse turns it less.
@@ -197,6 +215,8 @@ fn gather(
     input.aim_held = aim_held;
     input.fire_pressed |= fire_pressed;
     input.reset_pressed |= reset;
+    input.reload_pressed |= reload;
+    input.inspect_pressed |= keys.just_pressed(KeyCode::KeyV);
     if weapon_select.is_some() {
         input.weapon_select = weapon_select;
     }
