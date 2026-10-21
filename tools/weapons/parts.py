@@ -64,7 +64,8 @@ def optic_scope(g, top, bone="root", length=0.17, mag=0.019):
     o = join(parts, "att.optic.scope")
     o.name = "att.optic.scope"
     r = mag - 0.002
-    lens_socket(g, "scope.eye", (x, y - length / 2 + 0.0015, zc), (r, r, r), bone)
+    # Just behind the eyebell's solid end, which would otherwise hide it.
+    lens_socket(g, "scope.eye", (x, y - length / 2 - 0.0008, zc), (r, r, r), bone)
     return g.add(o, bone)
 
 

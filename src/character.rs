@@ -380,8 +380,8 @@ impl Default for RigPose {
     }
 }
 
-/// The player's own rig: head, arms and held weapon render only into shadow maps (the first-person
-/// arms and viewmodel stand in for them).
+/// The player's own rig: it renders only into shadow maps (the first-person arms and viewmodel
+/// stand in for it).
 #[derive(Component)]
 pub struct FirstPerson;
 
@@ -545,7 +545,8 @@ fn dress(
             {
                 let shown = !arms_only || name.as_str() == "mesh.arms";
                 commands.entity(e).insert(if shown { Visibility::Inherited } else { Visibility::Hidden });
-                let hidden_in_fp = first_person && name.as_str() != "mesh.body";
+                // The player's own model only casts shadows: its shoulders and chest filled the view.
+                let hidden_in_fp = first_person;
                 for d in std::iter::once(e).chain(children.iter_descendants(e)) {
                     if hidden_in_fp {
                         commands.entity(d).insert(RenderLayers::layer(SHADOW_ONLY_LAYER));
