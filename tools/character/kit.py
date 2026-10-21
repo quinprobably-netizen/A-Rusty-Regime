@@ -92,7 +92,10 @@ BASE_BONES = {
 DEFORM = ["hips", "spine", "chest", "neck", "head"] + [b + s for b in ("shoulder.", "upper_arm.", "forearm.", "hand.", "upper_leg.", "lower_leg.", "foot.") for s in ("L", "R")]
 ARM_BONES = [b + side for b in ("upper_arm.", "forearm.", "hand.") for side in ("L", "R")]
 CLIP_NAMES = ["idle", "walk", "run", "sprint", "jump", "fall", "crouch", "slide", "wallrun_l", "wallrun_r", "mantle", "grapple"]
-ALL_BONE_NAMES = [n for n in BASE_BONES] + [n[:-2] + ".R" for n in BASE_BONES if n.endswith(".L")] + ["prop_hand.L", "prop_hand.R"]
+# Three bones per finger, root to tip, on both hands: `f_<finger>.<1-3>.<side>`, resting in a fist.
+FINGERS = ("thumb", "index", "middle", "ring", "pinky")
+FINGER_BONES = [f"f_{f}.{i}.{s}" for s in ("L", "R") for f in FINGERS for i in (1, 2, 3)]
+ALL_BONE_NAMES = [n for n in BASE_BONES] + [n[:-2] + ".R" for n in BASE_BONES if n.endswith(".L")] + ["prop_hand.L", "prop_hand.R"] + FINGER_BONES
 
 
 class Build:
@@ -163,7 +166,7 @@ def build_armature(build):
         b.head, b.tail = Vector(v[0]), Vector(v[1])
         if len(v) > 3:
             b.align_roll(Vector(v[3]))
-        b.use_deform = name in DEFORM
+        b.use_deform = name in DEFORM or name.startswith("f_")
     for name, v in build.all.items():
         if v[2]:
             eb[name].parent = eb[v[2]]
@@ -809,11 +812,15 @@ def join_skinned(objs, name):
 
 
 def dominant(obj):
-    names = {g.index: g.name for g in obj.vertex_groups}
+    """Each vertex's strongest bone, the fingers counting as their hand (body regions, covers and the
+    mesh split all go by hand)."""
+    names = {g.index: ("hand." + g.name[-1] if g.name.startswith("f_") else g.name) for g in obj.vertex_groups}
     out = []
     for v in obj.data.vertices:
-        best = max(v.groups, key=lambda g: g.weight, default=None)
-        out.append(names[best.group] if best else "hips")
+        w = {}
+        for g in v.groups:
+            w[names[g.group]] = w.get(names[g.group], 0.0) + g.weight
+        out.append(max(w, key=w.get) if w else "hips")
     return out
 
 

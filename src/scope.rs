@@ -9,6 +9,7 @@ use bevy::camera::visibility::VisibilitySystems;
 use bevy::camera::{Exposure, RenderTarget};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::gltf::GltfMaterialName;
+use bevy::light::SimulationLightSystems;
 use bevy::pbr::{AtmosphereSettings, DistanceFog};
 use bevy::prelude::*;
 use bevy::reflect::TypePath;
@@ -37,8 +38,15 @@ impl Plugin for ScopePlugin {
         app.init_resource::<Scoped>()
             .add_plugins(MaterialPlugin::<LensMaterial>::default())
             .add_systems(Startup, spawn)
-            .add_systems(Update, (scoped, fit_lenses, hide_modelled_dots))
-            .add_systems(PostUpdate, (follow, match_view).after(TransformSystems::Propagate).before(VisibilitySystems::UpdateFrusta));
+            .add_systems(Update, (scoped, activate).chain())
+            .add_systems(Update, (fit_lenses, hide_modelled_dots))
+            .add_systems(
+                PostUpdate,
+                (follow, match_view)
+                    .after(TransformSystems::Propagate)
+                    .before(VisibilitySystems::UpdateFrusta)
+                    .before(SimulationLightSystems::UpdateDirectionalLightCascades),
+            );
     }
 }
 
@@ -190,6 +198,27 @@ fn hide_modelled_dots(mut commands: Commands, added: Query<(Entity, &GltfMateria
     }
 }
 
+/// Turn the scope camera on while you look through a scope in play. Decided before `PostUpdate`, so
+/// the renderer's per-view work (shadow cascades, culling) sees it the same frame.
+#[allow(clippy::too_many_arguments)]
+fn activate(
+    scoped: Res<Scoped>,
+    arsenal: Res<Arsenal>,
+    aim: Res<Aim>,
+    menu: Option<Res<crate::menu::Menu>>,
+    driving: Query<(), (With<Player>, With<Driving>)>,
+    vm: Single<&ViewModel>,
+    models: Query<&WeaponModel>,
+    mut camera: Single<&mut Camera, With<ScopeCamera>>,
+) {
+    let in_game = menu.as_ref().is_none_or(|m| m.playing) && vm.presented() < 0.05 && driving.is_empty();
+    let eye = models.iter().find(|m| m.index == arsenal.current).and_then(|m| m.sights().0);
+    let active = scope_active(aim.level, scoped.0.is_some(), in_game) && eye.is_some();
+    if camera.is_active != active {
+        camera.is_active = active;
+    }
+}
+
 /// Put the scope camera at the current scope's eyepiece, looking down it, sized to its
 /// magnification; feed every lens its aim and eye offset. Runs after transforms propagate so it
 /// follows this frame's sway and recoil.
@@ -199,24 +228,17 @@ fn follow(
     scoped: Res<Scoped>,
     arsenal: Res<Arsenal>,
     aim: Res<Aim>,
-    menu: Option<Res<crate::menu::Menu>>,
-    driving: Query<(), (With<Player>, With<Driving>)>,
-    vm: Single<&ViewModel>,
     models: Query<&WeaponModel>,
     player_cam: Single<(&GlobalTransform, &Projection), (With<PlayerCamera>, Without<ScopeCamera>)>,
-    scope_cam: Single<(&mut Camera, &mut GlobalTransform, &mut Projection), With<ScopeCamera>>,
+    scope_cam: Single<(&Camera, &mut GlobalTransform, &mut Projection), With<ScopeCamera>>,
     lenses: Query<(&Lens, &ChildOf, &MeshMaterial3d<LensMaterial>)>,
     globals: Query<&GlobalTransform, (Without<ScopeCamera>, Without<PlayerCamera>)>,
     mut materials: ResMut<Assets<LensMaterial>>,
 ) {
     let (cam_g, cam_proj) = *player_cam;
-    let (mut camera, mut scope_g, mut scope_proj) = scope_cam.into_inner();
-    let in_game = menu.as_ref().is_none_or(|m| m.playing) && vm.presented() < 0.05 && driving.is_empty();
+    let (camera, mut scope_g, mut scope_proj) = scope_cam.into_inner();
+    let active = camera.is_active;
     let eye = models.iter().find(|m| m.index == arsenal.current).and_then(|m| m.sights().0).and_then(|e| globals.get(e).ok());
-    let active = scope_active(aim.level, scoped.0.is_some(), in_game) && eye.is_some();
-    if camera.is_active != active {
-        camera.is_active = active;
-    }
     if let (true, Some(eye), Some(mag)) = (active, eye, scoped.0) {
         let (scale, rot, at) = eye.to_scale_rotation_translation();
         *scope_g = GlobalTransform::from(Transform::from_translation(at).with_rotation(rot));

@@ -36,7 +36,7 @@ pub const PARTS: [[Part; 3]; 4] = [
     [
         part("IRON SIGHTS", "Stock sights", |_| {}),
         part("RED DOT", "Aimed spread -25%", |g| g.ads_spread *= 0.75),
-        part("3X SCOPE", "Aimed spread -55%, recoil +15%", |g| {
+        part("SCOPE", "Magnifies, aimed spread -55%, recoil +15%", |g| {
             g.ads_spread *= 0.45;
             g.recoil_up *= 1.15;
             g.recoil_side *= 1.15;
