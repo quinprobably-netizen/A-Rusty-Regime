@@ -15,9 +15,9 @@ use crate::menu::{Menu, Showcase};
 /// Where the room's floor centre sits, high above anything on the island.
 pub const STUDIO: Vec3 = Vec3::new(0.0, 2500.0, 0.0);
 /// The camera's spot in the room: left of the mannequin so it stands beside the menu panel.
-pub const EYE: Vec3 = Vec3::new(-0.95, 1.25, 3.7);
+pub const EYE: Vec3 = Vec3::new(-0.8, 1.35, 4.6);
 /// Where the camera looks: straight down the room, level.
-pub const LOOK: Vec3 = Vec3::new(-0.95, 1.05, 0.0);
+pub const LOOK: Vec3 = Vec3::new(-0.8, 1.0, 0.0);
 /// Vertical field of view in the room (radians): a portrait lens, not the game's wide one.
 pub const FOV: f32 = 0.66;
 const EV100: f32 = 9.0;
