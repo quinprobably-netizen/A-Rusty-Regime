@@ -3,6 +3,17 @@
 FPS movement prototype in Rust: Bevy 0.19 + Avian 0.7 physics. TF2-style
 movement and parkour, four weapons, a physics playground and a shooting range.
 
+## One-click update and play
+Set up once, then you never redownload the whole game:
+1. Install Rust from https://rustup.rs (on Windows, accept the Visual Studio Build Tools it asks for).
+2. Install Git (https://git-scm.com, Windows: use the defaults), then get the game once:
+   `git clone https://github.com/quinprobably-netizen/A-Rusty-Regime.git`
+   (or use GitHub Desktop's Clone button, but still install Git so the script can pull).
+3. Double-click `play.bat` on Windows, or run `./play.sh` on Linux.
+
+The script pulls only what changed, rebuilds only what changed, and starts the game.
+The first build takes a while; later ones are quick.
+
 ## Run
 ```
 cargo run --release
