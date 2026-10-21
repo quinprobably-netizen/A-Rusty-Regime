@@ -98,6 +98,7 @@ fn gather(
     mut input: ResMut<PlayerInput>,
     mut view: ResMut<ViewAngles>,
     aim: Option<Res<crate::weapon::Aim>>,
+    scoped: Option<Res<crate::scope::Scoped>>,
     screen: Option<Res<State<crate::menu::Screen>>>,
 ) {
     // A menu is up: nothing reaches the player, and a held key is not a latched press later.
@@ -200,9 +201,9 @@ fn gather(
         reload |= pad.just_pressed(GamepadButton::RightThumb);
     }
 
-    // Aiming down sights narrows the view, so the mouse turns it less.
+    // Aiming down sights narrows the view (or a scope magnifies it), so the mouse turns it less.
     if let Some(aim) = aim.as_ref() {
-        look *= 1.0 - aim.level * (1.0 - t.ads_fov);
+        look *= crate::scope::look_scale(aim.level, t.ads_fov, scoped.as_ref().and_then(|s| s.0));
     }
     view.yaw -= look.x;
     view.pitch = (view.pitch - look.y).clamp(-1.54, 1.54);

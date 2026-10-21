@@ -43,6 +43,7 @@ fn follow(
     mut player: Single<(&mut Player, &Transform, Option<&Driving>)>,
     camera: Single<(&mut Transform, &mut PlayerCamera, &mut Projection), (Without<Player>, Without<Vehicle>)>,
     aim: Option<Res<crate::weapon::Aim>>,
+    scoped: Option<Res<crate::scope::Scoped>>,
     vehicles: Query<(&Transform, &Vehicle), Without<Player>>,
     heightmap: Option<Res<Heightmap>>,
     menu: Option<Res<crate::menu::Menu>>,
@@ -96,6 +97,7 @@ fn follow(
 
     if let Projection::Perspective(persp) = &mut *projection {
         let ads = aim.as_ref().map_or(0.0, |a| a.level);
-        persp.fov = if dressing { crate::dressing::FOV } else { tuning.fov_degrees.to_radians() * (1.0 - ads * (1.0 - tuning.ads_fov)) };
+        let zoom = if scoped.is_some_and(|s| s.0.is_some()) { tuning.ads_fov_scoped } else { tuning.ads_fov };
+        persp.fov = if dressing { crate::dressing::FOV } else { crate::scope::main_fov(tuning.fov_degrees.to_radians(), ads, zoom) };
     }
 }

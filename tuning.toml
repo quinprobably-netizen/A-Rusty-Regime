@@ -79,6 +79,7 @@ stick_look_curve = 2.0      # higher = finer aim near the center of the stick
 invert_y = false
 fov_degrees = 75
 ads_fov = 0.7               # field of view multiplier aiming down sights (right mouse)
+ads_fov_scoped = 0.85       # the same through a magnifying scope (the scope's picture does the zooming)
 ads_time = 0.15             # seconds to settle into the aimed view
 wallrun_tilt_degrees = 12.0
 rumble = true
@@ -102,10 +103,12 @@ heat_spread = 2.5           # spread multiplier at full heat
 ads_spread = 0.4            # spread multiplier aiming down sights (right mouse)
 mag = 30                    # rounds per magazine (R reloads, an empty gun reloads itself)
 reload = 2.0                # seconds
+scope_mag = 3  # magnification of the fitted scope (fixed); 0 = no scope part
 
 [shotgun]                   # weapon 3: Breacher pump, 20-round drum
 mag = 20
 reload = 2.6
+scope_mag = 3
 damage = 9.0
 cooldown = 0.75
 pellets = 10
@@ -118,6 +121,7 @@ kick = 2.0
 [pistol]                    # weapon 4: Smite
 mag = 9
 reload = 1.5
+scope_mag = 0
 damage = 25.0
 cooldown = 0.17
 pellets = 1
@@ -143,6 +147,7 @@ automatic = true
 kick = 0.35
 mag = 40
 reload = 1.8
+scope_mag = 3
 
 [dmr]                       # weapon 6: Longshot marksman rifle; crouching cuts its recoil
 damage = 45.0
@@ -160,6 +165,7 @@ automatic = false
 kick = 1.6
 mag = 20
 reload = 2.4
+scope_mag = 8
 
 [revolver]                  # weapon 7: Warden top-break
 damage = 60.0
@@ -177,6 +183,7 @@ automatic = false
 kick = 2.4
 mag = 6
 reload = 2.2
+scope_mag = 3
 
 [grenade]                   # weapon 8: Thumper, bouncy frags on a fuse, burst on a direct hit
 damage = 100.0

@@ -117,6 +117,9 @@ pub struct Tuning {
     pub fov_degrees: f32,
     /// Aim down sights (right mouse): field of view multiplier and the time to settle.
     pub ads_fov: f32,
+    /// The view's multiplier aiming through a magnifying scope: the scope's own picture does the
+    /// zooming, so the screen around it stays near normal.
+    pub ads_fov_scoped: f32,
     pub ads_time: f32,
     pub wallrun_tilt_degrees: f32,
     pub rumble: bool,
@@ -197,6 +200,7 @@ impl Default for Tuning {
                 kick: 0.5,
                 mag: 30,
                 reload: 2.0,
+                scope_mag: 3.0,
             },
             shotgun: Gun {
                 damage: 9.0,
@@ -215,6 +219,7 @@ impl Default for Tuning {
                 kick: 2.0,
                 mag: 20,
                 reload: 2.6,
+                scope_mag: 3.0,
             },
             pistol: Gun {
                 damage: 25.0,
@@ -233,6 +238,7 @@ impl Default for Tuning {
                 kick: 0.8,
                 mag: 9,
                 reload: 1.5,
+                scope_mag: 0.0,
             },
             smg: Gun {
                 damage: 12.0,
@@ -251,6 +257,7 @@ impl Default for Tuning {
                 kick: 0.35,
                 mag: 40,
                 reload: 1.8,
+                scope_mag: 3.0,
             },
             dmr: Gun {
                 damage: 45.0,
@@ -269,6 +276,7 @@ impl Default for Tuning {
                 kick: 1.6,
                 mag: 20,
                 reload: 2.4,
+                scope_mag: 8.0,
             },
             revolver: Gun {
                 damage: 60.0,
@@ -287,6 +295,7 @@ impl Default for Tuning {
                 kick: 2.4,
                 mag: 6,
                 reload: 2.2,
+                scope_mag: 3.0,
             },
             grenade: GrenadeTuning::default(),
             harpoon: HarpoonTuning::default(),
@@ -318,6 +327,7 @@ impl Default for Tuning {
             invert_y: false,
             fov_degrees: 75.0,
             ads_fov: 0.7,
+            ads_fov_scoped: 0.85,
             ads_time: 0.15,
             wallrun_tilt_degrees: 12.0,
             rumble: true,
@@ -351,6 +361,8 @@ pub struct Gun {
     /// Rounds per magazine and seconds to reload it.
     pub mag: u32,
     pub reload: f32,
+    /// The fitted scope's magnification (fixed); 0 for a gun with no scope part.
+    pub scope_mag: f32,
 }
 
 /// The break-action grenade launcher: bouncy frags that burst on a fuse or on hitting a target.
