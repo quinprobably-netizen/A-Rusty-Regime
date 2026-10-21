@@ -199,9 +199,12 @@ fn hide_modelled_dots(mut commands: Commands, added: Query<(Entity, &GltfMateria
 }
 
 /// Turn the scope camera on while you look through a scope in play. Decided before `PostUpdate`, so
-/// the renderer's per-view work (shadow cascades, culling) sees it the same frame.
+/// the renderer's per-view work (shadow cascades, culling) sees it the same frame. The camera carries
+/// the sky only while it is on: an idle camera with `AtmosphereSettings` leaves the main view's
+/// pipelines expecting atmosphere bindings its bind group lacks, a validation error that quits.
 #[allow(clippy::too_many_arguments)]
 fn activate(
+    mut commands: Commands,
     scoped: Res<Scoped>,
     arsenal: Res<Arsenal>,
     aim: Res<Aim>,
@@ -209,13 +212,21 @@ fn activate(
     driving: Query<(), (With<Player>, With<Driving>)>,
     vm: Single<&ViewModel>,
     models: Query<&WeaponModel>,
-    mut camera: Single<&mut Camera, With<ScopeCamera>>,
+    player_sky: Query<(), (With<PlayerCamera>, With<AtmosphereSettings>)>,
+    camera: Single<(Entity, &mut Camera, Has<AtmosphereSettings>), With<ScopeCamera>>,
 ) {
+    let (e, mut camera, has_sky) = camera.into_inner();
     let in_game = menu.as_ref().is_none_or(|m| m.playing) && vm.presented() < 0.05 && driving.is_empty();
     let eye = models.iter().find(|m| m.index == arsenal.current).and_then(|m| m.sights().0);
     let active = scope_active(aim.level, scoped.0.is_some(), in_game) && eye.is_some();
     if camera.is_active != active {
         camera.is_active = active;
+    }
+    let sky = active && !player_sky.is_empty();
+    if sky && !has_sky {
+        commands.entity(e).insert(AtmosphereSettings { aerial_view_lut_max_distance: 6000.0, ..default() });
+    } else if !sky && has_sky {
+        commands.entity(e).remove::<AtmosphereSettings>();
     }
 }
 
@@ -273,15 +284,14 @@ fn follow(
     }
 }
 
-/// The scope sees the world the way the main view does: its exposure and fog, and the sky when the
-/// main view has one.
+/// The scope sees the world the way the main view does: its exposure and fog (the sky is `activate`'s).
 fn match_view(
     mut commands: Commands,
-    player_cam: Single<(Option<&Exposure>, Option<&DistanceFog>, Has<AtmosphereSettings>), (With<PlayerCamera>, Without<ScopeCamera>)>,
-    scope_cam: Single<(Entity, Option<&mut Exposure>, Option<&mut DistanceFog>, Has<AtmosphereSettings>), With<ScopeCamera>>,
+    player_cam: Single<(Option<&Exposure>, Option<&DistanceFog>), (With<PlayerCamera>, Without<ScopeCamera>)>,
+    scope_cam: Single<(Entity, Option<&mut Exposure>, Option<&mut DistanceFog>), With<ScopeCamera>>,
 ) {
-    let (exposure, fog, sky) = *player_cam;
-    let (e, mut my_exposure, mut my_fog, my_sky) = scope_cam.into_inner();
+    let (exposure, fog) = *player_cam;
+    let (e, mut my_exposure, mut my_fog) = scope_cam.into_inner();
     match (exposure, my_exposure.as_deref_mut()) {
         (Some(x), Some(mine)) if mine.ev100 != x.ev100 => mine.ev100 = x.ev100,
         (Some(x), None) => {
@@ -298,9 +308,6 @@ fn match_view(
             commands.entity(e).insert(f.clone());
         }
         _ => {}
-    }
-    if sky && !my_sky {
-        commands.entity(e).insert(AtmosphereSettings { aerial_view_lut_max_distance: 6000.0, ..default() });
     }
 }
 
