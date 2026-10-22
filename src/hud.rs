@@ -313,7 +313,11 @@ fn update_crosshair(
         spread *= 2.0;
     }
     let gap = 5.0 + spread * 6.0 + if *flash > 0.0 { 3.0 } else { 0.0 };
-    let color = if *flash > 0.0 { RED } else if ads > 0.5 { AMBER } else { WHITE };
+    let mut color = if *flash > 0.0 { RED } else if ads > 0.5 { AMBER } else { WHITE };
+    // A fitted red dot or scope is the aim point while aiming: the crosshair fades out of its way.
+    if crate::gunsmith::customizable(kind) && loadout.part(kind, 0) > 0 {
+        color.set_alpha(color.alpha() * (1.0 - ads));
+    }
     for (line, mut node, mut bg) in &mut lines {
         let d = line.0;
         let (w, h) = if d.x != 0.0 { (8.0, 2.0) } else { (2.0, 8.0) };

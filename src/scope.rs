@@ -29,7 +29,7 @@ const RESOLUTION: u32 = 512;
 /// The scope camera clips everything nearer than this: the gun, the arms, the player's own body.
 const NEAR: f32 = 1.0;
 /// The red dot's radius and its glow, in radians off the sight line.
-const DOT: f32 = 0.0016;
+const DOT: f32 = 0.004;
 
 pub struct ScopePlugin;
 
@@ -184,15 +184,30 @@ fn fit_lenses(
                 params: LensParams { a: Vec4::new(reticle as u32 as f32, 0.0, 0.0, 0.0), b: Vec4::new(0.0, 0.0, -1.0, DOT) },
                 image: (reticle != Reticle::RedDot).then(|| image.0.clone()),
             });
-            commands.entity(socket).with_child((Lens { reticle }, Mesh3d(mesh), MeshMaterial3d(material), Transform::default()));
+            // The red dot's window sits a hair in front of the modelled glass (+Z faces the eye).
+            let at = if reticle == Reticle::RedDot { Transform::from_xyz(0.0, 0.0, 0.002) } else { Transform::default() };
+            commands.entity(socket).with_child((Lens { reticle }, Mesh3d(mesh), MeshMaterial3d(material), at));
         }
     }
 }
 
 /// The red dot's own modelled dot gives way to the one drawn at infinity.
-fn hide_modelled_dots(mut commands: Commands, added: Query<(Entity, &GltfMaterialName), Added<GltfMaterialName>>, children: Query<&ChildOf>, models: Query<(), With<WeaponModel>>) {
+fn hide_modelled_dots(
+    mut commands: Commands,
+    added: Query<(Entity, &GltfMaterialName), Added<GltfMaterialName>>,
+    children: Query<&ChildOf>,
+    models: Query<(), With<WeaponModel>>,
+    names: Query<&Name>,
+) {
     for (e, name) in &added {
-        if name.0 == "reticle" && children.iter_ancestors(e).any(|a| models.contains(a)) {
+        if !children.iter_ancestors(e).any(|a| models.contains(a)) {
+            continue;
+        }
+        // The red dot's window glass too: its lens draws the tint, and the modelled glass hid the dot.
+        // Materials are named per gun (`rifle.glass`).
+        let is = |m: &str| name.0 == m || name.0.ends_with(&format!(".{m}"));
+        let window = is("glass") && children.iter_ancestors(e).any(|a| names.get(a).is_ok_and(|n| n.as_str() == "att.optic.reddot"));
+        if is("reticle") || window {
             commands.entity(e).insert(Visibility::Hidden);
         }
     }
