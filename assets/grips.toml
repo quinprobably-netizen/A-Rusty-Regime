@@ -2,15 +2,24 @@
 # trigger at the origin): the right fist's centre, and the support hand's with the bone it rides
 # (like the shotgun's pump) for weapons held in two hands. Read by the game (src/character.rs) and by
 # the finger solver (tools/character/grips.py), which writes each character's finger poses.
+# The support hand's fist closes around `cradle` (the middle of the handguard, or its lowest 4 cm
+# where it is too deep to grip), around `vertical` on a vertical foregrip, and around `angled` just
+# behind an angled one, its heel against the grip's back.
 
 [rifle]
 right = [0.0, -0.038, 0.030]
 left = [0.0, 0.03, -0.20]
+cradle = [0.0, 0.044, -0.2]
+vertical = [0.0, -0.0421, -0.346]
+angled = [0.0, 0.044, -0.286]
 
 [shotgun]
 right = [0.0, -0.085, 0.068]
 left = [0.0, 0.0, -0.30]
 left_bone = "pump"
+cradle = [0.0, 0.0, -0.3]
+vertical = [0.0, -0.0696, -0.325]
+angled = [0.0, 0.0063, -0.265]
 
 [pistol]
 right = [0.0, -0.05, 0.055]
@@ -18,10 +27,16 @@ right = [0.0, -0.05, 0.055]
 [smg]
 right = [0.0, -0.05, 0.045]
 left = [0.0, 0.03, -0.15]
+cradle = [0.0, 0.022, -0.15]
+vertical = [0.0, -0.0551, -0.203]
+angled = [0.0, 0.022, -0.15]
 
 [dmr]
 right = [0.0, -0.045, 0.03]
 left = [0.0, 0.025, -0.28]
+cradle = [0.0, 0.0, -0.28]
+vertical = [0.0, -0.0531, -0.212]
+angled = [0.0, 0.0, -0.28]
 
 [revolver]
 right = [0.0, -0.058, 0.045]
@@ -29,14 +44,17 @@ right = [0.0, -0.058, 0.045]
 [grenade]
 right = [0.0, -0.04, 0.035]
 left = [0.0, 0.02, -0.16]
+cradle = [0.0, 0.002, -0.16]
 
 [harpoon]
 right = [0.0, -0.04, 0.03]
 left = [0.0, 0.02, -0.25]
+cradle = [0.0, -0.058, -0.25]
 
 [rocket]
 right = [0.0, -0.03, 0.03]
 left = [0.0, -0.05, -0.28]
+vertical = [0.0, -0.035, -0.281]
 
 [fist]
 right = [0.0, 0.0, 0.0]
