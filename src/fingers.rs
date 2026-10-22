@@ -3,8 +3,8 @@
 //! `assets/models/character/<id>.grips.toml`. Every frame, after the clips, the finger joints of each
 //! armed rig take their weapon's pose (each joint's rest rotation times the solved one). The player's
 //! trigger finger pulls on each shot. The first-person left hand cups the gun with a part-opened fist
-//! (`opened`), placed by `arms`. A
-//! character or weapon with no solved pose keeps the rest fist the rigs are built with.
+//! (`opened`), placed by `arms`. A character or weapon with no solved pose keeps the rest fist the
+//! rigs are built with.
 
 use std::collections::HashMap;
 
