@@ -34,7 +34,10 @@ DEFAULT_ROT = Quaternion((1, 0, 0), math.radians(-90))
 # barrel (frame +X), the palm facing the gun's right (frame +Z). The angled grip tips that hand 40
 # degrees forward and down, the heel of the palm on its sloped back.
 VERTICAL_ROT = Matrix(((0, 0, 1), (0, 1, 0), (-1, 0, 0))).to_quaternion()
-ANGLED_ROT = Quaternion((1, 0, 0), math.radians(-40)) @ VERTICAL_ROT
+# The support hand cradles a handguard from its lower left, thumb along the left side and fingers
+# wrapping under it to the right side, never over the top where they would cross the sights; turned
+# 40 degrees from square across the gun so the fingers wrap it diagonally, as hands do.
+UNDER_ROT = Quaternion((0, 0, 1), math.radians(-45)) @ Quaternion((0, 1, 0), math.radians(40)) @ DEFAULT_ROT
 TOUCH = 0.0015  # the palm and fingers stop this far off the gun's surface (the flesh presses in)
 STEP = math.radians(0.5)
 DEBUG = bool(os.environ.get("GRIPS_DEBUG"))
@@ -61,11 +64,17 @@ def solve(c, out_dir=kit.OUT):
             out[f"{wid}.R"] = _pose(c, meshes, "R", right, DEFAULT_ROT, trigger=(trig, 0.0))
             out[f"{wid}.R_fire"] = _pose(c, meshes, "R", right, DEFAULT_ROT, trigger=(trig, 0.006))
             if "left" in spec:
-                out[f"{wid}.L"] = _pose(c, meshes, "L", Vector(spec["left"]), DEFAULT_ROT)
-                for part, rot in (("vertical", VERTICAL_ROT), ("angled", ANGLED_ROT)):
-                    at = _part_centre(meshes, f"att.grip.{part}")
-                    if at is not None:
-                        out[f"{wid}.L_{part}"] = _pose(c, meshes, "L", at, rot, extra=f"att.grip.{part}")
+                left = Vector(spec["left"])
+                out[f"{wid}.L"] = _pose(c, meshes, "L", _cradle(meshes, left), UNDER_ROT)
+                at = _part_centre(meshes, "att.grip.vertical")
+                if at is not None:
+                    out[f"{wid}.L_vertical"] = _pose(c, meshes, "L", at, VERTICAL_ROT, extra="att.grip.vertical")
+                # An angled grip is a stop, not a handle: the hand cradles the handguard with the heel
+                # of the palm against its sloped back.
+                if "att.grip.angled" in meshes.parts:
+                    rear = max(v[2] for v in meshes.parts["att.grip.angled"][0])
+                    at = _cradle(meshes, Vector((left.x, left.y, rear + 0.035)))
+                    out[f"{wid}.L_angled"] = _pose(c, meshes, "L", at, UNDER_ROT, extra="att.grip.angled")
         finally:
             _remove(meshes)
     path = os.path.join(out_dir, f"{c.id}.grips.toml")
@@ -153,6 +162,16 @@ def _trigger_face(w):
     lo = Vector([min(v[i] for v in vs) for i in range(3)])
     hi = Vector([max(v[i] for v in vs) for i in range(3)])
     return Vector(((lo.x + hi.x) / 2, hi.y - (hi.y - lo.y) * 0.5, lo.z))
+
+
+def _cradle(w, at):
+    """`at` moved to the middle of the bare gun's cross-section there, where the cradling hand's
+    fist closes around it."""
+    ys = [v[1] for name, (vs, _) in w.parts.items() if not name.startswith("att.") or name in BARE
+          for v in vs if abs(v[2] - at.z) < 0.015 and abs(v[0] - at.x) < 0.04]
+    if not ys:
+        return at
+    return Vector((at.x, (min(ys) + max(ys)) / 2, at.z))
 
 
 def _part_centre(w, name):
