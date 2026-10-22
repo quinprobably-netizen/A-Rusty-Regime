@@ -2,8 +2,9 @@
 //! each finger wraps that gun's real grip, the right index on its trigger, and writes
 //! `assets/models/character/<id>.grips.toml`. Every frame, after the clips, the finger joints of each
 //! armed rig take their weapon's pose (each joint's rest rotation times the solved one). The player's
-//! trigger finger pulls on each shot, and the first-person left hand takes the fitted foregrip. A
-//! character or weapon with no solved pose keeps the rest fist the rigs are built with.
+//! trigger finger pulls on each shot. The first-person left hand cups the gun with a part-opened fist
+//! (`opened`), placed by `arms`. A character or weapon with no solved pose keeps the rest fist the
+//! rigs are built with.
 
 use std::collections::HashMap;
 
@@ -18,6 +19,8 @@ use crate::weapon::{Arsenal, WeaponFired, WeaponKind};
 pub const FINGERS: [&str; 5] = ["thumb", "index", "middle", "ring", "pinky"];
 /// How long the trigger finger stays pulled after a shot (seconds).
 const PULL_TIME: f32 = 0.07;
+/// How much of its bend each support-hand finger joint gives back, root to tip.
+const OPEN: [f32; 3] = [0.15, 0.35, 0.3];
 
 pub struct FingersPlugin;
 
@@ -152,13 +155,23 @@ pub fn hand_rotations(rest: &[Quat; 15], pose: Option<&HandPose>, fire: Option<&
     out
 }
 
+/// The rest fist opened enough to cup a handguard: each finger joint gives back part of its bend
+/// (the swing of its bone off its parent's), knuckles least; the thumb keeps its tuck.
+pub fn opened(rest: &[Quat; 15]) -> [Quat; 15] {
+    let mut out = *rest;
+    for (i, q) in out.iter_mut().enumerate().skip(3) {
+        let bend = Quat::from_rotation_arc(Vec3::Y, rest[i] * Vec3::Y);
+        *q = Quat::IDENTITY.slerp(bend.inverse(), OPEN[i % 3]) * *q;
+    }
+    out
+}
+
 #[allow(clippy::too_many_arguments)]
 fn pose(
     mut commands: Commands,
     solved: Res<Solved>,
     trigger: Res<Trigger>,
     arsenal: Option<Res<Arsenal>>,
-    loadout: Option<Res<Loadout>>,
     rigs: Query<(Entity, &Rig, Has<ArmsOnly>, Has<FirstPerson>, Option<&FingerBones>)>,
     children: Query<&Children>,
     names: Query<&Name>,
@@ -178,10 +191,10 @@ fn pose(
         let character = rig.character();
         let get = |p: &str| kind.zip(character).and_then(|(k, c)| solved.get(c, k, p));
         let ours = arms_only || first_person;
-        let left = kind.map_or("L", |k| left_pose(k, loadout.as_deref().filter(|_| arms_only)));
         let sides = [
             hand_rotations(&bones.rest[0], get("R"), get("R_fire").filter(|_| ours), trigger.0),
-            hand_rotations(&bones.rest[1], get(left).or_else(|| get("L")), None, 0.0),
+            // In first person the support hand cups the gun with a part-opened fist (`arms::support_frame`).
+            if arms_only { opened(&bones.rest[1]) } else { hand_rotations(&bones.rest[1], get("L"), None, 0.0) },
         ];
         for (s, rots) in sides.iter().enumerate() {
             for (i, e) in bones.joints[s].iter().enumerate() {

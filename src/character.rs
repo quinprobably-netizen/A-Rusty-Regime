@@ -74,6 +74,10 @@ impl Pose {
 pub struct Hands {
     pub right: Vec3,
     pub left: Option<(Vec3, String)>,
+    /// Where the support fist closes: on the handguard, and on each foregrip when fitted.
+    pub cradle: Option<Vec3>,
+    pub vertical: Option<Vec3>,
+    pub angled: Option<Vec3>,
 }
 
 #[derive(Deserialize)]
@@ -81,6 +85,9 @@ struct GripDef {
     right: [f32; 3],
     left: Option<[f32; 3]>,
     left_bone: Option<String>,
+    cradle: Option<[f32; 3]>,
+    vertical: Option<[f32; 3]>,
+    angled: Option<[f32; 3]>,
 }
 
 pub fn hands(kind: WeaponKind) -> &'static Hands {
@@ -90,7 +97,8 @@ pub fn hands(kind: WeaponKind) -> &'static Hands {
         defs.into_iter()
             .map(|(id, d)| {
                 let left = d.left.map(|l| (Vec3::from_array(l), d.left_bone.unwrap_or_else(|| "root".into())));
-                (id, Hands { right: Vec3::from_array(d.right), left })
+                let v = |p: Option<[f32; 3]>| p.map(Vec3::from_array);
+                (id, Hands { right: Vec3::from_array(d.right), left, cradle: v(d.cradle), vertical: v(d.vertical), angled: v(d.angled) })
             })
             .collect()
     });
