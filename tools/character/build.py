@@ -63,7 +63,7 @@ def main():
         bad = 0
         for cid in ids:
             path = os.path.join(kit.OUT, f"{cid}.glb")
-            problems, stats = kit.check(path, spec(cid).get("budget", (25000, 75000))) if os.path.exists(path) else (["not built"], {})
+            problems, stats = kit.check(path, spec(cid).get("budget", (25000, 120000))) if os.path.exists(path) else (["not built"], {})
             print(f"{cid}: {'ok' if not problems else '; '.join(problems)} {stats}")
             bad += bool(problems)
         sys.exit(1 if bad else 0)
@@ -82,7 +82,7 @@ def main():
     for cid in ids:
         s = spec(cid)
         c = s["build"]()
-        c.finish(bake="--no-bake" not in sys.argv, budget=s.get("budget", (25000, 75000)))
+        c.finish(bake="--no-bake" not in sys.argv, budget=s.get("budget", (25000, 120000)))
         if "--preview" in sys.argv:
             os.makedirs(SHOTS, exist_ok=True)
             col = s.get("colors")

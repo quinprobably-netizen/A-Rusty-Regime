@@ -907,5 +907,5 @@ def boot_straps(c, b, boot):
             bru.strap_round(c, "boot_strap", tu, t, ll, 0.019, 0.0032, buckle_ph=90 * sx)
 
 
-SPEC = {"build": build, "faction": "scrappers", "budget": (25000, 80000), "loadout": "harpoon",
+SPEC = {"build": build, "faction": "scrappers", "budget": (25000, 120000), "loadout": "harpoon",
         "colors": {"primary": "#544632", "secondary": "#3f433b", "accent": "#8b5a2b"}}

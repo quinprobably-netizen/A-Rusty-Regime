@@ -11,7 +11,7 @@ use bevy::gltf::Gltf;
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAssetRoot, WorldInstanceReady};
 
-use crate::camera::PlayerCamera;
+use crate::camera::{PlayerCamera, Widen};
 use crate::controller::{MoveState, Player};
 use crate::gunsmith::{Loadout, MESHES, customizable};
 use crate::input::PlayerInput;
@@ -23,7 +23,7 @@ pub struct ViewModelPlugin;
 impl Plugin for ViewModelPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(PostStartup, spawn)
-            .add_systems(Update, (hook_up, animate, play_clips, show_parts, flash).chain())
+            .add_systems(Update, (hook_up, animate, widen, play_clips, show_parts, flash).chain())
             .add_systems(PostUpdate, track_muzzle.after(TransformSystems::Propagate))
             .add_observer(on_ready);
     }
@@ -107,9 +107,10 @@ impl WeaponModel {
 #[derive(Component)]
 struct Flash;
 
-/// Where the trigger sits in front of the camera; each model's origin is its trigger. Near enough
-/// that the support arm reaches the handguard with a bent elbow.
-const REST: Vec3 = Vec3::new(0.14, -0.21, -0.26);
+/// Where the trigger sits in front of the camera (before widening); each model's origin is its
+/// trigger. Low and right, the gun pointing in past the crosshair, the firing hand in view at the
+/// bottom edge and the support arm near straight to the handguard, as shooters frame it.
+const REST: Vec3 = Vec3::new(0.15, -0.15, -0.36);
 /// Aimed: centred, close to the eye; x and y are replaced by the weapon's own sight line.
 const AIMED_DEPTH: f32 = -0.3;
 /// Where the gun sits in the gunsmith: right of centre, turned to show its side.
@@ -143,7 +144,7 @@ fn hold(kind: WeaponKind) -> Vec3 {
     }
 }
 
-fn spawn(mut commands: Commands, server: Res<AssetServer>, camera: Single<Entity, With<PlayerCamera>>, mut meshes: Option<ResMut<Assets<Mesh>>>, mut materials: Option<ResMut<Assets<StandardMaterial>>>) {
+fn spawn(mut commands: Commands, server: Res<AssetServer>, view: Single<Entity, With<Widen>>, mut meshes: Option<ResMut<Assets<Mesh>>>, mut materials: Option<ResMut<Assets<StandardMaterial>>>) {
     let flash = match (meshes.as_mut(), materials.as_mut()) {
         (Some(meshes), Some(materials)) => Some((
             meshes.add(Sphere::new(0.035)),
@@ -151,7 +152,7 @@ fn spawn(mut commands: Commands, server: Res<AssetServer>, camera: Single<Entity
         )),
         _ => None,
     };
-    commands.entity(*camera).with_children(|cam| {
+    commands.entity(*view).with_children(|cam| {
         cam.spawn((ViewModel::default(), Transform::from_translation(REST), Visibility::default())).with_children(|vm| {
             for (index, kind) in WEAPONS.iter().enumerate() {
                 let path = format!("models/weapons/{}.glb", kind.id());
@@ -433,6 +434,23 @@ fn flash(vm: Single<&ViewModel>, mut flashes: Query<(&mut Visibility, &mut Trans
 }
 
 /// Keep `Muzzle` on the current model's muzzle socket, in the camera's frame.
+/// How much wider than the camera's own the gun and arms are drawn, as a scale across the view:
+/// the camera's field of view over the viewmodel's, back to 1 when aimed (the sights were set up
+/// for the true view) and in the gunsmith.
+pub fn widening(fov: f32, viewmodel_fov: f32, settled: f32) -> f32 {
+    let k = (fov.to_radians() * 0.5).tan() / (viewmodel_fov.to_radians() * 0.5).tan();
+    k + (1.0 - k) * settled.clamp(0.0, 1.0)
+}
+
+fn widen(tuning: Res<Tuning>, aim: Option<Res<crate::weapon::Aim>>, vm: Single<&ViewModel>, mut view: Single<&mut Transform, With<Widen>>) {
+    let ads = aim.as_ref().map_or(0.0, |a| a.level);
+    let k = widening(tuning.fov_degrees, tuning.viewmodel_fov_degrees, ads.max(vm.showcase));
+    let scale = Vec3::new(k, k, 1.0);
+    if view.scale != scale {
+        view.scale = scale;
+    }
+}
+
 fn track_muzzle(
     arsenal: Res<Arsenal>,
     mut muzzle: ResMut<Muzzle>,
@@ -446,5 +464,18 @@ fn track_muzzle(
     // Keep shots sane if the model is mid-swap or off in the gunsmith.
     if local.z < -0.1 && local.length() < 2.0 {
         muzzle.0 = local;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn widening_matches_the_viewmodel_fov_and_settles_when_aimed() {
+        let k = widening(75.0, 65.0, 0.0);
+        assert!((k - 37.5f32.to_radians().tan() / 32.5f32.to_radians().tan()).abs() < 1e-5 && k > 1.15, "{k}");
+        assert!((widening(75.0, 55.0, 1.0) - 1.0).abs() < 1e-6);
+        assert!((widening(75.0, 75.0, 0.3) - 1.0).abs() < 1e-6);
     }
 }

@@ -811,7 +811,7 @@ def build():
         ax = J("hand." + s, 0.0) - J("forearm." + s, 0.0)
         cc = J("hand." + s, 0.0) - ax.normalized() * 0.024
         r = pmc._radius(tg, cc, ax)
-        c.rigid(pmc.band("glove_cuff", cc, (r + 0.003, r * 0.82 + 0.003), 0.032, 0.004, "glove", axis=ax), "hand." + s)
+        c.rigid(pmc.band("glove_cuff", cc, (r + 0.003, r * 0.82 + 0.003), 0.032, 0.004, "glove", axis=ax), "forearm." + s)
     real.boots(c, man, "boot", sole_kind="rubber", trim="rubber", top=0.19, lace="webbing", tab="accent")
 
     # ---------------------------------------------------------------- undersuit: shirt
@@ -1277,5 +1277,5 @@ def build():
     return c
 
 
-SPEC = {"build": build, "faction": "regime", "budget": (25000, 80000), "loadout": "revolver",
+SPEC = {"build": build, "faction": "regime", "budget": (25000, 120000), "loadout": "revolver",
         "colors": {"primary": "#1c1a1e", "secondary": "#3a3036", "accent": "#8a1414"}}

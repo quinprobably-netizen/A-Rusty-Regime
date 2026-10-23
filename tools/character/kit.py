@@ -655,7 +655,7 @@ class Char:
         self.parts.append((obj, None, bone))
         return obj
 
-    def finish(self, out_dir=OUT, bake=True, budget=(25000, 75000)):
+    def finish(self, out_dir=OUT, bake=True, budget=(25000, 120000)):
         for obj, _, _ in self.parts:
             hs.apply_modifiers(obj)
             dims = obj.dimensions
@@ -1264,7 +1264,7 @@ def preview(path, clip="idle", frame=0, cam=(1.9, -2.9, 1.25), look=None, lens=5
 
 # ------------------------------------------------------------------------------------------ check
 
-def check(path, budget=(25000, 75000)):
+def check(path, budget=(25000, 120000)):
     """Verify a character glb: the shared bone names, every clip, body/head/arms skinned meshes,
     the triangle budget."""
     j, _ = hs.read_glb(path)

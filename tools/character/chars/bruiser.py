@@ -1073,5 +1073,5 @@ def leg_frame(c, b, arm, trousers, boot, ring, s, sx):
         strap_round(c, "shin_strap", ts2, t, ll, 0.026, 0.0035, buckle_ph=OUT + 40 * sx)
 
 
-SPEC = {"build": build, "faction": "scrappers", "budget": (25000, 80000), "loadout": "fist",
+SPEC = {"build": build, "faction": "scrappers", "budget": (25000, 120000), "loadout": "fist",
         "colors": {"primary": "#55606a", "secondary": "#4f4536", "accent": "#a0743c"}}

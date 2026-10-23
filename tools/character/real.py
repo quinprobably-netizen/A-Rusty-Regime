@@ -1295,9 +1295,18 @@ def bones_at(man):
     return lead
 
 
-def gloves(c, man, kind="glove", cuff=0.035, ease=0.0022, texel=1.4):
+def gloves(c, man, kind="glove", cuff=0.035, ease=0.0022, texel=1.4, panels=None, pads=None, knuckle=None):
     """Gloves: the hands' skin as a layer `ease` thick, ending `cuff` above the wrist joint in a clean
-    hem; the bare hands are dropped. Returns the layer (both hands)."""
+    hem; the bare hands are dropped. Returns the layer (both hands).
+
+    A tactical glove (the default for kind "glove"; work gloves of another leather stay plain) is
+    built like the real thing: `panels` gives it a stretch-softshell back lapped and stitched over the
+    leather palm and finger fronts (see surfaces.glove), and `pads` sews moulded rubber pads over the
+    backs of the four fingers' first segments. `knuckle` (a material kind) moulds a hard guard over
+    the knuckles that follows the glove, in place of a flat plate."""
+    tactical = kind == "glove"
+    panels = tactical if panels is None else panels
+    pads = tactical if pads is None else pads
     b = c.b
     seg = kit.seg_dist
 
@@ -1311,8 +1320,136 @@ def gloves(c, man, kind="glove", cuff=0.035, ease=0.0022, texel=1.4):
         return any(near(p, s) and (p - b.j("hand." + s, 0.0)).dot(axis(s)) > -cuff - 0.01 for s in ("L", "R"))
     cuts = [(b.j("hand." + s, 0.0) - axis(s) * cuff, -axis(s), lambda p, s=s: near(p, s, 0.12)) for s in ("L", "R")]
     o = layer(c, man, "gloves", kind, keep, cuts, ease=ease, texel=texel)
+    # The base mesh's fingers are eight-sided: round them off as a moulded glove is.
+    sub = o.modifiers.new("round", "SUBSURF")
+    sub.levels = sub.render_levels = 1
+    kit.hs._apply(o, sub.name)
     c.cover({"hand.L", "hand.R"})
+    if panels:
+        glove_panels(b, o)
+    if pads:
+        for s in ("L", "R"):
+            for f in ("index", "middle", "ring", "pinky"):
+                patch(c, o, f"finger_pad.{f}.{s}", "rubber", _finger_back(b, f"f_{f}.1.{s}", 0.15, 0.85, 0.0),
+                      lift=0.0006, puff=0.0012, thick=0.0016, subdivide=1, smooth=1)
+    if knuckle:
+        for s in ("L", "R"):
+            patch(c, o, f"knuckle_guard.{s}", knuckle, _knuckles(b, s), lift=0.0008, puff=0.0022, thick=0.0035,
+                  subdivide=1, smooth=2)
     return o
+
+
+def _dorsal(b, bone):
+    """The back-of-the-hand direction for a hand or finger bone in the build pose (its Z, out of the
+    palm, reversed)."""
+    if bone.startswith("hand."):
+        return -Vector(b.all["prop_hand." + bone[-1]][3]).normalized()
+    return -Vector(b.all[bone][3]).normalized()
+
+
+def _hand_bones(b):
+    return ["hand." + s for s in ("L", "R")] + [f"f_{f}.{i}.{s}" for s in ("L", "R") for f in FINGERS for i in (1, 2, 3)]
+
+
+def _finger_back(b, bone, t0, t1, cos):
+    """region(p): on the back of finger segment `bone`, between `t0` and `t1` of its length and
+    within acos(`cos`) of straight up its back."""
+    h, t = Vector(b.all[bone][0]), Vector(b.all[bone][1])
+    ax = t - h
+    L = ax.length
+    ax /= L
+    up = _dorsal(b, bone)
+    others = [(Vector(b.all[n][0]), Vector(b.all[n][1])) for n in _hand_bones(b) if n != bone and n.startswith("f_")]
+
+    def region(p):
+        u = (p - h).dot(ax) / L
+        if not t0 <= u <= t1:
+            return False
+        r = p - (h + ax * (u * L))
+        if r.length > 0.016 or r.normalized().dot(up) < cos:
+            return False
+        # Only this finger's skin: a neighbour's side can lie as close to this bone.
+        return all(kit.seg_dist(p, a, c) > r.length for a, c in others)
+    return region
+
+
+def _knuckles(b, s, r=0.017):
+    """region(p): a strip over the back of the knuckles of hand `s`, along the line through the four
+    fingers' first joints, on the back side of it."""
+    mcp = [Vector(b.all[f"f_{f}.1.{s}"][0]) for f in ("index", "middle", "ring", "pinky")]
+    up = _dorsal(b, "hand." + s)
+    a, z = mcp[0], mcp[3]
+    # Run the line a little past the outer knuckles so the guard wraps their sides.
+    d = (z - a).normalized()
+    a, z = a - d * 0.004, z + d * 0.004
+
+    def region(p):
+        q = p - up * up.dot(p - a)
+        return kit.seg_dist(p, a, z) < r and (p - a).dot(up) > 0.003 and kit.seg_dist(q, a, z) < 0.012
+    return region
+
+
+def glove_panels(b, o, cap=0.02):
+    """Mark the glove layer `o` for a two-panel glove: `panel`, the signed distance (m) along the
+    surface to the line where the back panel meets the leather (positive on the back), and `panel_u`,
+    a length along that seam for the stitch dashes. The line runs along the sides of the fingers and
+    the hand, where the surface turns from facing the back of the hand to facing the palm."""
+    me = o.data
+    bones = _hand_bones(b)
+    seg = [(Vector(b.all[n][0]), Vector(b.all[n][1])) for n in bones]
+    up = [_dorsal(b, n) for n in bones]
+    # How far along its finger each bone starts, for a continuous coordinate down each finger.
+    start = {}
+    for n in bones:
+        if n.startswith("hand."):
+            start[n] = 0.0
+        else:
+            par = b.all[n][2]
+            start[n] = start.get(par, 0.0) + (Vector(b.all[par][1]) - Vector(b.all[par][0])).length if par in start else 0.0
+    f = np.zeros(len(me.vertices))
+    u = np.zeros(len(me.vertices))
+    for v in me.vertices:
+        p = v.co
+        k = min(range(len(bones)), key=lambda i: kit.seg_dist(p, *seg[i]))
+        h, t = seg[k]
+        # The fingers' backs are narrower than the palm side wraps; the hand's back is broad.
+        thr = 0.05 if bones[k].startswith("hand.") else 0.2
+        f[v.index] = v.normal.dot(up[k]) - thr
+        ax = (t - h).normalized()
+        u[v.index] = start[bones[k]] + (p - h).dot(ax)
+    # Distance from the zero line along the mesh's edges, seeded where edges cross it.
+    dist = np.full(len(me.vertices), cap)
+    heap = []
+    for e in me.edges:
+        a, c = e.vertices
+        if (f[a] > 0) != (f[c] > 0):
+            L = (me.vertices[a].co - me.vertices[c].co).length
+            tt = f[a] / (f[a] - f[c])
+            for w, d in ((a, tt * L), (c, (1 - tt) * L)):
+                if d < dist[w]:
+                    dist[w] = d
+                    heapq.heappush(heap, (d, w))
+    adj = [[] for _ in me.vertices]
+    for e in me.edges:
+        a, c = e.vertices
+        L = (me.vertices[a].co - me.vertices[c].co).length
+        adj[a].append((c, L))
+        adj[c].append((a, L))
+    while heap:
+        d, w = heapq.heappop(heap)
+        if d > dist[w]:
+            continue
+        for x, L in adj[w]:
+            nd = d + L
+            if nd < dist[x]:
+                dist[x] = nd
+                heapq.heappush(heap, (nd, x))
+    signed = np.where(f > 0, dist, -dist).astype(np.float32)
+    for name, vals in (("panel", signed), ("panel_u", u.astype(np.float32))):
+        if name in me.attributes:
+            me.attributes.remove(me.attributes[name])
+        at = me.attributes.new(name, "FLOAT", "POINT")
+        at.data.foreach_set("value", vals)
 
 
 def boots(c, man, kind="boot", sole_kind="rubber", trim="rubber", top=0.19, lace="webbing", tab="black"):
@@ -1615,9 +1752,11 @@ class Char(kit.Char):
             if "texel" not in o:
                 o["texel"] = HARD_TEXEL  # hard parts: small, mostly flat colour
         for o in lows + his:
-            if "seam" not in o.data.attributes:
-                at = o.data.attributes.new("seam", "FLOAT", "POINT")
-                at.data.foreach_set("value", np.ones(len(o.data.vertices), dtype=np.float32))
+            # Defaults where a part has none: far from any seam, and no glove back panel.
+            for a, val in (("seam", 1.0), ("panel", -1.0), ("panel_u", 0.0)):
+                if a not in o.data.attributes:
+                    at = o.data.attributes.new(a, "FLOAT", "POINT")
+                    at.data.foreach_set("value", np.full(len(o.data.vertices), val, dtype=np.float32))
         mats = {m for o in lows + his for m in o.data.materials if m is not None}
         if bake:
             surfaces.unwrap(lows)
@@ -1646,7 +1785,7 @@ class Char(kit.Char):
         for o in lows:
             if surfaces.FABRIC in o.data.uv_layers:
                 o.data.uv_layers.remove(o.data.uv_layers[surfaces.FABRIC])
-            for a in ("seam", "seam_u", "face", "eye_r", "eye_a"):
+            for a in ("seam", "seam_u", "face", "eye_r", "eye_a", "panel", "panel_u"):
                 if a in o.data.attributes:
                     o.data.attributes.remove(o.data.attributes[a])
         if os.environ.get("REAL_BLEND"):

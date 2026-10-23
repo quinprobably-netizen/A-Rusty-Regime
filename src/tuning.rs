@@ -115,6 +115,9 @@ pub struct Tuning {
     pub stick_look_curve: f32,
     pub invert_y: bool,
     pub fov_degrees: f32,
+    /// The gun and arms are drawn as if through this narrower vertical field of view, as shooters
+    /// do: a wide view stretches anything a hand's breadth from the eye.
+    pub viewmodel_fov_degrees: f32,
     /// Aim down sights (right mouse): field of view multiplier and the time to settle.
     pub ads_fov: f32,
     /// The view's multiplier aiming through a magnifying scope: the scope's own picture does the
@@ -326,6 +329,7 @@ impl Default for Tuning {
             stick_look_curve: 2.0,
             invert_y: false,
             fov_degrees: 75.0,
+            viewmodel_fov_degrees: 65.0,
             ads_fov: 0.7,
             ads_fov_scoped: 0.85,
             ads_time: 0.15,

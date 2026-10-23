@@ -12,7 +12,7 @@ use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
 
 use crate::abilities::Class;
-use crate::camera::PlayerCamera;
+use crate::camera::{PlayerCamera, Widen};
 use crate::character::{self, ArmsOnly, CharacterAssets, Characters, GRIP_L, GRIP_R, Rig, grip_rotation, hands};
 use crate::fingers::{FingerBones, Solved, left_pose};
 use crate::gunsmith::Loadout;
@@ -21,25 +21,26 @@ use crate::vehicle::Driving;
 use crate::viewmodel::{ViewModel, WeaponModel, model_space};
 use crate::weapon::{Aim, Arsenal, WEAPONS};
 
-/// Where the shoulders' midpoint sits, in camera space, and lower when aiming (the cheek comes
-/// down to the stock).
-const SHOULDERS: Vec3 = Vec3::new(0.0, -0.26, 0.12);
-const SHOULDERS_AIMED: Vec3 = Vec3::new(0.0, -0.30, 0.10);
-/// The torso turns so the left shoulder leads, like a rifle stance (radians); squarer behind the
-/// gun when aiming, so the support arm rises under the weapon instead of across the view.
-const BLADE: f32 = -0.45;
-const BLADE_AIMED: f32 = -1.0;
-/// Elbows point down, in camera space: right, left. The left elbow tucks under the gun so its
-/// forearm rises behind the weapon instead of crossing the view, further so when aiming.
-const POLE: [Vec3; 2] = [Vec3::new(0.5, -1.0, 0.3), Vec3::new(-0.2, -1.0, 0.0)];
-const POLE_AIMED: Vec3 = Vec3::new(0.3, -1.0, 0.0);
+/// Where the shoulders' midpoint sits, in camera space: under the eye with the head forward over
+/// the gun, a little lower when aiming (the cheek comes down to the stock).
+const SHOULDERS: Vec3 = Vec3::new(-0.05, -0.23, 0.0);
+const SHOULDERS_AIMED: Vec3 = Vec3::new(-0.04, -0.25, 0.02);
+/// The torso turns so the left shoulder leads, like a rifle stance (radians), a little more when
+/// aiming.
+const BLADE: f32 = -0.3;
+const BLADE_AIMED: f32 = -0.45;
+/// Where the elbows point, in camera space: right, left. The left elbow flares out to the left so the
+/// forearm rises from the lower left corner to the handguard, seen from its side rather than end
+/// on, aimed or not.
+const POLE: [Vec3; 2] = [Vec3::new(0.5, -1.0, 0.3), Vec3::new(-1.0, -0.3, 0.2)];
+const POLE_AIMED: Vec3 = Vec3::new(-0.5, -1.0, 0.0);
 /// Where the left wrist waits, out of view, when the weapon takes one hand.
 const LEFT_REST: Vec3 = Vec3::new(-0.2, -0.7, 0.05);
 /// How far an arm may stretch to reach a far support point.
 const MAX_STRETCH: f32 = 1.25;
 /// The first-person arms are drawn this much slimmer than the character's: a sleeve a hand's
 /// breadth from the eye fills the view otherwise.
-const SLIM: f32 = 0.75;
+const SLIM: f32 = 0.65;
 
 pub struct ArmsPlugin;
 
@@ -64,14 +65,14 @@ struct ArmBones {
 #[derive(Component)]
 struct Grips(HashMap<String, (Entity, Affine3A)>);
 
-fn spawn(mut commands: Commands, assets: Option<Res<CharacterAssets>>, characters: Res<Characters>, class: Res<Class>, camera: Single<Entity, With<PlayerCamera>>) {
+fn spawn(mut commands: Commands, assets: Option<Res<CharacterAssets>>, characters: Res<Characters>, class: Res<Class>, view: Single<Entity, With<Widen>>) {
     // No render assets in headless tests: no arms.
     if assets.is_none() {
         return;
     }
     let outfit = characters.class.get(&class.0).map_or("runner", |c| c.character.as_str());
     let at = Transform::from_translation(SHOULDERS - Vec3::Y * 1.4).with_rotation(Quat::from_rotation_y(PI + BLADE));
-    commands.entity(*camera).with_child((Name::new("First-person arms"), Arms, ArmsOnly, character::bundle(outfit, at)));
+    commands.entity(*view).with_child((Name::new("First-person arms"), Arms, ArmsOnly, character::bundle(outfit, at)));
 }
 
 /// Note where a weapon model's grip bones rest, before its clips move them.
@@ -97,6 +98,7 @@ fn pose(
     mut commands: Commands,
     arsenal: Option<Res<Arsenal>>,
     camera: Single<Entity, With<PlayerCamera>>,
+    widened: Single<Entity, With<Widen>>,
     vm: Single<(&ViewModel, &Visibility)>,
     driving: Query<(), (With<Player>, With<Driving>)>,
     weapons: Query<(&WeaponModel, &Grips)>,
@@ -132,6 +134,10 @@ fn pose(
         return;
     };
     let Ok(cam) = globals.get(*camera).map(|g| g.compute_transform()) else { return };
+    // The arms ride the widened view like the gun: solve in the camera's plain view and widen
+    // what's written back.
+    let Ok(widen) = globals.get(*widened).map(|g| g.affine() * cam.compute_affine().inverse()) else { return };
+    let plain = widen.inverse();
 
     // The palm frames on the weapon: its model space carried along by the bone each hand rides,
     // where this character's solved poses put them. A right hand with no pose takes the shared grip
@@ -141,7 +147,7 @@ fn pose(
     let pose = |p: &str| solved.as_ref().zip(rig.character()).and_then(|(s, c)| s.get(c, kind, p));
     let frame = |bone: &str, local: Option<Transform>| -> Option<Transform> {
         let (e, rest_inv) = grips.get(bone)?;
-        let now = globals.get(*e).ok()?.affine() * *rest_inv;
+        let now = plain * globals.get(*e).ok()?.affine() * *rest_inv;
         Some(Transform::from_matrix(Mat4::from(now)) * local?)
     };
     let placed = |p: &crate::fingers::HandPose| Transform::from_translation(p.at).with_rotation(p.rot);
@@ -153,7 +159,7 @@ fn pose(
     // square the stance behind the gun as it comes up to the eye.
     let ads = aim.as_ref().map_or(0.0, |a| a.level);
     tf.rotation = Quat::from_rotation_y(PI + BLADE.lerp(BLADE_AIMED, ads));
-    let rest = |side: &[Entity; 5]| -> Option<Transform> { Some(globals.get(side[0]).ok()?.compute_transform() * *locals.get(side[1]).ok()?) };
+    let rest = |side: &[Entity; 5]| -> Option<Transform> { Some(Transform::from_matrix(Mat4::from(plain * globals.get(side[0]).ok()?.affine())) * *locals.get(side[1]).ok()?) };
     let (Some(r), Some(l)) = (rest(&bones.sides[0]), rest(&bones.sides[1])) else { return };
     let rests = [r, l];
     let mid = cam.compute_affine().inverse().transform_point3((r.translation + l.translation) * 0.5);
@@ -195,7 +201,7 @@ fn pose(
             (prop, hand_g * *prop_l),
         ] {
             if let Ok(mut g) = globals.get_mut(e) {
-                *g = GlobalTransform::from(t);
+                *g = GlobalTransform::from(widen * t.compute_affine());
             }
         }
         // The fingers ride the moved hand, each joint on its parent.
@@ -206,7 +212,7 @@ fn pose(
                     let Ok(local) = locals.get(*e) else { break };
                     parent = parent * *local;
                     if let Ok(mut g) = globals.get_mut(*e) {
-                        *g = GlobalTransform::from(parent);
+                        *g = GlobalTransform::from(widen * parent.compute_affine());
                     }
                 }
             }

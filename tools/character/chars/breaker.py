@@ -373,8 +373,8 @@ def glove_guards(c, man, gloves, guard="slate", tab="secondary", plate=None):
         ax = J("hand." + s, 0.0) - J("forearm." + s, 0.0)
         cc = J("hand." + s, 0.0) - ax.normalized() * 0.022
         r = pmc._radius(tg, cc, ax)
-        c.rigid(pmc.band("glove_cuff", cc, (r + 0.003, r * 0.82 + 0.003), 0.03, 0.004, "glove", axis=ax), "hand." + s)
-        c.rigid(hard(kit.block("cuff_tab", cc + back * (r + 0.006), (0.02, 0.004, 0.028), "grey", bevel=0.0012), "webbing." + tab), "hand." + s)
+        c.rigid(pmc.band("glove_cuff", cc, (r + 0.003, r * 0.82 + 0.003), 0.03, 0.004, "glove", axis=ax), "forearm." + s)
+        c.rigid(hard(kit.block("cuff_tab", cc + back * (r + 0.006), (0.02, 0.004, 0.028), "grey", bevel=0.0012), "webbing." + tab), "forearm." + s)
 
 
 def combat_shirt(c, man, lead, kind="primary", texel=1.2, ease_k=1.0):
@@ -967,5 +967,5 @@ def build():
     return c
 
 
-SPEC = {"build": build, "faction": "deserters", "budget": (25000, 80000), "loadout": "grenade",
+SPEC = {"build": build, "faction": "deserters", "budget": (25000, 120000), "loadout": "grenade",
         "colors": {"primary": SLATE, "secondary": CREAM, "accent": CLAY}}

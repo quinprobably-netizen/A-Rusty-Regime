@@ -52,7 +52,7 @@ RECIPE = {
     "olive": "cordura", "tan": "cordura", "ink": "print", "corp": "polymer",
 }
 # Soft goods take fabric wear (fading, fraying, stitches); the rest take hard-surface edge wear.
-SOFT = {"ripstop", "twill", "cordura", "velcro", "webbing", "canvas", "knit", "print", "glove", "leather"}
+SOFT = {"ripstop", "twill", "cordura", "velcro", "webbing", "canvas", "knit", "print", "glove", "leather", "stretch"}
 
 
 def kind_of(m):
@@ -344,11 +344,46 @@ def leather(g, pal, grain=1.0):
     return dict(color=col, rough=g.lerp(crease, 0.55, 0.7), metal=0.0, height=h, bump=0.0004)
 
 
+def stretch(g, pal):
+    """Stretch softshell (a glove's back, a sleeve's insert): a tight jersey knit, matte, a shade
+    lighter than the leather it is sewn to."""
+    base = _scale(pal[0], 1.45)
+    uv = g.uv()
+    u, v, _ = g.xyz(uv)
+    wale = g.lines(u, 0.0009, 0.0003)
+    course = g.lines(v, 0.0007, 0.00025)
+    fib = _fibres(g, uv, 0.8)
+    h = g.add(g.add(g.mul(wale, 0.45), g.mul(course, 0.2)), g.mul(fib, 0.35))
+    shade = g.remap(fib, 0.3, 0.7, 0.94, 1.05, smooth=False)
+    col = g.mix(1.0, base, g.rgb(shade, shade, shade), "MULTIPLY")
+    return dict(color=col, rough=0.86, metal=0.0, height=h, bump=0.00022)
+
+
 def glove(g, pal):
-    """Synthetic-leather palm and fingers with a stretch-nylon feel: fine grain, light creases."""
-    r = leather(g, pal, grain=0.7)
-    r["rough"] = g.lerp(g.noise(g.geo("Position"), 30.0), 0.5, 0.68)
-    return r
+    """A tactical glove: synthetic-leather palm and fingers (fine grain, satin, creased) and, where a
+    part carries the `panel` attribute (signed distance to the palm's edge, m, positive on the back),
+    a stretch-softshell back lapped over the leather and sewn with a row of stitches (`panel_u`: length
+    along the seam). Without the attribute the whole glove is leather (work gloves)."""
+    palm = leather(g, pal, grain=0.7)
+    palm["rough"] = g.lerp(g.noise(g.geo("Position"), 30.0), 0.48, 0.62)
+    back = stretch(g, pal)
+    d = g.attr("panel")
+    m = g.remap(d, -0.00025, 0.00025)
+    col = g.mix(m, palm["color"], back["color"])
+    rough = g.lerp(m, palm["rough"], back["rough"])
+    # Heights in metres here (each recipe's 0..1 height times its bump depth), back to 0..1 below.
+    BUMP = 0.0005
+    h = g.add(g.mul(g.lerp(m, g.mul(palm["height"], palm["bump"]), g.mul(back["height"], back["bump"])), 1.0 / BUMP),
+              g.mul(m, 0.5))  # the back panel stands proud of the leather by its own thickness
+    # The lap edge rolls over, and one row of stitches runs 1.6 mm in from it, dashed.
+    lip = g.mul(m, g.remap(d, 0.0009, 0.0002))
+    row = g.remap(g.math("ABSOLUTE", g.sub(d, 0.0016)), 0.00045, 0.0)
+    dash = g.remap(g.math("FRACT", g.math("DIVIDE", g.attr("panel_u"), 0.0028)), 0.74, 0.64)
+    stitch = g.mul(row, dash)
+    h = g.add(h, g.add(g.mul(lip, 0.35), g.mul(stitch, 0.6)))
+    col = g.mix(g.mul(stitch, 0.8), col, _scale(pal[0], 2.4))
+    rough = g.lerp(stitch, rough, 0.7)
+    return dict(color=col, rough=rough, metal=0.0, height=h, bump=BUMP)
 
 
 def rubber(g, pal):
@@ -458,7 +493,7 @@ def eye(g, pal):
 
 
 RECIPES = {"ripstop": ripstop, "twill": twill, "cordura": cordura, "velcro": velcro, "webbing": webbing,
-           "canvas": canvas, "knit": knit, "print": print_, "leather": leather, "glove": glove,
+           "canvas": canvas, "knit": knit, "print": print_, "leather": leather, "glove": glove, "stretch": stretch,
            "rubber": rubber, "polymer": polymer, "metal": metal, "glass": glass, "hair": hair,
            "skin": skin, "eye": eye}
 
@@ -700,9 +735,38 @@ def scale_islands(obj, factor_of):
     bm.free()
 
 
+# The first-person arms sit a forearm's length from the eye: islands on the hands and forearms get
+# this many times the atlas's texel density (blended by how much of the island those bones lead).
+HAND_TEXEL = 3.0
+FOREARM_TEXEL = 2.0
+
+
+def _near_eye(obj):
+    """island faces -> texel factor for the first-person view, from the part's bone weights: the
+    hands (palm and fingers) HAND_TEXEL, the forearms FOREARM_TEXEL, elsewhere 1."""
+    names = {g.index: g.name for g in obj.vertex_groups}
+    hand = {i for i, n in names.items() if n.startswith(("hand.", "f_", "prop_hand."))}
+    fore = {i for i, n in names.items() if n.startswith("forearm.")}
+    if not hand and not fore:
+        return None
+    me = obj.data
+    wh = np.zeros(len(me.vertices))
+    wf = np.zeros(len(me.vertices))
+    for v in me.vertices:
+        tot = sum(g.weight for g in v.groups) or 1.0
+        wh[v.index] = sum(g.weight for g in v.groups if g.group in hand) / tot
+        wf[v.index] = sum(g.weight for g in v.groups if g.group in fore) / tot
+
+    def fn(isl):
+        vs = list({v.index for f in isl for v in f.verts})
+        return 1.0 + (HAND_TEXEL - 1.0) * float(wh[vs].mean()) + (FOREARM_TEXEL - 1.0) * float(wf[vs].mean())
+    return fn
+
+
 def layout(objs, margin=0.0025):
-    """Lay every part's UVs into one atlas: equal texel density (then each object's "texel" factor and
-    each island's own, see scale_islands), packed together. Call fabric_uvs first."""
+    """Lay every part's UVs into one atlas: equal texel density (then each object's "texel" factor,
+    each island's own, see scale_islands, and the first-person boost on the hands and forearms, see
+    _near_eye), packed together. Call fabric_uvs first."""
     bpy.ops.object.select_all(action="DESELECT")
     for o in objs:
         o.select_set(True)
@@ -716,8 +780,9 @@ def layout(objs, margin=0.0025):
         k = o.get("texel", 1.0)
         fn = _TEXEL_FN.get(o.name)
         fn = fn(o) if fn else None
-        if k != 1.0 or fn:
-            scale_islands(o, (lambda isl, k=k, fn=fn: k * (fn(isl) if fn else 1.0)))
+        eye = _near_eye(o)
+        if k != 1.0 or fn or eye:
+            scale_islands(o, (lambda isl, k=k, fn=fn, eye=eye: k * (fn(isl) if fn else 1.0) * (eye(isl) if eye else 1.0)))
     bpy.ops.object.mode_set(mode="EDIT")
     bpy.ops.mesh.select_all(action="SELECT")
     bpy.ops.uv.select_all(action="SELECT")
@@ -811,7 +876,9 @@ def bake(cid, groups, size=TEX, tmpdir=None, samples=10):
         build(m, imgs)
     for h in highs:
         h.hide_render = True
-    for name, kind, smp in (("color", "EMIT", samples), ("orm", "EMIT", samples), ("normal", "NORMAL", 1)):
+    # The normal pass takes several samples too: one sample per texel point-samples the micro-detail
+    # (leather grain, weave) and aliases it into speckle.
+    for name, kind, smp in (("color", "EMIT", samples), ("orm", "EMIT", samples), ("normal", "NORMAL", 6)):
         sc.cycles.samples = smp
         set_pass(mats, name)
         for gr in groups:

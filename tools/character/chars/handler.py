@@ -285,7 +285,7 @@ def build():
     head_arm = Armour(c, "armour_head", texel=2.0)
 
     # ---------------------------------------------------------------- gloves (the Contractor's)
-    gloves = real.gloves(c, man, "glove", cuff=0.042)
+    gloves = real.gloves(c, man, "glove", cuff=0.042, knuckle="grey")
     tg = tree(gloves)
     for s, sx in (("L", 1), ("R", -1)):
         W = Vector(b.rest["hand." + s][0])
@@ -297,21 +297,15 @@ def build():
         if Pn.x * sx > 0:
             Pn = -Pn
         back = -Pn
-        mid = sum(mcp, Vector()) / 4
-        loc, _ = hit(tg, mid + back * 0.12, -back)
-        loc = loc if loc is not None else mid + back * 0.02
-        guard = kit.block("knuckle", (0, 0, 0), (0.074, 0.011, 0.024), "grey", bevel=0.0028)
-        ridges = [kit.block("knuckle_ridge", (x, 0.0062, 0), (0.01, 0.0026, 0.018), "black", bevel=0.0) for x in (-0.019, 0.0, 0.019)]
         M = Matrix((T, back, Lh)).transposed().to_4x4()
-        M.translation = loc + back * 0.0055 - Lh * 0.004
-        for o in [guard] + ridges:
-            o.data.transform(M)
-            c.rigid(o, "hand." + s)
         ax = J("hand." + s, 0.0) - J("forearm." + s, 0.0)
         cc = J("hand." + s, 0.0) - ax.normalized() * 0.022
         r = _radius(tg, cc, ax)
-        c.rigid(band("glove_cuff", cc, (r + 0.003, r * 0.82 + 0.003), 0.03, 0.004, "glove", axis=ax), "hand." + s)
-        c.rigid(kit.block("cuff_tab", cc + back * (r + 0.006), (0.02, 0.004, 0.028), "hazard", bevel=0.0012), "hand." + s)
+        c.rigid(band("glove_cuff", cc, (r + 0.003, r * 0.82 + 0.003), 0.03, 0.004, "glove", axis=ax), "forearm." + s)
+        tab = kit.block("cuff_tab", (0, 0, 0), (0.02, 0.004, 0.028), "hazard", bevel=0.0012)
+        M.translation = cc + back * (r + 0.005)
+        tab.data.transform(M)
+        c.rigid(tab, "forearm." + s)
 
     # ---------------------------------------------------------------- combat shirt (the Contractor's)
     neck = J("neck", 0.0)
@@ -713,5 +707,5 @@ def build():
     return c
 
 
-SPEC = {"build": build, "faction": "pmc", "budget": (25000, 80000), "loadout": "smg",
+SPEC = {"build": build, "faction": "pmc", "budget": (25000, 120000), "loadout": "smg",
         "colors": {"primary": "#b9bec6", "secondary": "#33383f", "accent": "#c9a227"}}
