@@ -402,17 +402,18 @@ class Anatomy(kit.Build):
     (centre to centre, at the 1.80 m scale) and turn out `toe_out` degrees. `width` widens the
     shoulders, `bulk` thickens limbs and torso (both 1.0 = the base body).
 
-    The hands close into fists around the weapon grips: each grip is a cylinder of radius `grip`
-    (right hand, left hand) along the knuckle line, and prop_hand.R / prop_hand.L sit on its axis
-    with the kit's orientation (see kit's module doc). `trigger` keeps the right index finger
-    straighter, along the trigger guard.
+    The hands rest open and relaxed (a light curl, the thumb slightly opposed); weapon grips are
+    poses solved on top by grips.py. prop_hand.R / prop_hand.L are the palm frames (see kit's module
+    doc): origin on the palm's skin under the middle and ring knuckles, Y wrist to knuckles, Z out of
+    the palm. Each finger bone rolls so its Z points out of the palm too, so flexion is a positive
+    turn about its X on both hands.
 
     Besides kit.Build's fields (`k`, `hip_z`, `bones`, `all`, `j()`) it keeps what the body fit needs:
     `base` (bone -> (head, tail) in the scaled A-pose), `fit` (bone -> 4x4 matrix taking the A-pose
-    bone onto its rest pose, fingers curled), `fingers` and `m` (the raw measurement)."""
+    bone onto its rest pose, fingers relaxed), `rest`, `finger_r`, `palm` (per side: the hand frame
+    at rest, see `_relax`) and `m` (the raw measurement)."""
 
-    def __init__(self, height=1.80, width=1.0, bulk=1.0, body="male", arm_hang=8.0, stance=0.20, toe_out=9.0,
-                 grip=(0.0165, 0.021), trigger=True, sole=0.0):
+    def __init__(self, height=1.80, width=1.0, bulk=1.0, body="male", arm_hang=8.0, stance=0.20, toe_out=9.0, sole=0.0):
         m = measure(body)
         self.body, self.m = body, m
         self.height, self.width, self.bulk, self.legs = height, width, bulk, 0.55
@@ -475,12 +476,14 @@ class Anatomy(kit.Build):
             else:
                 fit[n] = Up.copy()
         rest = {n: (fit[n] @ h, fit[n] @ t, p) for n, (h, t, p) in base.items()}
-        # The fists: fingers curled around each grip cylinder (left hand solved, right mirrored with
-        # its own grip size and trigger finger).
+        # The hands: a relaxed curl at rest (solved on the left, mirrored for the right), the palm
+        # frames and each finger bone's roll.
         self.grips = {}
-        for side, r_g in (("L", grip[1]), ("R", grip[0])):
-            curls, frame = self._fist(rest, side, r_g, trigger and side == "R")
+        self.rolls = {}
+        for side in ("L", "R"):
+            curls, frame, rolls = self._relax(rest, side)
             self.grips[side] = frame
+            self.rolls.update(rolls)
             arm = F_arm if side == "L" else _mirror_matrix(F_arm)
             for n, M in curls.items():
                 fit[n[:-2] + "." + side] = M @ arm
@@ -501,10 +504,10 @@ class Anatomy(kit.Build):
         self.hip_z = game["hips"][0][2]
         self.bones = {n: v for n, v in game.items() if not n.endswith(".R")}
         self.all = dict(game)
-        # The finger bones, curled into the rest fists.
+        # The finger bones in their relaxed rest, each rolled so its Z points out of the palm.
         for n, (h, t, p) in self.base.items():
             if n.startswith("f_"):
-                self.all[n] = (tuple(fit[n] @ h), tuple(fit[n] @ t), p)
+                self.all[n] = (tuple(fit[n] @ h), tuple(fit[n] @ t), p, tuple(self.rolls[n]))
         for side in ("L", "R"):
             at, fwd, up = self.grips[side]
             self.all["prop_hand." + side] = (tuple(at), tuple(at + fwd * 0.08), "hand." + side, tuple(up))
@@ -530,77 +533,73 @@ class Anatomy(kit.Build):
             return tuple((_v(e) + Vector((0, 0, z0))) * self.s + Vector((0, 0, self.sole)) for e in v)
         return (_v(v) + Vector((0, 0, z0))) * self.s + Vector((0, 0, self.sole))
 
-    def _fist(self, rest, side, r_g, trigger):
-        """Curl the left-hand fingers (mirrored for the right) around a grip cylinder. Returns the
-        finger bones' extra pose matrices (on top of the arm's) and the grip frame (at, fwd, up)."""
-        # Solved on the left hand (the bodies are symmetric); the right hand's result is mirrored.
+    def _relax(self, rest, side):
+        """The relaxed rest hand, solved on the left (the bodies are symmetric) and mirrored for the
+        right: the finger bones' extra pose matrices (over the arm's), the palm frame (origin, Y, Z)
+        and each finger bone's Z direction (out of the palm) for its roll, in rest space."""
         sx = 1 if side == "L" else -1
-
-        def pt(p):
-            return Vector(p)
-        W = pt(rest["hand.L"][0])
-        mid = pt(rest["hand.L"][1])
-        L = (mid - W).normalized()
-        T = pt(rest["f_index.1.L"][0]) - pt(rest["f_pinky.1.L"][0])
-        T = (T - L * T.dot(L)).normalized()
-        Pn = L.cross(T).normalized()
-        if Pn.x > 0:  # the palm faces the body's midline
-            Pn = -Pn
-        palm = (mid - W).length
-        thick = 0.0125 * self.s
-        G = W + L * (0.80 * palm) + Pn * (thick + r_g)
+        W = Vector(rest["hand.L"][0])
+        mid = Vector(rest["hand.L"][1])
+        L, T, Pn, palm, thick = hand_axes(rest, self.s)
         axis_c = L.cross(Pn).normalized()  # flexion: rotating about this brings a finger toward the palm
-        out = {}
+        out, rolls = {}, {}
         for f in FINGERS:
             names = [f"f_{f}.{i}.L" for i in (1, 2, 3)]
-            js = [pt(rest[names[0]][0])] + [pt(rest[n][1]) for n in names]
+            js = [Vector(rest[names[0]][0])] + [Vector(rest[n][1]) for n in names]
             segs = [Matrix() for _ in names]
-            rho = self.finger_r[f]
 
-            def turn(j, R):
+            def turn(j, R, js=js, segs=segs):
                 M = _pivot(R, js[j])
                 for q in range(j + 1, 4):
                     js[q] = M @ js[q]
                 for q in range(j, 3):
                     segs[q] = M @ segs[q]
-
-            def dist(p):
-                d = p - G
-                return (d - T * d.dot(T)).length
             if f == "thumb":
-                # Opposition: swing the thumb across toward the grip, then flex it around.
+                # A little opposition toward the palm, and a light bend.
                 d0 = js[3] - js[0]
-                tgt = (G + T * 0.012 * self.s) - js[0]
-                turn(0, _toward(d0, d0.lerp(tgt, 0.55)))
-                lims = (0, 55, 60)
+                tgt = (W + L * (0.6 * palm) + Pn * (thick + 0.03 * self.s)) - js[0]
+                turn(0, _toward(d0, d0.lerp(tgt, 0.25)))
+                for j, ang in enumerate(REST_THUMB):
+                    turn(j, Matrix.Rotation(math.radians(ang), 3, (js[j + 1] - js[j]).cross(Pn).normalized()))
             else:
-                # Close the spread: each finger parallel to the hand axis, side by side.
+                # Most of the spread closed, the fingers near parallel to the hand, then a light curl.
                 d = js[3] - js[0]
                 dp = (d - Pn * d.dot(Pn)).normalized()
                 ang = math.atan2(dp.cross(L).dot(Pn), dp.dot(L))
-                turn(0, Matrix.Rotation(ang * 0.85, 3, Pn))
-                lims = (88, 105, 75)
-            if trigger and f == "index":
-                for j, ang in enumerate((18, 32, 14)):
+                turn(0, Matrix.Rotation(ang * 0.6, 3, Pn))
+                for j, ang in enumerate(REST_CURL):
                     turn(j, Matrix.Rotation(math.radians(ang), 3, axis_c))
-            else:
-                # Wrap: flex each joint in turn until the next joint lands on the cylinder the finger
-                # hugs (grip radius plus the finger's own, plus a little for the flesh pressing in).
-                hug = r_g + rho + 0.0025 * self.s
-                for j in range(3):
-                    for _ in range(int(lims[j] * 2)):
-                        if dist(js[j + 1]) <= hug:
-                            break
-                        ax = axis_c if f != "thumb" else (js[j + 1] - js[j]).cross(Pn).normalized()
-                        turn(j, Matrix.Rotation(math.radians(0.5), 3, ax))
             for q, n in enumerate(names):
+                z = segs[q].to_3x3() @ Pn
                 out[n] = segs[q] if sx > 0 else _mirror_matrix(segs[q])
+                rolls[n[:-2] + "." + side] = z if sx > 0 else _mirror(z)
+        at = W + L * (PALM_AT * palm) + Pn * thick
+        fwd, up = L, Pn
         if side == "R":
-            fwd, up = (L - T * L.dot(T)).normalized(), T
-            G, fwd, up = _mirror(G), _mirror(fwd), _mirror(up)
-        else:
-            fwd, up = T, Pn
-        return out, (G, fwd, up)
+            at, fwd, up = _mirror(at), _mirror(fwd), _mirror(up)
+        return out, (at, fwd, up), rolls
+
+
+# The relaxed rest hand: flexion at the knuckle, middle and tip joints (degrees), the thumb's bends,
+# and where the palm frame sits along the hand (0 wrist .. 1 middle knuckle).
+REST_CURL = (12.0, 18.0, 8.0)
+REST_THUMB = (0.0, 12.0, 10.0)
+PALM_AT = 0.75
+
+
+def hand_axes(rest, s):
+    """The left hand's frame at rest: L wrist to middle knuckle, T across the knuckles toward the
+    index, Pn out of the palm (the palm faces the body's midline), the palm's length and half
+    thickness."""
+    W = Vector(rest["hand.L"][0])
+    mid = Vector(rest["hand.L"][1])
+    L = (mid - W).normalized()
+    T = Vector(rest["f_index.1.L"][0]) - Vector(rest["f_pinky.1.L"][0])
+    T = (T - L * T.dot(L)).normalized()
+    Pn = L.cross(T).normalized()
+    if Pn.x > 0:
+        Pn = -Pn
+    return L, T, Pn, (mid - W).length, 0.0125 * s
 
 
 def _mirror_matrix(M):
@@ -1658,7 +1657,11 @@ class Char(kit.Char):
             if name in bpy.data.objects:
                 bpy.data.objects[name].data.name = name  # not the base mesh's datablock name
         kit.bind(self.arm)
-        kit.solve_carries(self.b, self.arm)
+        # Every weapon's hand poses for this rig; the carries put the support hand where they put it
+        # on the character's own weapon.
+        import grips
+        poses = grips.solve(self, out_dir)
+        kit.solve_carries(self.b, self.arm, left_rel=grips.carry_frames(poses, carry_weapon(self.id)))
         kit.bake_clips(self.b, self.arm)
         os.makedirs(out_dir, exist_ok=True)
         path = os.path.join(out_dir, f"{self.id}.glb")
@@ -1677,11 +1680,19 @@ class Char(kit.Char):
         for m in mats:
             m.name = m.name + ".baked"
         print(f"wrote {path}: {os.path.getsize(path) // 1024} KB, {n} tris ({time.time() - t0:.0f}s)")
-        import grips  # every weapon's finger poses for this rig
-        grips.solve(self, out_dir)
         if not budget[0] <= n <= budget[1]:
             print(f"WARNING {self.id}: {n} triangles, budget {budget[0]}..{budget[1]}")
         return path
+
+
+def carry_weapon(cid):
+    """The two-handed weapon the character's carries are solved on: its loadout from
+    assets/characters.toml, or the rifle when that is held in one hand."""
+    import tomllib
+    with open(os.path.join(kit.ROOT, "assets", "characters.toml"), "rb") as f:
+        chars = tomllib.load(f).get("character", {})
+    w = chars.get(cid, {}).get("loadout", "rifle")
+    return w if w not in ("pistol", "revolver", "fist") else "rifle"
 
 
 def _drop_under(flesh, unders):

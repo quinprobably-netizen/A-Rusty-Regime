@@ -7,7 +7,8 @@ Runs inside Blender's Python (`bpy`), headless:
     tools/character/build.sh --check            # verify every glb (bones, clips, meshes, triangles)
     tools/character/build.sh --preview runner   # also render look-dev images to screenshots/characters/
     tools/character/build.sh --no-bake runner   # skip the wear texture bake (fast iteration)
-    tools/character/build.sh --grips runner     # re-solve only the finger poses on each weapon
+    tools/character/build.sh --grips runner     # re-solve only the hand poses on each weapon
+    tools/character/build.sh --hands runner     # render the built hands on each weapon (a check)
 
 Each character lives in chars/<id>.py with a `build()` returning a kit.Char and a `SPEC` dict. The
 contract (skeleton, grip frames, meshes, clips): docs/superpowers/specs/2026-10-18-character-roster-design.md.
@@ -67,6 +68,11 @@ def main():
         sys.exit(1 if bad else 0)
     if "--grips" in sys.argv:
         solve_grips(ids)
+    if "--hands" in sys.argv:
+        import grips
+        for cid in ids:
+            print("\n".join(grips.render(cid)))
+    if "--grips" in sys.argv or "--hands" in sys.argv:
         return
     for cid in ids:
         s = spec(cid)

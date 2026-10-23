@@ -6,6 +6,8 @@ detail and look as the custom weapons (2026-10-18-custom-weapons-design.md): bev
 parts, cut panels, screws, straps, raised markings, baked edge wear and cavity dirt. Our own designs,
 built in code with headless Blender, free and reproducible.
 
+> **2026-10-22:** the hand rig, grip frames and finger poses described below were rebuilt; see `2026-10-22-rig-rebuild-design.md` (open rest hands, palm frames, solved holds on every weapon).
+
 ## Factions
 
 | Faction | Idea | Visual language |

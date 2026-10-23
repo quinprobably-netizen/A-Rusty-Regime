@@ -30,7 +30,8 @@ const DATA_PATH: &str = "assets/characters.toml";
 const DEFAULT_DATA: &str = include_str!("../assets/characters.toml");
 /// The skinned meshes in every character glb.
 pub const MESHES: [&str; 3] = ["mesh.body", "mesh.head", "mesh.arms"];
-/// The right hand's grip frame: the held weapon hangs here.
+/// The palm frames (origin on the palm's skin, +Y wrist to knuckles, +Z out of the palm): the held
+/// weapon hangs under the right one.
 pub const GRIP_R: &str = "prop_hand.R";
 pub const GRIP_L: &str = "prop_hand.L";
 
@@ -67,27 +68,22 @@ impl Pose {
 }
 
 /// Where a weapon model's hands go, in the weapon's glTF space (-Z down the barrel, +Y up, the
-/// trigger at the origin): the right fist's centre, and the support hand's (with the bone it rides,
-/// like the shotgun's pump) for weapons held in two hands. Each grip frame in the character rig
-/// points down the barrel with the weapon's up as its Z, so only the points are needed. The table is
-/// `assets/grips.toml`, shared with the finger solver in `tools/character`.
+/// trigger at the origin): the middle of the pistol grip, and the support hand's hold (with the bone
+/// it rides, like the shotgun's pump) for weapons held in two hands. The table is
+/// `assets/grips.toml`; the solver in `tools/character/grips.py` fits each hold's cylinder round
+/// these points and writes every character's palm frames and finger poses (`fingers::Solved`),
+/// which the game uses first. The points only place a right hand with no solved pose.
 pub struct Hands {
     pub right: Vec3,
     pub left: Option<(Vec3, String)>,
-    /// Where the support fist closes: on the handguard, and on each foregrip when fitted.
-    pub cradle: Option<Vec3>,
-    pub vertical: Option<Vec3>,
-    pub angled: Option<Vec3>,
 }
 
+/// The table's holds (`cradle`, `vertical`, `angled`) are the solver's; the game only needs these.
 #[derive(Deserialize)]
 struct GripDef {
     right: [f32; 3],
     left: Option<[f32; 3]>,
     left_bone: Option<String>,
-    cradle: Option<[f32; 3]>,
-    vertical: Option<[f32; 3]>,
-    angled: Option<[f32; 3]>,
 }
 
 pub fn hands(kind: WeaponKind) -> &'static Hands {
@@ -97,20 +93,21 @@ pub fn hands(kind: WeaponKind) -> &'static Hands {
         defs.into_iter()
             .map(|(id, d)| {
                 let left = d.left.map(|l| (Vec3::from_array(l), d.left_bone.unwrap_or_else(|| "root".into())));
-                let v = |p: Option<[f32; 3]>| p.map(Vec3::from_array);
-                (id, Hands { right: Vec3::from_array(d.right), left, cradle: v(d.cradle), vertical: v(d.vertical), angled: v(d.angled) })
+                (id, Hands { right: Vec3::from_array(d.right), left })
             })
             .collect()
     });
     table.get(kind.id()).unwrap_or_else(|| panic!("assets/grips.toml has no [{}]", kind.id()))
 }
 
-/// Weapon space to grip-frame space: the barrel (-Z) runs down the frame's +Y, up (+Y) along its +Z.
+/// Weapon space to the right palm frame with no solved pose: the barrel (-Z) runs down the frame's
+/// +Y (wrist to knuckles), the gun's left (-X) out of the palm (+Z), and up (+Y) along its +X
+/// (toward the thumb).
 pub fn grip_rotation() -> Quat {
-    Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)
+    Quat::from_mat3(&Mat3::from_cols(Vec3::Y, Vec3::NEG_Z, Vec3::NEG_X)).inverse()
 }
 
-/// Where a weapon model sits under the right grip frame so its grip lands in the fist.
+/// Where a weapon model sits under the right palm frame so its grip lands in the palm.
 pub fn held_transform(kind: WeaponKind) -> Transform {
     let rot = grip_rotation();
     Transform { translation: -(rot * hands(kind).right), rotation: rot, scale: Vec3::ONE }
@@ -724,12 +721,14 @@ mod tests {
     }
 
     #[test]
-    fn weapons_land_in_the_fist() {
+    fn weapons_land_in_the_palm() {
         for kind in WEAPONS {
             let t = held_transform(kind);
             assert!(t.transform_point(hands(kind).right).length() < 1e-5, "{kind:?} grip at the frame origin");
-            // The barrel (-Z) runs down the frame's +Y.
+            // The barrel (-Z) runs down the frame's +Y, the gun's left out of the palm, up toward the thumb.
             assert!((t.rotation * Vec3::NEG_Z).distance(Vec3::Y) < 1e-5);
+            assert!((t.rotation * Vec3::NEG_X).distance(Vec3::Z) < 1e-5);
+            assert!((t.rotation * Vec3::Y).distance(Vec3::X) < 1e-5);
         }
     }
 

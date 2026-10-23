@@ -1,11 +1,10 @@
-# Where each weapon model's hands go, in the weapon's glTF space (-Z down the barrel, +Y up, the
-# trigger at the origin): the right fist's centre, and the support hand's with the bone it rides
-# (like the shotgun's pump) for weapons held in two hands. Read by the game (src/character.rs) and by
-# the finger solver (tools/character/grips.py), which writes each character's finger poses.
-# The support hand's fist closes around `cradle` (the middle of the handguard, or its lowest 4 cm
-# where it is too deep to grip), around `vertical` on a vertical foregrip, and around `angled` just
-# behind an angled one, its heel against the grip's back.
-
+# Where each weapon's holds are, in the weapon's glTF space (-Z down the barrel, +Y up, the trigger
+# at the origin): `right` is the middle of the pistol grip, `cradle` the middle of the handguard (or
+# the pump, with `left_bone` the bone it rides), `vertical` and `angled` the foregrips when fitted.
+# tools/character/grips.py fits each hold's cylinder round its point in the weapon mesh and solves
+# every character's palm frames and finger poses (assets/models/character/<id>.grips.toml); the game
+# (src/character.rs) reads only `right`, `left` and `left_bone`, to hang a weapon with no solved pose
+# and to know which bone the support hand rides.
 [rifle]
 right = [0.0, -0.038, 0.030]
 left = [0.0, 0.03, -0.20]
