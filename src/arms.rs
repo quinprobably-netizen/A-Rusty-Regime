@@ -31,9 +31,10 @@ const BLADE: f32 = -0.3;
 const BLADE_AIMED: f32 = -0.45;
 /// Where the elbows point, in camera space: right, left. The left elbow flares out to the left so the
 /// forearm rises from the lower left corner to the handguard, seen from its side rather than end
-/// on, aimed or not.
+/// on, aimed or not. Aimed, the right elbow swings out to the side as a shooter's does: hanging
+/// below, it stood the forearm on end and its sleeve rose past the sights.
 const POLE: [Vec3; 2] = [Vec3::new(0.5, -1.0, 0.3), Vec3::new(-1.0, -0.3, 0.2)];
-const POLE_AIMED: Vec3 = Vec3::new(-0.5, -1.0, 0.0);
+const POLE_AIMED: [Vec3; 2] = [Vec3::new(1.0, -0.3, 0.2), Vec3::new(-0.5, -1.0, 0.0)];
 /// Where the left wrist waits, out of view, when the weapon takes one hand.
 const LEFT_REST: Vec3 = Vec3::new(-0.2, -0.7, 0.05);
 /// How far an arm may stretch to reach a far support point.
@@ -180,7 +181,7 @@ fn pose(
             }
             None => (cam.transform_point(LEFT_REST), None),
         };
-        let pole = cam.rotation * if i == 1 { POLE[1].lerp(POLE_AIMED, ads) } else { POLE[0] };
+        let pole = cam.rotation * POLE[i].lerp(POLE_AIMED[i], ads);
         let (elbow, end, k) = solve(s, wrist, fore_l.translation.length(), hand_l.translation.length(), pole);
         let upper_rot = Quat::from_rotation_arc(upper_rest.rotation * Vec3::Y, (elbow - s).normalize()) * upper_rest.rotation;
         let fore_rest = upper_rot * fore_l.rotation;

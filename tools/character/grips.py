@@ -382,7 +382,7 @@ def _clear(rig, w, key, pose, extra):
 
     def measure(only=None):
         """The deepest point of each part of the glove inside the gun (m): the palm (with the heel of
-        the thumb) and each finger, or just finger `only`."""
+        the thumb) and each finger; or, for just finger `only`, that and how far its tip is off the gun."""
         for pb in arm.pose.bones:
             pb.rotation_quaternion = (1, 0, 0, 0)
         for f in FINGERS:
@@ -399,7 +399,8 @@ def _clear(rig, w, key, pose, extra):
         def deepest(bones):
             return max((_inside(solids, to_w @ me.vertices[i].co, tree) for n in bones for i in groups[n]), default=0.0)
         if only:
-            out = deepest([f"f_{only}.{i}.{side}" for i in (1, 2, 3)])
+            tip = min((tree.find_nearest(to_w @ me.vertices[i].co, 0.1)[3] or 0.1 for i in groups[f"f_{only}.3.{side}"]), default=0.0)
+            out = (deepest([f"f_{only}.{i}.{side}" for i in (1, 2, 3)]), tip)
         else:
             out = {"palm": deepest(["hand." + side, f"f_thumb.1.{side}"])}
             out.update({f: deepest([f"f_{f}.{i}.{side}" for i in (1, 2, 3)]) for f in FINGERS})
@@ -413,6 +414,9 @@ def _clear(rig, w, key, pose, extra):
         qx, qy, qz, qw = qs[j]
         q = Quaternion((qw, qx, qy, qz)) @ Quaternion(axis, math.radians(deg))
         return list(qs[:j]) + [(q.x, q.y, q.z, q.w)] + list(qs[j + 1:])
+
+    def cost(deep, tip):
+        return max(deep - CLEAR, 0.0) * 4 + tip
 
     best = (math.inf, None)
     for n in range(25):
@@ -436,8 +440,9 @@ def _clear(rig, w, key, pose, extra):
             scored = []
             for t in tries:
                 pose[f] = t
-                scored.append((measure(f), len(scored), t))
-            pose[f] = min(scored)[2] if min(scored)[0] < depth[f] else tries[0]
+                scored.append((cost(*measure(f)), len(scored), t))
+            # Out of the gun, but still holding it: a thumb freed by pointing it at the sky is no grip.
+            pose[f] = min(scored)[2] if min(scored)[0] < cost(depth[f], 0.0) else tries[0]
     pose.update(best[1])
 
 
