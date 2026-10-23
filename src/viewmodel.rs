@@ -119,6 +119,8 @@ const SHOWCASE: Vec3 = Vec3::new(0.22, -0.02, -0.95);
 const IRONS_HEIGHT: f32 = 0.012;
 /// How far in front of the eye a scope's eyepiece sits when aimed.
 const EYE_RELIEF: f32 = 0.13;
+/// Aim level past which the stock is hidden.
+const STOCK_HIDDEN: f32 = 0.8;
 
 /// Where the viewmodel sits when fully aimed with optic part `optic` fitted (irons, red dot, scope).
 fn aimed_at(rig: &Rig, kind: WeaponKind, optic: usize) -> Option<Vec3> {
@@ -390,8 +392,16 @@ fn play_clips(
     }
 }
 
-/// Show exactly the fitted part per slot on the current gunsmith weapon.
-fn show_parts(loadout: Res<Loadout>, arsenal: Res<Arsenal>, models: Query<&WeaponModel>, mut vis: Query<&mut Visibility>) {
+/// Show exactly the fitted part per slot on the current gunsmith weapon. Aimed, the stock is
+/// hidden: it runs back past the eye and would fill the bottom of the view.
+fn show_parts(
+    loadout: Res<Loadout>,
+    arsenal: Res<Arsenal>,
+    aim: Option<Res<crate::weapon::Aim>>,
+    models: Query<&WeaponModel>,
+    mut vis: Query<&mut Visibility>,
+) {
+    let aimed = aim.is_some_and(|a| a.level > STOCK_HIDDEN);
     for model in &models {
         let Some(rig) = &model.rig else { continue };
         let kind = WEAPONS[model.index];
@@ -406,7 +416,7 @@ fn show_parts(loadout: Res<Loadout>, arsenal: Res<Arsenal>, models: Query<&Weapo
             }
         }
         for &(e, slot, part) in &rig.parts {
-            let fitted = customizable(kind) && loadout.part(kind, slot) == part;
+            let fitted = customizable(kind) && loadout.part(kind, slot) == part && !(slot == 3 && aimed && model.index == arsenal.current);
             let want = if fitted { Visibility::Inherited } else { Visibility::Hidden };
             if let Ok(mut v) = vis.get_mut(e)
                 && *v != want

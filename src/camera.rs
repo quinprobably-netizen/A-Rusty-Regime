@@ -34,6 +34,9 @@ fn spawn_camera(mut commands: Commands, tuning: Res<Tuning>) {
         Camera3d::default(),
         Projection::from(PerspectiveProjection {
             fov: tuning.fov_degrees.to_radians(),
+            // At ADS the rifle's stock sits a few cm from the eye; the default 0.1 m sliced it into a
+            // dark ring. Bevy's reverse-Z depth keeps a small near plane precise.
+            near: 0.02,
             ..default()
         }),
         Transform::default(),
