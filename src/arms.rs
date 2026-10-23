@@ -19,18 +19,27 @@ use crate::gunsmith::Loadout;
 use crate::controller::Player;
 use crate::vehicle::Driving;
 use crate::viewmodel::{ViewModel, WeaponModel, model_space};
-use crate::weapon::{Arsenal, WEAPONS};
+use crate::weapon::{Aim, Arsenal, WEAPONS};
 
-/// Where the shoulders' midpoint sits, in camera space.
+/// Where the shoulders' midpoint sits, in camera space, and lower when aiming (the cheek comes
+/// down to the stock).
 const SHOULDERS: Vec3 = Vec3::new(0.0, -0.26, 0.12);
-/// The torso turns so the left shoulder leads, like a rifle stance (radians).
+const SHOULDERS_AIMED: Vec3 = Vec3::new(0.0, -0.30, 0.10);
+/// The torso turns so the left shoulder leads, like a rifle stance (radians); squarer behind the
+/// gun when aiming, so the support arm rises under the weapon instead of across the view.
 const BLADE: f32 = -0.45;
-/// Elbows point down and out, in camera space: right, left.
-const POLE: [Vec3; 2] = [Vec3::new(0.5, -1.0, 0.3), Vec3::new(-0.15, -1.0, 0.2)];
+const BLADE_AIMED: f32 = -1.0;
+/// Elbows point down, in camera space: right, left. The left elbow tucks under the gun so its
+/// forearm rises behind the weapon instead of crossing the view, further so when aiming.
+const POLE: [Vec3; 2] = [Vec3::new(0.5, -1.0, 0.3), Vec3::new(-0.2, -1.0, 0.0)];
+const POLE_AIMED: Vec3 = Vec3::new(0.3, -1.0, 0.0);
 /// Where the left wrist waits, out of view, when the weapon takes one hand.
 const LEFT_REST: Vec3 = Vec3::new(-0.2, -0.7, 0.05);
 /// How far an arm may stretch to reach a far support point.
 const MAX_STRETCH: f32 = 1.25;
+/// The first-person arms are drawn this much slimmer than the character's: a sleeve a hand's
+/// breadth from the eye fills the view otherwise.
+const SLIM: f32 = 0.75;
 
 pub struct ArmsPlugin;
 
@@ -94,6 +103,7 @@ fn pose(
     arms: Single<(Entity, &Rig, &mut Transform, &mut Visibility, Option<&ArmBones>, Option<&FingerBones>), (With<Arms>, Without<ViewModel>)>,
     solved: Option<Res<Solved>>,
     loadout: Option<Res<Loadout>>,
+    aim: Option<Res<Aim>>,
     children: Query<&Children>,
     names: Query<&Name>,
     locals: Query<&Transform, Without<Arms>>,
@@ -139,12 +149,15 @@ fn pose(
     let left = h.left.as_ref().and_then(|(_, bone)| frame(bone, pose(left_pose(kind, loadout.as_deref())).or_else(|| pose("L")).map(placed)));
     let targets = [right, left];
 
-    // Keep the shoulders where they belong under the eye, whatever the character's height.
+    // Keep the shoulders where they belong under the eye, whatever the character's height, and
+    // square the stance behind the gun as it comes up to the eye.
+    let ads = aim.as_ref().map_or(0.0, |a| a.level);
+    tf.rotation = Quat::from_rotation_y(PI + BLADE.lerp(BLADE_AIMED, ads));
     let rest = |side: &[Entity; 5]| -> Option<Transform> { Some(globals.get(side[0]).ok()?.compute_transform() * *locals.get(side[1]).ok()?) };
     let (Some(r), Some(l)) = (rest(&bones.sides[0]), rest(&bones.sides[1])) else { return };
     let rests = [r, l];
     let mid = cam.compute_affine().inverse().transform_point3((r.translation + l.translation) * 0.5);
-    let fix = SHOULDERS - mid;
+    let fix = SHOULDERS.lerp(SHOULDERS_AIMED, ads) - mid;
     if fix.length() > 1e-3 {
         tf.translation += fix;
     }
@@ -161,7 +174,7 @@ fn pose(
             }
             None => (cam.transform_point(LEFT_REST), None),
         };
-        let pole = cam.rotation * POLE[i];
+        let pole = cam.rotation * if i == 1 { POLE[1].lerp(POLE_AIMED, ads) } else { POLE[0] };
         let (elbow, end, k) = solve(s, wrist, fore_l.translation.length(), hand_l.translation.length(), pole);
         let upper_rot = Quat::from_rotation_arc(upper_rest.rotation * Vec3::Y, (elbow - s).normalize()) * upper_rest.rotation;
         let fore_rest = upper_rot * fore_l.rotation;
@@ -173,7 +186,7 @@ fn pose(
         if twist.length() > 1e-4 {
             fore_rot = fore_rot * Quat::IDENTITY.slerp(twist.normalize(), 0.5);
         }
-        let stretch = Vec3::new(1.0, k, 1.0);
+        let stretch = Vec3::new(SLIM, k, SLIM);
         let hand_g = Transform { translation: end, rotation: hand_rot, scale: Vec3::ONE };
         for (e, t) in [
             (upper, Transform { translation: s, rotation: upper_rot, scale: stretch }),

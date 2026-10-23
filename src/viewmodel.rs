@@ -109,7 +109,7 @@ struct Flash;
 
 /// Where the trigger sits in front of the camera; each model's origin is its trigger. Near enough
 /// that the support arm reaches the handguard with a bent elbow.
-const REST: Vec3 = Vec3::new(0.14, -0.19, -0.33);
+const REST: Vec3 = Vec3::new(0.14, -0.21, -0.26);
 /// Aimed: centred, close to the eye; x and y are replaced by the weapon's own sight line.
 const AIMED_DEPTH: f32 = -0.3;
 /// Where the gun sits in the gunsmith: right of centre, turned to show its side.

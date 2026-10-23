@@ -59,13 +59,13 @@ HOLDS = {
     # The right hand round the pistol grip: the grip leans back, the palm faces the gun's left and a
     # little forward, the thumb at the top.
     "R": Hold("right", (0, 1, -0.4), 0.035, (-1, 0, -0.35), +1, 0.0, "wrap", None),
-    # The support hand cups the handguard from its lower-left corner: the fingers cross under it, wrap
-    # up the far side and lie over its top edge, the thumb runs forward along the near top edge.
-    "cradle": Hold("cradle", (0, 0, -1), 0.05, (0.7, 1, 0), -1, -0.02, "along", None),
+    # The support hand grips the handguard from its near side, the back of the hand toward the eye:
+    # the fingers wrap under it and up the far side, the thumb runs forward over the near top edge.
+    "cradle": Hold("cradle", (0, 0, -1), 0.05, (1, 0.4, 0), -1, 0.0, "along", None),
     # A vertical foregrip is held like a pistol grip with the left hand, thumb up.
     "vertical": Hold("vertical", (0, 1, 0), 0.035, (1, 0, -0.35), -1, 0.0, "wrap", "att.grip.vertical"),
     # An angled grip is a stop: the hand cradles the handguard just behind it.
-    "angled": Hold("angled", (0, 0, -1), 0.05, (0.7, 1, 0), -1, -0.02, "along", "att.grip.angled"),
+    "angled": Hold("angled", (0, 0, -1), 0.05, (1, 0.4, 0), -1, 0.0, "along", "att.grip.angled"),
 }
 # A placed hold: the palm frame in (possibly mirrored) weapon space, its cylinder, and what it needs.
 Frame = namedtuple("Frame", "at rot cen d r extra mirror thumb cap")
