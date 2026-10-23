@@ -9,6 +9,7 @@ Runs inside Blender's Python (`bpy`), headless:
     tools/character/build.sh --no-bake runner   # skip the wear texture bake (fast iteration)
     tools/character/build.sh --grips runner     # re-solve only the hand poses on each weapon
     tools/character/build.sh --hands runner     # render the built hands on each weapon (a check)
+    tools/character/build.sh --eye runner       # render the rifle hands from the player's eye
 
 Each character lives in chars/<id>.py with a `build()` returning a kit.Char and a `SPEC` dict. The
 contract (skeleton, grip frames, meshes, clips): docs/superpowers/specs/2026-10-18-character-roster-design.md.
@@ -72,7 +73,11 @@ def main():
         import grips
         for cid in ids:
             print("\n".join(grips.render(cid)))
-    if "--grips" in sys.argv or "--hands" in sys.argv:
+    if "--eye" in sys.argv:
+        import grips
+        for cid in ids:
+            print("\n".join(grips.render_fp(cid)))
+    if any(a in sys.argv for a in ("--grips", "--hands", "--eye")):
         return
     for cid in ids:
         s = spec(cid)

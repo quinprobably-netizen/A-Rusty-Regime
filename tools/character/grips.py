@@ -658,7 +658,7 @@ def render(cid, weapons=("rifle", "shotgun", "pistol", "dmr", "smg"), out_dir=SH
 
 # Where the game rests the viewmodel's trigger in front of the eye (src/viewmodel.rs REST) and its
 # vertical field of view, for the first-person check renders.
-FP_REST = (0.14, -0.19, -0.33)
+FP_REST = (0.14, -0.21, -0.26)
 FP_FOV = 75.0
 
 
