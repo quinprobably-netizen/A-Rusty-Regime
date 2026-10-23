@@ -59,13 +59,13 @@ HOLDS = {
     # The right hand round the pistol grip: the grip leans back, the palm faces the gun's left and a
     # little forward, the thumb at the top.
     "R": Hold("right", (0, 1, -0.4), 0.035, (-1, 0, -0.35), +1, 0.0, "wrap", None),
-    # The support hand cradles the handguard from below, its knuckles under the left edge so the
-    # fingers cross under it and wrap up the right side, the thumb forward along the left side.
-    "cradle": Hold("cradle", (0, 0, -1), 0.05, (0.25, 1, 0), -1, -0.02, "along", None),
+    # The support hand cups the handguard from its lower-left corner: the fingers cross under it, wrap
+    # up the far side and lie over its top edge, the thumb runs forward along the near top edge.
+    "cradle": Hold("cradle", (0, 0, -1), 0.05, (0.7, 1, 0), -1, -0.02, "along", None),
     # A vertical foregrip is held like a pistol grip with the left hand, thumb up.
     "vertical": Hold("vertical", (0, 1, 0), 0.035, (1, 0, -0.35), -1, 0.0, "wrap", "att.grip.vertical"),
     # An angled grip is a stop: the hand cradles the handguard just behind it.
-    "angled": Hold("angled", (0, 0, -1), 0.05, (0.25, 1, 0), -1, -0.02, "along", "att.grip.angled"),
+    "angled": Hold("angled", (0, 0, -1), 0.05, (0.7, 1, 0), -1, -0.02, "along", "att.grip.angled"),
 }
 # A placed hold: the palm frame in (possibly mirrored) weapon space, its cylinder, and what it needs.
 Frame = namedtuple("Frame", "at rot cen d r extra mirror thumb cap")
@@ -290,12 +290,15 @@ def _hold(w, hold, seed, mirror=False):
     strip = [v for v in sel if abs((v - cen).dot(X)) < 0.025 and abs((v - cen).dot(Y)) < 0.015]
     ext = max((-(v - cen).dot(Z) for v in strip), default=r)
     at = cen - Z * (ext + TOUCH) + Y * hold.shift
-    # A cradled handguard keeps the fingertips at or below its top, out of the sight line.
-    cap = max(v.y for v in sel) if hold.thumb == "along" and not mirror else None
+    # A cradled handguard lets the fingertips lie over its top edge but not rise above it, and lays
+    # the thumb along the near side just under that edge, where the player sees it.
+    cap = max(v.y for v in sel) + 0.012 if hold.thumb == "along" and not mirror else None
     if DEBUG:
         print(f"  hold {hold.point}: axis {tuple(round(x, 2) for x in d)} r {r * 1000:.1f} mm, palm {ext * 1000:.1f} mm from the axis"
               + (f", fingertips under {cap * 1000:.0f} mm" if cap else ""))
-    return Frame(at, rot, cen, d, r, hold.part, mirror, hold.thumb, cap)
+    # The fingers hug the real extent where it is deeper than the fitted cylinder (a boxy handguard),
+    # then settle on the mesh from outside rather than press through it.
+    return Frame(at, rot, cen, d, max(r, ext), hold.part, mirror, hold.thumb, cap)
 
 
 def _moved(F, dt, roll):
@@ -448,6 +451,8 @@ def _pose(c, w, F, trigger=None, probe=False):
                 # on a handguard), straight, its tip laid on the nearest skin of the gun; only backed
                 # off the mesh.
                 ahead = weapon_point(js[0] - X * d0.length)
+                if F.cap is not None:  # on a handguard, up along its top edge
+                    ahead.y = max(ahead.y, F.cap - 0.012 + rho)
                 loc, nrm, _, _ = tree.find_nearest(ahead)
                 tgt = (to_hand(loc + nrm * rho) if loc is not None else js[0] - X * d0.length) - js[0]
                 turn(0, _toward(d0, tgt))
