@@ -16,7 +16,7 @@ use crate::terrain;
 use crate::tuning::{Island, Tuning};
 use crate::targets::{self, Target, TargetsPlugin};
 use crate::island::{Placed, Sites};
-use crate::planet::{self, chunk::{self, ChunkMesh}, quadtree::NodeId};
+use crate::planet::{self, chunk::{self, ChunkMesh}, quadtree::{self, NodeId}};
 use crate::planet::gravity::gravitate;
 use crate::surface::testing::random_dirs;
 use crate::surface::{Origin, Sphere, Surface, QUANTUM};
@@ -764,6 +764,64 @@ fn builder_respects_the_worker_cap() {
         let (mut app, _, _) = streaming_app(workers);
         for _ in 0..200 { app.update(); assert!(app.world().resource::<planet::Chunks>().pending.len() <= workers.max(1)); }
     }
+}
+
+#[test]
+fn only_chunks_inside_the_bubble_are_solid() {
+    let (mut app, _, origin) = streaming_app(4);
+    settle(&mut app);
+    let bubble = app.world().resource::<Tuning>().terrain.bubble;
+    let player_body = origin.body(player(&mut app).0);
+    let mut q = app.world_mut().query::<(&planet::Chunk, Has<Collider>)>();
+    for (c, solid) in q.iter(app.world()) {
+        assert_eq!(solid, quadtree::node_distance(c.node, 2000.0, player_body) <= bubble, "{:?}", c.node);
+    }
+}
+
+#[test]
+fn bodies_outside_the_bubble_freeze_and_wake_on_solid_ground() {
+    let (mut app, sphere, origin) = streaming_app(4);
+    settle(&mut app);
+    let far = Vec3::new(1.0, 0.0, 0.35).normalize(); // about 680 m from the player
+    let start = sphere.surface_point(far) + far * 20.0;
+    let id = app.world_mut().spawn((RigidBody::Dynamic, Collider::cuboid(1.0, 1.0, 1.0), Mass(40.0), Transform::from_translation(origin.world(start)))).id();
+    run(&mut app, 2.0);
+    assert!(app.world().get::<planet::bubble::Frozen>(id).is_some() && app.world().get::<RigidBodyDisabled>(id).is_some());
+    assert!(origin.body(app.world().get::<Transform>(id).unwrap().translation).distance(start) < 1e-3, "did not move");
+    set_player(&mut app, origin.world(sphere.surface_point(far) + far), Vec3::ZERO);
+    settle(&mut app);
+    run(&mut app, 6.0);
+    assert!(app.world().get::<planet::bubble::Frozen>(id).is_none());
+    let height = origin.body(app.world().get::<Transform>(id).unwrap().translation).length() - sphere.surface_point(far).length();
+    assert!(height < 15.0, "fell once woken, {height} m up");
+}
+
+#[test]
+fn a_body_inside_the_bubble_stays_frozen_until_its_ground_is_built() {
+    let (mut app, sphere, origin) = streaming_app(4);
+    let start = sphere.surface_point(Vec3::X) + Vec3::X * 5.0;
+    let id = app.world_mut().spawn((RigidBody::Dynamic, Collider::cuboid(1.0, 1.0, 1.0), Mass(40.0), Transform::from_translation(origin.world(start)))).id();
+    app.update();
+    assert!(app.world().get::<planet::bubble::Frozen>(id).is_some(), "no ground yet");
+    settle(&mut app);
+    run(&mut app, 4.0);
+    assert!(app.world().get::<planet::bubble::Frozen>(id).is_none());
+    assert!(origin.body(app.world().get::<Transform>(id).unwrap().translation).length() < start.length() - 2.0, "fell onto the built ground");
+}
+
+#[test]
+fn the_player_hovers_until_the_ground_under_them_is_built() {
+    let (mut app, sphere, origin) = streaming_app(4);
+    let spawn = origin.body(player(&mut app).0);
+    for _ in 0..8 {
+        app.update();
+        assert!(origin.body(player(&mut app).0).distance(spawn) < 0.01, "held in place with no ground");
+    }
+    settle(&mut app);
+    run(&mut app, 1.0);
+    let body = origin.body(player(&mut app).0);
+    let ground = app.world().resource::<planet::Chunks>().ground(&sphere, body).point;
+    assert!((body.length() - ground.length() - 0.9).abs() < 0.05, "standing on the built ground");
 }
 
 // --- Health and soldiers ---

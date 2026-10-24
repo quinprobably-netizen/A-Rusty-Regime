@@ -1,3 +1,4 @@
+pub mod bubble;
 pub mod chunk;
 pub mod gravity;
 pub mod quadtree;
@@ -8,10 +9,11 @@ use bevy::tasks::{block_on, poll_once, AsyncComputeTaskPool, Task};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::controller::Player;
+use crate::controller::{ControllerSet, Player};
 use crate::surface::{Ground, Origin, Sphere, Surface};
 use crate::tuning::Tuning;
 use chunk::{build_chunk, ChunkMesh};
+use gravity::gravitate;
 use quadtree::{finest_depth, node_distance, select_leaves, NodeId};
 
 /// Height of the course deck's top over the surface point it is built at.
@@ -56,8 +58,8 @@ pub struct Planet {
 
 /// The streaming state. `wanted` is the tiling the player should see; `built` what is spawned,
 /// which can briefly hold both a node and some of its descendants while one replaces the other;
-/// `pending` the builds in flight; `loaded` the built nodes' data; `solid` the built nodes with
-/// colliders.
+/// `pending` the builds in flight; `loaded` the built nodes' data; `solid` the built nodes whose
+/// chunk has a collider, which are those inside the physics bubble.
 #[derive(Resource, Default)]
 pub struct Chunks {
     pub wanted: HashSet<NodeId>,
@@ -67,11 +69,10 @@ pub struct Chunks {
     pub solid: HashSet<NodeId>,
 }
 
-// The ground and solidity lookups are for the physics bubble and the level, which come next.
-#[allow(dead_code)]
 impl Chunks {
     /// The ground under `p_body` on the finest loaded chunk holding its direction, or from the
     /// height function where nothing is loaded.
+    #[allow(dead_code)] // the level reads it next; the tests already do
     pub fn ground(&self, sphere: &Sphere, p_body: Vec3) -> Ground {
         let dir = p_body.try_normalize().unwrap_or(Vec3::Y);
         self.loaded
@@ -82,7 +83,8 @@ impl Chunks {
             .unwrap_or_else(|| sphere.ground(p_body))
     }
 
-    /// Whether the finest built chunk holding the direction of `p_body` has a collider.
+    /// Whether the finest built chunk holding the direction of `p_body` has a collider, that is,
+    /// whether there is built ground inside the physics bubble under it.
     pub fn is_solid(&self, p_body: Vec3) -> bool {
         let dir = p_body.try_normalize().unwrap_or(Vec3::Y);
         self.built.keys().filter(|n| n.contains(dir)).max_by_key(|n| n.depth).is_some_and(|n| self.solid.contains(n))
@@ -91,7 +93,6 @@ impl Chunks {
 
 /// A spawned terrain chunk.
 #[derive(Component)]
-#[allow(dead_code)] // the physics bubble reads the node
 pub struct Chunk {
     pub node: NodeId,
 }
@@ -120,7 +121,10 @@ impl Plugin for PlanetPlugin {
 pub fn add_streaming(app: &mut App) {
     let Some(Surface::Sphere(sphere)) = app.world().get_resource::<Surface>().cloned() else { return };
     let max_depth = finest_depth(sphere.sea_radius(), app.world().resource::<Tuning>().terrain.cell);
-    app.insert_resource(Planet { sphere, max_depth }).init_resource::<Chunks>().add_systems(Update, (plan, apply).chain());
+    app.insert_resource(Planet { sphere, max_depth })
+        .init_resource::<Chunks>()
+        .add_systems(Update, (plan, apply, bubble::solidify).chain())
+        .add_systems(FixedUpdate, (bubble::freeze.before(gravitate), bubble::hold_player).before(ControllerSet));
 }
 
 /// Nearest the focus first; ties in a fixed order, so the same state always plans the same way.
@@ -216,10 +220,10 @@ fn apply(
         }
         if player_body.is_some_and(|p| node_distance(node, planet.sphere.sea_radius(), p) <= tuning.terrain.bubble) {
             e.insert(built.collider());
+            chunks.solid.insert(node);
         }
         chunks.built.insert(node, e.id());
         chunks.loaded.insert(node, built);
-        chunks.solid.insert(node);
         applied += 1;
     }
 }
