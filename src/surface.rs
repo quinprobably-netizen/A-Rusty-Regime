@@ -113,12 +113,12 @@ impl Surface {
     }
 
     /// Gravitational acceleration at `p`. `flat_g` is the flat world's strength; a sphere uses
-    /// its body's sea-level gravity at `radius`, falling off with the inverse square.
+    /// its body's gravity at sea level, falling off with the inverse square.
     pub fn gravity(&self, p: Vec3, flat_g: f32) -> Vec3 {
         match self {
             Surface::Flat => Vec3::NEG_Y * flat_g,
             Surface::Sphere(s) => {
-                let r = s.radius() / p.length().max(1.0);
+                let r = s.sea_radius() / p.length().max(1.0);
                 -self.up(p) * s.body.gravity * r * r
             }
         }
@@ -233,7 +233,7 @@ mod tests {
         for dir in testing::random_dirs(1000) {
             assert_eq!(a.height(dir), b.height(dir));
             differs |= a.height(dir) != other.height(dir);
-            assert!((-36.2..=84.2).contains(&a.height(dir)), "{}", a.height(dir));
+            assert!((-3.2..=7.2).contains(&a.height(dir)), "{}", a.height(dir));
         }
         assert!(differs);
     }
@@ -255,9 +255,9 @@ mod tests {
     #[test]
     fn gravity_points_at_the_centre_and_falls_off() {
         let s = Surface::Sphere(Arc::new(Sphere::new(Body::test_moon())));
-        let g = s.gravity(Vec3::X * 2000.0, 1.0);
+        let g = s.gravity(Vec3::X * 1000.0, 1.0);
         assert!((g.length() - 9.8).abs() < 1e-4 && g.normalize().dot(Vec3::NEG_X) > 0.99999);
-        assert!((s.gravity(Vec3::X * 4000.0, 1.0).length() - 2.45).abs() < 1e-4);
+        assert!((s.gravity(Vec3::X * 2000.0, 1.0).length() - 2.45).abs() < 1e-4);
         assert_eq!(s.altitude(Vec3::X * 1000.0), 0.0); // the test moon's sea radius is 1000 m
     }
 

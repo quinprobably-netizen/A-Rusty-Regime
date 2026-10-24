@@ -57,7 +57,7 @@ impl Body {
             tilt: 0.0,
             sea_level: -1000.0,
             seed: 11,
-            height: 120.0,
+            height: 10.0,
             wavelength: 2000.0,
             land: 1.0,
             home: None,

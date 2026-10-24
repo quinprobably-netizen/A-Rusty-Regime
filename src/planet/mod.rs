@@ -21,7 +21,7 @@ pub fn spawn_course(world: &mut World, surface: &Surface, origin: &Origin, at: V
     // (size, centre) in the frame; everything but the deck stands on the deck top.
     let boxes = [
         (Vec3::new(40.0, 0.5, 50.0), Vec3::new(4.0, 2.75, -22.0)),
-        (Vec3::new(3.0, 0.4, 12.0), deck + Vec3::new(8.0, 0.2, -10.5)),
+        (Vec3::new(3.0, 0.3, 12.0), deck + Vec3::new(8.0, 0.15, -10.5)),
         (Vec3::new(1.0, 8.0, 40.0), deck + Vec3::new(1.0, 4.0, -40.0)),
         (Vec3::new(4.0, 1.8, 4.0), deck + Vec3::new(-8.0, 0.9, -3.0)),
         (Vec3::new(6.0, 0.5, 10.0), deck + Vec3::new(16.0, 1.75, -10.0)),

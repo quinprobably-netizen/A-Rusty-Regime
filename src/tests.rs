@@ -552,7 +552,7 @@ fn sphere_app(cell: f32, spawn_dir: Vec3, ground_radius: f32) -> (App, Arc<Spher
     let origin = Origin::at(spawn, QUANTUM);
     app.insert_resource(Surface::Sphere(sphere.clone()))
         .insert_resource(origin)
-        .insert_resource(controller::WorldBounds { spawn, kill_altitude: -2.0 })
+        .insert_resource(controller::WorldBounds { spawn, kill_altitude: -50.0 })
         .insert_resource(Gravity(Vec3::ZERO))
         .add_systems(FixedUpdate, gravitate.before(controller::ControllerSet));
     app.finish();
@@ -594,7 +594,9 @@ fn crates_fall_toward_the_centre_and_rest() {
 #[test]
 fn resting_bodies_stay_asleep_under_gravity() {
     let (mut app, sphere, origin, _) = sphere_app(4.0, Vec3::X, 80.0);
-    let id = app.world_mut().spawn((RigidBody::Dynamic, Collider::cuboid(1.0, 1.0, 1.0), Mass(40.0), Transform::from_translation(origin.world(sphere.surface_point(Vec3::X) + Vec3::X * 3.0)))).id();
+    // About 3 m from the player, who stands upright at the spawn.
+    let dir = (Vec3::X + Vec3::Z * 0.003).normalize();
+    let id = app.world_mut().spawn((RigidBody::Dynamic, Collider::cuboid(1.0, 1.0, 1.0), Mass(40.0), Transform::from_translation(origin.world(sphere.surface_point(dir) + dir * 3.0)))).id();
     run(&mut app, 5.0);
     assert!(app.world().get::<Sleeping>(id).is_some(), "asleep after settling");
     run(&mut app, 1.0);
@@ -676,11 +678,11 @@ fn stairs_wall_runs_mantles_and_slides_on_the_sphere() {
     input(&mut app).jump_pressed = true;
     run(&mut app, 0.6);
     assert!(player_local(&mut app, &origin, &sphere, at).0.y > 2.6, "mantled");
-    // Stair step onto the 0.4 m block and keep walking on it.
+    // Stair step onto the 0.3 m block and keep walking on it.
     set_player_local(&mut app, &origin, &sphere, at, Vec3::new(8.0, 0.95, -2.0), Vec3::ZERO);
     run(&mut app, 1.2);
     let (p, _, state) = player_local(&mut app, &origin, &sphere, at);
-    assert!(state == MoveState::Ground && p.y > 1.2 && p.z < -6.0, "stepped up: {p}");
+    assert!(state == MoveState::Ground && p.y > 1.1 && p.z < -6.0, "stepped up: {p}");
     // Slide under the tunnel roof, as in slides_under_low_ceiling.
     set_player_local(&mut app, &origin, &sphere, at, Vec3::new(16.0, 0.95, 0.0), Vec3::new(0.0, 0.0, -8.0));
     {
@@ -697,7 +699,7 @@ fn stairs_wall_runs_mantles_and_slides_on_the_sphere() {
 #[test]
 fn falling_under_the_sea_respawns_on_the_sphere() {
     let (mut app, sphere, origin, _) = sphere_app(4.0, Vec3::X, 60.0);
-    set_player(&mut app, origin.world(sphere.point(Vec3::Z, -5.0)), Vec3::ZERO); // 5 m under sea level, deep inside the test moon
+    set_player(&mut app, origin.world(sphere.point(Vec3::Z, -60.0)), Vec3::ZERO); // 60 m under sea level, deep inside the test moon
     run(&mut app, 0.1);
     let (pos, _, _) = player(&mut app);
     assert!(origin.body(pos).distance(sphere.surface_point(Vec3::X) + Vec3::X) < 1.0);

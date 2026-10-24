@@ -23,6 +23,6 @@ day_minutes = 48
 tilt = 0
 sea_level = -1000
 seed = 11
-height = 120
+height = 10
 wavelength = 2000
 land = 1.0
