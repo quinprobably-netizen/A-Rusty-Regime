@@ -2,7 +2,7 @@
 # Distances in meters; 1 TF2 Hammer unit = 0.022 m. Delete a line to use its default.
 
 # Core Source movement
-gravity = 17.6              # TF2 sv_gravity 800
+gravity = 9.8               # Earth; see the round-home-world spec
 max_speed = 7.5             # ground run speed
 crouch_speed_mult = 0.33
 accelerate = 10.0           # sv_accelerate
@@ -10,7 +10,7 @@ air_accelerate = 10.0       # sv_airaccelerate (TF2 = 10)
 air_speed_cap = 0.66        # the 30u cap that makes air strafing work
 friction = 4.0
 stop_speed = 2.2
-jump_speed = 6.35
+jump_speed = 4.74           # 1.15 m jump
 jump_buffer = 0.08          # seconds a jump press is remembered before landing
 auto_bhop = false           # true = hold jump to bunny hop
 bhop_speed_cap = 0.0        # 0 = off. TF2 uses 1.2
@@ -39,12 +39,12 @@ wallrun_speed = 9.0
 wallrun_max_time = 1.6
 wallrun_gravity_scale = 0.25
 wall_jump_out = 6.0
-wall_jump_up = 6.5
+wall_jump_up = 4.85         # 1.2 m wall jump
 wall_reach = 0.3
 
 # Air jump (double jump): extra jumps after leaving the ground, reset on ground, wall, mantle, grapple
 air_jumps = 1
-air_jump_speed = 6.35
+air_jump_speed = 4.74       # 1.15 m jump
 air_jump_redirect = 0.6     # 0 keeps momentum, 1 fully redirects horizontal speed to the wish direction
 
 # Mantle (ledge heights measured from your feet)
@@ -59,7 +59,7 @@ rocket_cooldown = 0.8
 rocket_mag = 4               # rockets in the tube, TF2 style
 rocket_reload = 1.4
 blast_radius = 3.2
-self_knockback = 13.0
+self_knockback = 9.7        # 4.8 m rocket jump
 prop_knockback = 14.0
 prop_ref_mass = 40.0
 push_strength = 0.6
@@ -193,7 +193,7 @@ lift = 2.5                  # upward m/s added for a lob
 gravity = 12.0
 bounce = 0.45               # speed kept per bounce
 fuse = 2.2
-self_knockback = 11.0       # grenade jumps work too, a bit weaker than rockets
+self_knockback = 8.2        # 3.4 m grenade jump, a bit weaker than rockets
 cooldown = 0.6
 mag = 1
 reload = 1.8

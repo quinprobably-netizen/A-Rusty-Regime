@@ -442,9 +442,7 @@ fn step(
         w.comp_vel = ((w.comp - prev) / dt).clamp(-12.0, 12.0);
 
         let t_drive = if ws.driven { per_wheel } else { 0.0 };
-        // Brake torques are real-world figures; the game's heavier gravity presses the tyres harder, so the
-        // brakes scale with it to keep the same margin over grip.
-        let brake_t = spec.brake_t * g / 9.81;
+        let brake_t = spec.brake_t;
         let t_brake = v.brake * brake_t + if v.handbrake && !ws.steers { 2.0 * brake_t } else { 0.0 };
         let i_w = spec.unsprung * ws.radius * ws.radius * 0.6;
         let mut om = w.om + t_drive / i_w * dt;

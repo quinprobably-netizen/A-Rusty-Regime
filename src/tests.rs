@@ -74,6 +74,18 @@ fn input(app: &mut App) -> Mut<'_, PlayerInput> {
     app.world_mut().resource_mut::<PlayerInput>()
 }
 
+/// Presses jump and returns the highest the player rises over the next 100 ticks, measured by `altitude`.
+fn jump_apex(app: &mut App, altitude: impl Fn(&mut App) -> f32) -> f32 {
+    let start = altitude(app);
+    input(app).jump_pressed = true;
+    let mut apex = 0.0_f32;
+    for _ in 0..100 {
+        app.update();
+        apex = apex.max(altitude(app) - start);
+    }
+    apex
+}
+
 #[test]
 fn source_math() {
     // Friction below stop speed uses stop speed as the control value.
@@ -100,6 +112,16 @@ fn walks_to_max_speed_on_ground() {
     assert!((vel.xz().length() - 7.5).abs() < 0.05, "speed {}", vel.xz().length());
     assert!((pos.y - 0.9).abs() < 0.05, "height {}", pos.y);
     assert!(pos.z < 0.0, "moved forward (-Z)");
+}
+
+#[test]
+fn jump_apex_is_unchanged_by_the_retune() {
+    let mut app = make_app(Tuning::default());
+    run(&mut app, 0.5);
+    let apex = jump_apex(&mut app, |a| player(a).0.y);
+    // v²/2g for 4.74 m/s at 9.8 is 1.146 m; the tick integrator lands a few cm under it.
+    assert!((1.08..1.18).contains(&apex), "apex {apex}");
+    assert_eq!(Tuning::default().gravity, 9.8);
 }
 
 #[test]
@@ -778,11 +800,14 @@ fn bike_stays_upright_and_rides() {
 #[test]
 fn vehicle_respawns_after_falling_off_the_world() {
     let mut app = vehicle_app();
+    // Seconds to drop `m` metres from rest; the kill plane is at -30.
+    let g = app.world().resource::<Tuning>().gravity;
+    let fall = |m: f32| (2.0 * m / g).sqrt();
     let e = spawn_vehicle(&mut app, Kind::Jeep, Vec3::new(300.0, 0.0, 300.0), 0.0);
-    run(&mut app, 1.6);
+    run(&mut app, fall(20.0));
     let (pos, _, _, _) = vehicle_state(&mut app, e);
     assert!(pos.y < -15.0, "fell off the floor, got {pos}");
-    run(&mut app, 0.8);
+    run(&mut app, fall(35.0) - fall(20.0));
     let (pos, _, _, _) = vehicle_state(&mut app, e);
     assert!(pos.y > -15.0 && (pos.xz() - Vec2::new(300.0, 300.0)).length() < 0.5, "back home, got {pos}");
 }
@@ -969,7 +994,7 @@ fn missions_progress_in_order() {
     assert_eq!(save(&mut app).missions_done, 4);
 
     // 4: drive a Humvee to the ruins.
-    app.insert_resource(Gravity(Vec3::NEG_Y * 17.6));
+    app.insert_resource(Gravity(Vec3::NEG_Y * Tuning::default().gravity));
     let humvee = spawn_vehicle(&mut app, Kind::Humvee, Vec3::new(0.0, 0.0, -50.0), 0.0);
     run(&mut app, 1.0);
     set_player(&mut app, Vec3::new(3.0, 1.0, -50.0), Vec3::ZERO);
@@ -1405,7 +1430,12 @@ fn fuel_burns_and_an_empty_tank_stops_the_engine() {
     run(&mut app, 2.0);
     let fuel = app.world().get::<Vehicle>(e).unwrap().fuel;
     assert!(fuel < 57.0 && fuel > 56.9, "a little burned: {fuel}");
-    app.world_mut().get_mut::<Vehicle>(e).unwrap().fuel = 0.0;
+    // Stopped dead, wheels and all, so any motion from here on would have to come from the engine.
+    let mut v = app.world_mut().get_mut::<Vehicle>(e).unwrap();
+    v.fuel = 0.0;
+    for w in &mut v.wheels {
+        w.om = 0.0;
+    }
     app.world_mut().entity_mut(e).insert(LinearVelocity::ZERO);
     run(&mut app, 0.3);
     let (start, _, _, _) = vehicle_state(&mut app, e);

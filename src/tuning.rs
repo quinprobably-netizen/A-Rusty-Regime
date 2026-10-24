@@ -131,7 +131,7 @@ pub struct Tuning {
 impl Default for Tuning {
     fn default() -> Self {
         Self {
-            gravity: 17.6,
+            gravity: 9.8,
             max_speed: 7.5,
             crouch_speed_mult: 0.33,
             accelerate: 10.0,
@@ -139,7 +139,7 @@ impl Default for Tuning {
             air_speed_cap: 0.66,
             friction: 4.0,
             stop_speed: 2.2,
-            jump_speed: 6.35,
+            jump_speed: 4.74,
             jump_buffer: 0.08,
             auto_bhop: false,
             bhop_speed_cap: 0.0,
@@ -165,10 +165,10 @@ impl Default for Tuning {
             wallrun_max_time: 1.6,
             wallrun_gravity_scale: 0.25,
             wall_jump_out: 6.0,
-            wall_jump_up: 6.5,
+            wall_jump_up: 4.85,
             wall_reach: 0.3,
             air_jumps: 1,
-            air_jump_speed: 6.35,
+            air_jump_speed: 4.74,
             air_jump_redirect: 0.6,
 
             mantle_min_height: 0.45,
@@ -179,7 +179,7 @@ impl Default for Tuning {
             rocket_speed: 24.0,
             rocket_cooldown: 0.8,
             blast_radius: 3.2,
-            self_knockback: 13.0,
+            self_knockback: 9.7,
             prop_knockback: 14.0,
             prop_ref_mass: 40.0,
             push_strength: 0.6,
@@ -390,7 +390,7 @@ pub struct GrenadeTuning {
 
 impl Default for GrenadeTuning {
     fn default() -> Self {
-        Self { damage: 100.0, radius: 3.5, speed: 22.0, lift: 2.5, gravity: 12.0, bounce: 0.45, fuse: 2.2, self_knockback: 11.0, cooldown: 0.6, mag: 1, reload: 1.8 }
+        Self { damage: 100.0, radius: 3.5, speed: 22.0, lift: 2.5, gravity: 12.0, bounce: 0.45, fuse: 2.2, self_knockback: 8.2, cooldown: 0.6, mag: 1, reload: 1.8 }
     }
 }
 
