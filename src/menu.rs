@@ -154,6 +154,10 @@ impl Settings {
     }
 
     pub fn save(&self) {
+        // Tests must not leave a settings.toml behind for the next run to load.
+        if cfg!(test) {
+            return;
+        }
         if let Ok(text) = toml::to_string(self)
             && let Err(e) = std::fs::write(SETTINGS_PATH, text)
         {

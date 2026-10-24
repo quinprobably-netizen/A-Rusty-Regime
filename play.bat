@@ -1,6 +1,12 @@
 @echo off
 rem Pull the latest changes, then build and run. Only changed files download and rebuild.
 cd /d "%~dp0"
-git pull --ff-only || echo Could not update, running the version you have.
+rem --autostash sets your own edits (tuning.toml and the like) aside, updates, then puts them back.
+git pull --ff-only --autostash
+if errorlevel 1 (
+    echo.
+    echo COULD NOT UPDATE: you are about to play the OLD version. Run "git status" to see why.
+    pause
+)
 cargo run --release
 pause

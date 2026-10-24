@@ -1699,3 +1699,22 @@ fn third_person_camera_sits_over_the_shoulder_and_stops_at_walls() {
     let (cam, eye) = camera_and_eye(&mut app);
     assert!(cam.distance(eye) < 0.2, "first person camera at {cam}, eyes at {eye}");
 }
+
+#[test]
+fn t_switches_to_third_person_in_game() {
+    use crate::menu::{MenuPlugin, Screen};
+    let mut app = build_app(Tuning::default());
+    app.add_plugins((bevy::state::app::StatesPlugin, crate::gunsmith::GunsmithPlugin, MenuPlugin, crate::camera::CameraPlugin))
+        .init_resource::<ButtonInput<KeyCode>>()
+        .init_resource::<ButtonInput<MouseButton>>();
+    app.finish();
+    app.update();
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Playing);
+    run(&mut app, 1.0);
+    tap(&mut app, KeyCode::KeyT);
+    assert!(app.world().resource::<Tuning>().third_person, "T turns third person on");
+    run(&mut app, 1.0);
+    let (cam, eye) = camera_and_eye(&mut app);
+    assert!(cam.distance(eye) > 2.0, "camera {cam} pulled back from the eyes {eye}");
+}
