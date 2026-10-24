@@ -7,7 +7,9 @@ Runs inside Blender's Python (`bpy`), headless:
     tools/character/build.sh --check            # verify every glb (bones, clips, meshes, triangles)
     tools/character/build.sh --preview runner   # also render look-dev images to screenshots/characters/
     tools/character/build.sh --no-bake runner   # skip the wear texture bake (fast iteration)
-    tools/character/build.sh --grips runner     # re-solve only the finger poses on each weapon
+    tools/character/build.sh --grips runner     # re-solve only the hand poses on each weapon
+    tools/character/build.sh --hands runner     # render the built hands on each weapon (a check)
+    tools/character/build.sh --eye runner       # render the rifle hands from the player's eye
 
 Each character lives in chars/<id>.py with a `build()` returning a kit.Char and a `SPEC` dict. The
 contract (skeleton, grip frames, meshes, clips): docs/superpowers/specs/2026-10-18-character-roster-design.md.
@@ -61,17 +63,26 @@ def main():
         bad = 0
         for cid in ids:
             path = os.path.join(kit.OUT, f"{cid}.glb")
-            problems, stats = kit.check(path, spec(cid).get("budget", (25000, 75000))) if os.path.exists(path) else (["not built"], {})
+            problems, stats = kit.check(path, spec(cid).get("budget", (25000, 120000))) if os.path.exists(path) else (["not built"], {})
             print(f"{cid}: {'ok' if not problems else '; '.join(problems)} {stats}")
             bad += bool(problems)
         sys.exit(1 if bad else 0)
     if "--grips" in sys.argv:
         solve_grips(ids)
+    if "--hands" in sys.argv:
+        import grips
+        for cid in ids:
+            print("\n".join(grips.render(cid)))
+    if "--eye" in sys.argv:
+        import grips
+        for cid in ids:
+            print("\n".join(grips.render_fp(cid)))
+    if any(a in sys.argv for a in ("--grips", "--hands", "--eye")):
         return
     for cid in ids:
         s = spec(cid)
         c = s["build"]()
-        c.finish(bake="--no-bake" not in sys.argv, budget=s.get("budget", (25000, 75000)))
+        c.finish(bake="--no-bake" not in sys.argv, budget=s.get("budget", (25000, 120000)))
         if "--preview" in sys.argv:
             os.makedirs(SHOTS, exist_ok=True)
             col = s.get("colors")

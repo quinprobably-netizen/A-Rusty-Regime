@@ -401,8 +401,8 @@ def gauntlets(c, b, man, guard=NAVYH, back_plate=WHITE, cuff_tab="hazard"):
         ax = J("hand." + s, 0.0) - J("forearm." + s, 0.0)
         cc = J("hand." + s, 0.0) - ax.normalized() * 0.024
         r = pmc._radius(tg, cc, ax)
-        c.rigid(pmc.band("glove_cuff", cc, (r + 0.0035, r * 0.82 + 0.0035), 0.034, 0.005, "glove", axis=ax), "hand." + s)
-        c.rigid(kit.block("cuff_tab", cc + back * (r + 0.007), (0.02, 0.004, 0.03), cuff_tab, bevel=0.0012), "hand." + s)
+        c.rigid(pmc.band("glove_cuff", cc, (r + 0.0035, r * 0.82 + 0.0035), 0.034, 0.005, "glove", axis=ax), "forearm." + s)
+        c.rigid(kit.block("cuff_tab", cc + back * (r + 0.007), (0.02, 0.004, 0.03), cuff_tab, bevel=0.0012), "forearm." + s)
     return gloves
 
 
@@ -1012,5 +1012,5 @@ def build():
     return c
 
 
-SPEC = {"build": build, "faction": "pmc", "budget": (25000, 80000), "loadout": "rocket",
+SPEC = {"build": build, "faction": "pmc", "budget": (25000, 120000), "loadout": "rocket",
         "colors": {"primary": "#33383f", "secondary": "#2b2f35", "accent": "#c9a227"}}

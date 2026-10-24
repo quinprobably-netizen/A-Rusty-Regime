@@ -1,53 +1,90 @@
-"""Finger poses for every weapon, solved against the weapons' real meshes. Run by `Char.finish` after
-the character glb is written: each weapon glb (assets/models/weapons) is placed in each hand the way
-the game holds it (assets/grips.toml), and every finger curls joint by joint until it meets the gun.
-The right index finger is laid on the trigger instead (and pulled 6 mm back for `R_fire`); the left
-hand also takes the vertical and angled foregrips. Writes assets/models/character/<id>.grips.toml:
+"""Hand poses on every weapon, solved against the weapons' real meshes (rig contract v2, see
+docs/superpowers/specs/2026-10-22-rig-rebuild-design.md). Run by `real.Char.finish` before the
+carries are solved, and by `build.py --grips`.
+
+A hold is a cylinder: the gun's pistol grip, handguard, pump or foregrip is fitted as an axis and a
+radius from the weapon mesh around the point in assets/grips.toml. The palm frame (`prop_hand`,
+origin on the palm's skin, Y wrist to knuckles, Z out of the palm) sits tangent to it with the
+cylinder crossing the palm along the frame's X, on the side the hold approaches from. The fingers
+wrap the cylinder in closed form (each joint turns until the next lands on it), then every joint is
+nudged against the real mesh: opened until it clears the gun, closed until it touches, never more
+than `REFINE` from the wrap. The right index lies on the trigger blade instead (`R_fire` pulls it
+6 mm); the thumb crosses the far side of a grip or lies along the near side of a handguard.
+
+Writes assets/models/character/<id>.grips.toml:
 
     [<weapon>.<pose>]            # pose: R, R_fire, L, L_vertical, L_angled
-    at = [x, y, z]               # weapon glTF space: where the grip frame sits (palm on the gun)
-    rot = [x, y, z, w]           # grip frame -> weapon space
-    thumb = [[x, y, z, w], ...]  # each finger: three joints' rotations on top of the rest fist
+    at = [x, y, z]               # weapon glTF space: the palm frame's origin
+    rot = [x, y, z, w]           # palm frame -> weapon space
+    thumb = [[x, y, z, w], ...]  # each finger: three joints' rotations over the relaxed rest hand
 
 The game sets each finger joint to its rest rotation times these (glTF node rotation = rest * pose,
-as Blender's pose basis exports)."""
+as Blender's pose basis exports) and puts each prop_hand on its frame.
+
+Right-hand poses are solved as the left hand on the mirrored weapon (the bodies are symmetric) and
+mirrored back; the left hand is solved as is."""
 
 import math
 import os
 import re
 import tomllib
+from collections import namedtuple
 
 import bpy
 from mathutils import Matrix, Quaternion, Vector
 from mathutils.bvhtree import BVHTree
 
 import kit
+import real
 
 FINGERS = kit.FINGERS
 WEAPONS = os.path.join(kit.ROOT, "assets", "models", "weapons")
 TABLE = os.path.join(kit.ROOT, "assets", "grips.toml")
 # Parts the bare gun shows; every other att.* mesh is a gunsmith part that isn't fitted.
 BARE = {"att.optic.irons", "att.muzzle.bare", "att.grip.standard", "att.stock.standard"}
-# Grip frame -> weapon space (frame +Y down the barrel, +Z up): the game's grip_rotation inverse.
-DEFAULT_ROT = Quaternion((1, 0, 0), math.radians(-90))
-# A vertical foregrip is held like a pistol grip: thumb up (frame +Y), the hand pointing down the
-# barrel (frame +X), the palm facing the gun's right (frame +Z). The angled grip tips that hand 40
-# degrees forward and down, the heel of the palm on its sloped back.
-VERTICAL_ROT = Matrix(((0, 0, 1), (0, 1, 0), (-1, 0, 0))).to_quaternion()
-# The support hand cradles a handguard from its lower left, thumb along the left side and fingers
-# wrapping under it to the right side, never over the top where they would cross the sights; turned
-# 40 degrees from square across the gun so the fingers wrap it diagonally, as hands do.
-UNDER_ROT = Quaternion((0, 0, 1), math.radians(-45)) @ Quaternion((0, 1, 0), math.radians(40)) @ DEFAULT_ROT
 TOUCH = 0.0015  # the palm and fingers stop this far off the gun's surface (the flesh presses in)
+GLOVE = 0.0025  # every character wears gloves (real.gloves, 2.2-2.8 mm over the skin): the solve keeps them out of the gun
 STEP = math.radians(0.5)
+REFINE = math.radians(25)  # how far the real mesh may move a joint off the closed-form wrap
+PRESS = 0.75  # a finger may sink into the gun by this much of its radius (the flesh flattens)
+SINK = 0.0015  # how far the glove's real surface may sink into the gun
+CLEAR = 0.002  # after the solve, no part of the posed glove may be deeper in the gun than this
 DEBUG = bool(os.environ.get("GRIPS_DEBUG"))
+
+# A hold: the table point it closes on; the direction its cylinder runs (weapon space: -Z down the
+# barrel, +Y up, +X right; a seed for the fit) and how far round it the fit looks; which way the palm
+# faces (from the palm toward the axis); whether the frame's X (toward the thumb on the right hand,
+# the little finger on the left) runs with (+1) or against (-1) that axis; how far the palm slides
+# toward its knuckles (m); how the thumb lies ("wrap" round the far side, "along" the near side);
+# the gunsmith part it needs.
+Hold = namedtuple("Hold", "point axis reach palm x_sign shift thumb part tilt", defaults=(0.0,))
+HOLDS = {
+    # The right hand round the pistol grip: the grip leans back, the palm faces the gun's left and a
+    # little forward, the thumb at the top. The grip lies diagonally across the palm, as in a real
+    # hand: square across it, the wrist rode up level with the receiver.
+    "R": Hold("right", (0, 1, -0.4), 0.035, (-1, 0, -0.35), +1, 0.0, "wrap", None, -30.0),
+    # The support hand cradles the handguard from below, the wrist low on the near side: the palm
+    # under it, the fingers pointing forward across it and up the far side to just under its top, the
+    # thumb forward along the near top edge. Gripped from its side, the hand hung over the top with
+    # the wrist above the gun.
+    "cradle": Hold("cradle", (0, 0, -1), 0.05, (0.2, 1, 0), -1, 0.0, "along", None, -35.0),
+    # A vertical foregrip is held like a pistol grip with the left hand, thumb up.
+    "vertical": Hold("vertical", (0, 1, 0), 0.035, (1, 0, -0.35), -1, 0.0, "wrap", "att.grip.vertical"),
+    # An angled grip is a stop: the hand cradles the handguard just behind it.
+    "angled": Hold("angled", (0, 0, -1), 0.05, (0.2, 1, 0), -1, 0.0, "along", "att.grip.angled", -35.0),
+}
+# A placed hold: the palm frame in (possibly mirrored) weapon space, its cylinder, and what it needs.
+Frame = namedtuple("Frame", "at rot cen d r extra mirror thumb cap")
+MIRROR = Matrix.Scale(-1, 3, (1, 0, 0))
+SHOTS = os.path.join(kit.ROOT, "screenshots", "characters")
 
 
 def solve(c, out_dir=kit.OUT):
-    """Solve and write every weapon's poses for the built character `c` (its rig at rest)."""
+    """Solve and write every weapon's poses for the character `c` (its rig at rest). Returns them."""
     with open(TABLE, "rb") as f:
         table = tomllib.load(f)
     out = {}
+    rig = _rig(c.id)
     for wid, spec in table.items():
         if wid == "fist":
             continue
@@ -55,28 +92,33 @@ def solve(c, out_dir=kit.OUT):
         if not os.path.exists(path):
             print(f"grips: no {path}, skipped")
             continue
-        meshes = _import(path)
+        w = _import(path)
         try:
             if DEBUG:
                 print(wid)
-            trig = _trigger_face(meshes)
-            right = _place(c, meshes, Vector(spec["right"]), trig)
-            out[f"{wid}.R"] = _pose(c, meshes, "R", right, DEFAULT_ROT, trigger=(trig, 0.0))
-            out[f"{wid}.R_fire"] = _pose(c, meshes, "R", right, DEFAULT_ROT, trigger=(trig, 0.006))
-            if "left" in spec:
-                left = Vector(spec["left"])
-                out[f"{wid}.L"] = _pose(c, meshes, "L", _cradle(meshes, left), UNDER_ROT)
-                at = _part_centre(meshes, "att.grip.vertical")
-                if at is not None:
-                    out[f"{wid}.L_vertical"] = _pose(c, meshes, "L", at, VERTICAL_ROT, extra="att.grip.vertical")
-                # An angled grip is a stop, not a handle: the hand cradles the handguard with the heel
-                # of the palm against its sloped back.
-                if "att.grip.angled" in meshes.parts:
-                    rear = max(v[2] for v in meshes.parts["att.grip.angled"][0])
-                    at = _cradle(meshes, Vector((left.x, left.y, rear + 0.035)))
-                    out[f"{wid}.L_angled"] = _pose(c, meshes, "L", at, UNDER_ROT, extra="att.grip.angled")
+            trig = _trigger_face(w)
+            right = _hold(w, HOLDS["R"], Vector(spec["right"]), mirror=True)
+            right = _place(c, w, right, trig)
+            extra = {}
+            out[f"{wid}.R"] = _pose(c, w, right, trigger=(trig, 0.0))
+            out[f"{wid}.R_fire"] = _pose(c, w, right, trigger=(trig, 0.006))
+            extra[f"{wid}.R"] = extra[f"{wid}.R_fire"] = HOLDS["R"].part
+            support = "cradle" if "cradle" in spec else "vertical" if "vertical" in spec else None
+            if support:
+                out[f"{wid}.L"] = _pose(c, w, _hold(w, HOLDS[support], Vector(spec[support])))
+                extra[f"{wid}.L"] = HOLDS[support].part
+            for name in ("vertical", "angled"):
+                h = HOLDS[name]
+                if h.part in w.parts and name in spec:
+                    out[f"{wid}.L_{name}"] = _pose(c, w, _hold(w, h, Vector(spec[name])))
+                    extra[f"{wid}.L_{name}"] = h.part
+            if rig:
+                for key, part in extra.items():
+                    _clear(rig, w, key, out[key], part)
         finally:
-            _remove(meshes)
+            _remove(w)
+    if rig:
+        rig[2]()
     path = os.path.join(out_dir, f"{c.id}.grips.toml")
     with open(path, "w") as f:
         f.write(f"# Finger poses for {c.id}, solved by tools/character/grips.py. Do not edit.\n")
@@ -86,7 +128,20 @@ def solve(c, out_dir=kit.OUT):
             for fg in FINGERS:
                 f.write(f"{fg} = [{', '.join(_fmt(q) for q in pose[fg])}]\n")
     print(f"wrote {path}: {len(out)} poses")
-    return path
+    return out
+
+
+def carry_frames(poses, weapon):
+    """Where the left palm frame sits relative to the right one on `weapon` (a 4x4 in the right
+    frame's coordinates) for the third-person carries, or None for a one-handed weapon."""
+    r, l = poses.get(f"{weapon}.R"), poses.get(f"{weapon}.L")
+    if r is None or l is None:
+        return None
+
+    def mat(p):
+        x, y, z, w = p["rot"]
+        return Matrix.Translation(Vector(p["at"])) @ Quaternion((w, x, y, z)).to_matrix().to_4x4()
+    return mat(r).inverted() @ mat(l)
 
 
 def _fmt(v):
@@ -97,45 +152,112 @@ def _fmt(v):
 
 class Weapon:
     """One imported weapon glb: its meshes in glTF weapon space (-Z down the barrel, +Y up), by
-    node name."""
+    node name, and BVHs of the bare gun (plus one gunsmith part), mirrored across x for the right
+    hand's solve."""
 
     def __init__(self, objects, parts):
         self.objects = objects
         self.parts = parts  # name -> (verts, polys) in weapon space
         self._trees = {}
 
-    def tree(self, extra=None):
-        """A BVH of the bare gun, plus the gunsmith part `extra`."""
-        if extra not in self._trees:
+    def _shown(self, extra):
+        for name, (vs, ps) in self.parts.items():
+            if name.startswith("att.") and name not in BARE and name != extra:
+                continue
+            yield vs, ps
+
+    def verts(self, extra=None, mirror=False):
+        return [MIRROR @ Vector(v) if mirror else Vector(v) for vs, _ in self._shown(extra) for v in vs]
+
+    def solids(self, extra=None):
+        """The shown gun as its closed pieces, each with its bounds and BVH. A point inside two
+        overlapping pieces crosses the merged surface an even number of times, so inside tests go
+        piece by piece. Pieces are joined by vertex position: the importer splits them at seams."""
+        key = ("solids", extra)
+        if key not in self._trees:
+            out = []
+            for vs, ps in self._shown(extra):
+                weld = {}
+                same = [weld.setdefault(tuple(round(x, 5) for x in v), i) for i, v in enumerate(vs)]
+                parent = list(range(len(vs)))
+
+                def find(i):
+                    while parent[i] != i:
+                        parent[i] = parent[parent[i]]
+                        i = parent[i]
+                    return i
+                for poly in ps:
+                    for i in poly[1:]:
+                        a, b = find(same[poly[0]]), find(same[i])
+                        if a != b:
+                            parent[a] = b
+                pieces = {}
+                for poly in ps:
+                    pieces.setdefault(find(same[poly[0]]), []).append(poly)
+                for polys in pieces.values():
+                    pts = [Vector(vs[i]) for poly in polys for i in poly]
+                    lo = Vector(tuple(min(v[k] for v in pts) for k in range(3)))
+                    hi = Vector(tuple(max(v[k] for v in pts) for k in range(3)))
+                    out.append((lo, hi, BVHTree.FromPolygons(vs, polys)))
+            self._trees[key] = out
+        return self._trees[key]
+
+    def tree(self, extra=None, mirror=False):
+        key = (extra, mirror)
+        if key not in self._trees:
             verts, polys = [], []
-            for name, (vs, ps) in self.parts.items():
-                if name.startswith("att.") and name not in BARE and name != extra:
-                    continue
+            for vs, ps in self._shown(extra):
                 base = len(verts)
-                verts += vs
-                polys += [[i + base for i in p] for p in ps]
-            self._trees[extra] = BVHTree.FromPolygons(verts, polys)
-        return self._trees[extra]
+                verts += [(-v[0], v[1], v[2]) if mirror else v for v in vs]
+                # A mirrored polygon keeps its outward normal by reversing its winding.
+                polys += [[i + base for i in (p[::-1] if mirror else p)] for p in ps]
+            self._trees[key] = BVHTree.FromPolygons(verts, polys)
+        return self._trees[key]
+
+
+def _rest_nodes(path):
+    """Each node's own rest transform from the glb's JSON, by name: the importer leaves every
+    animated node posed at frame 1 of the first clip (the draw), not at rest."""
+    import json
+    import struct
+    with open(path, "rb") as f:
+        head = f.read(12)
+        length = struct.unpack_from("<I", f.read(8), 0)[0]
+        doc = json.loads(f.read(length))
+    assert head[:4] == b"glTF"
+    rest = {}
+    for n in doc.get("nodes", []):
+        if "matrix" in n:
+            M = Matrix([n["matrix"][i::4] for i in range(4)])
+        else:
+            q = n.get("rotation", (0, 0, 0, 1))
+            M = Matrix.LocRotScale(Vector(n.get("translation", (0, 0, 0))),
+                                   Quaternion((q[3], q[0], q[1], q[2])),
+                                   Vector(n.get("scale", (1, 1, 1))))
+        rest[n.get("name", "")] = M
+    return rest
 
 
 def _import(path):
     before = set(bpy.data.objects)
     bpy.ops.import_scene.gltf(filepath=path)
     objects = [o for o in bpy.data.objects if o not in before]
+    rest = _rest_nodes(path)
     for o in objects:
         if o.type == "ARMATURE":
             o.data.pose_position = "REST"
-            o.animation_data_clear()
+        o.animation_data_clear()
+        name = re.sub(r"\.\d{3}$", "", o.name)
+        if name in rest:  # Blender's Z-up local = C @ glTF local @ C^-1
+            o.matrix_local = TO_GLTF.inverted() @ rest[name] @ TO_GLTF
     bpy.context.view_layer.update()
     dg = bpy.context.evaluated_depsgraph_get()
-    # Blender's Z-up import of glTF's Y-up: weapon space (x, y, z) is Blender (x, -z, y).
-    to_gltf = Matrix(((1, 0, 0, 0), (0, 0, 1, 0), (0, -1, 0, 0), (0, 0, 0, 1)))
     parts = {}
     for o in objects:
         if o.type != "MESH":
             continue
         me = o.evaluated_get(dg).to_mesh()
-        M = to_gltf @ o.matrix_world
+        M = TO_GLTF @ o.matrix_world
         name = re.sub(r"\.\d{3}$", "", o.name)
         vs = [tuple(M @ v.co) for v in me.vertices]
         ps = [list(p.vertices) for p in me.polygons]
@@ -147,6 +269,184 @@ def _import(path):
             parts[name] = (vs, ps)
         o.evaluated_get(dg).to_mesh_clear()
     return Weapon(objects, parts)
+
+
+# Blender's Z-up import of glTF's Y-up: weapon space (x, y, z) is Blender (x, -z, y).
+TO_GLTF = Matrix(((1, 0, 0, 0), (0, 0, 1, 0), (0, -1, 0, 0), (0, 0, 0, 1)))
+
+
+_SKINS = {}
+
+
+def _skin(cid):
+    """The left hand's outer surface (the glove) from the character's last build, at rest: for the
+    palm and each finger bone, sample points of `mesh.arms` mostly weighted to it, in rig space.
+    None before the character's first build (the solve then goes by bone radii alone)."""
+    if cid in _SKINS:
+        return _SKINS[cid]
+    path = os.path.join(kit.OUT, f"{cid}.glb")
+    if not os.path.exists(path):
+        _SKINS[cid] = None
+        return None
+    data = {k: set(getattr(bpy.data, k)) for k in ("objects", "meshes", "materials", "images", "armatures", "actions")}
+    bpy.ops.import_scene.gltf(filepath=path)
+    new = [o for o in bpy.data.objects if o not in data["objects"]]
+    arm = next(o for o in new if o.type == "ARMATURE")
+    arm.data.pose_position = "REST"
+    bpy.context.view_layer.update()
+    me_obj = next(o for o in new if re.sub(r"\.\d{3}$", "", o.name) == "mesh.arms")
+    dg = bpy.context.evaluated_depsgraph_get()
+    me = me_obj.evaluated_get(dg).to_mesh()
+    names = ["hand.L"] + [f"f_{f}.{i}.L" for f in FINGERS for i in (1, 2, 3)]
+    idx = {g.index: g.name for g in me_obj.vertex_groups if g.name in names}
+    pts = {n: [] for n in names}
+    for v in me.vertices:
+        best = max(((g.weight, idx[g.group]) for g in v.groups if g.group in idx), default=None)
+        if best and best[0] >= 0.5:
+            pts[best[1]].append(me_obj.matrix_world @ v.co)
+    me_obj.evaluated_get(dg).to_mesh_clear()
+    head = arm.matrix_world @ arm.data.bones["hand.L"].head_local
+    for k, have in data.items():
+        coll = getattr(bpy.data, k)
+        for d in [d for d in coll if d not in have]:
+            coll.remove(d)
+    out = {n: v[:: max(1, len(v) // 40)] for n, v in pts.items()}
+    _SKINS[cid] = (out, head)
+    return _SKINS[cid]
+
+
+def _rig(cid):
+    """The character's last build, posable: its armature, its first-person arms mesh, and a function
+    that removes them again. None before its first build."""
+    path = os.path.join(kit.OUT, f"{cid}.glb")
+    if not os.path.exists(path):
+        return None
+    data = {k: set(getattr(bpy.data, k)) for k in ("objects", "meshes", "materials", "images", "armatures", "actions")}
+    bpy.ops.import_scene.gltf(filepath=path)
+    new = [o for o in bpy.data.objects if o not in data["objects"]]
+    arm = next(o for o in new if o.type == "ARMATURE")
+    arm.animation_data_clear()
+    arm.data.pose_position = "POSE"
+    for pb in arm.pose.bones:
+        pb.rotation_mode = "QUATERNION"
+    mesh = next(o for o in new if re.sub(r"\.\d{3}$", "", o.name) == "mesh.arms")
+
+    def remove():
+        for k, have in data.items():
+            coll = getattr(bpy.data, k)
+            for d in [d for d in coll if d not in have]:
+                coll.remove(d)
+    return arm, mesh, remove
+
+
+def _inside(solids, p, near):
+    """How deep `p` is inside the gun (m), 0 outside: inside a piece when its nearest face says so
+    and a ray each way across it crosses its surface an odd number of times. `near` (the whole gun's
+    BVH) skips the far points cheaply."""
+    if near.find_nearest(p, 0.03)[0] is None:
+        return 0.0
+    deepest = 0.0
+    for lo, hi, tree in solids:
+        if not (lo.x <= p.x <= hi.x and lo.y <= p.y <= hi.y and lo.z <= p.z <= hi.z):
+            continue
+        loc, nrm, _, d = tree.find_nearest(p)
+        if loc is None or d <= deepest or (p - loc).dot(nrm) >= 0:
+            continue
+        for ray in (Vector((1, 0, 0)), Vector((0, 0.96, 0.28))):
+            n, q = 0, p.copy()
+            while True:
+                hit = tree.ray_cast(q, ray)
+                if hit[0] is None:
+                    break
+                n += 1
+                q = hit[0] + ray * 1e-5
+            if n % 2 == 0:
+                break
+        else:
+            deepest = d
+    return deepest
+
+
+def _clear(rig, w, key, pose, extra):
+    """Pose the character's real arms on the gun and pull whatever of the glove has gone into it back
+    out: the palm (and the heel of the thumb) off along the palm's normal; a finger by opening its
+    curl a little, or, where that doesn't help (a thumb wrapped through the receiver), by turning its
+    first joint whichever way frees it most. The right index stays on the trigger."""
+    arm, mesh, _ = rig
+    side = key.split(".")[1][0]
+    tree, solids = w.tree(extra), w.solids(extra)
+    names = ["hand." + side] + [f"f_{f}.{i}.{side}" for f in FINGERS for i in (1, 2, 3)]
+    idx = {g.index: g.name for g in mesh.vertex_groups}
+    groups = {n: [] for n in names}
+    for v in mesh.data.vertices:  # every vertex the hand moves most, blended joints included
+        best = max(((g.weight, idx[g.group]) for g in v.groups if g.weight > 0), default=None)
+        if best and best[1] in groups:
+            groups[best[1]].append(v.index)
+
+    def measure(only=None):
+        """The deepest point of each part of the glove inside the gun (m): the palm (with the heel of
+        the thumb) and each finger; or, for just finger `only`, that and how far its tip is off the gun."""
+        for pb in arm.pose.bones:
+            pb.rotation_quaternion = (1, 0, 0, 0)
+        for f in FINGERS:
+            for j in range(3):
+                x, y, z, q = pose[f][j]
+                arm.pose.bones[f"f_{f}.{j + 1}.{side}"].rotation_quaternion = (q, x, y, z)
+        bpy.context.view_layer.update()
+        x, y, z, q = pose["rot"]
+        frame = Matrix.Translation(Vector(pose["at"])) @ Quaternion((q, x, y, z)).to_matrix().to_4x4()
+        to_w = frame @ (arm.matrix_world @ arm.pose.bones[f"prop_hand.{side}"].matrix).inverted() @ mesh.matrix_world
+        dg = bpy.context.evaluated_depsgraph_get()
+        me = mesh.evaluated_get(dg).to_mesh()
+
+        def deepest(bones):
+            return max((_inside(solids, to_w @ me.vertices[i].co, tree) for n in bones for i in groups[n]), default=0.0)
+        if only:
+            tip = min((tree.find_nearest(to_w @ me.vertices[i].co, 0.1)[3] or 0.1 for i in groups[f"f_{only}.3.{side}"]), default=0.0)
+            out = (deepest([f"f_{only}.{i}.{side}" for i in (1, 2, 3)]), tip)
+        else:
+            out = {"palm": deepest(["hand." + side, f"f_thumb.1.{side}"])}
+            out.update({f: deepest([f"f_{f}.{i}.{side}" for i in (1, 2, 3)]) for f in FINGERS})
+        mesh.evaluated_get(dg).to_mesh_clear()
+        return out
+
+    def opened(qs):
+        return [tuple(Quaternion().slerp(Quaternion((qw, qx, qy, qz)), 0.85)[i] for i in (1, 2, 3, 0)) for qx, qy, qz, qw in qs]
+
+    def turned(qs, j, axis, deg):
+        qx, qy, qz, qw = qs[j]
+        q = Quaternion((qw, qx, qy, qz)) @ Quaternion(axis, math.radians(deg))
+        return list(qs[:j]) + [(q.x, q.y, q.z, q.w)] + list(qs[j + 1:])
+
+    def cost(deep, tip):
+        return max(deep - CLEAR, 0.0) * 4 + tip
+
+    best = (math.inf, None)
+    for n in range(25):
+        depth = measure()
+        bad = [f for f in FINGERS if depth[f] > CLEAR and not (f == "index" and side == "R")]
+        worst = max([depth["palm"]] + [depth[f] for f in FINGERS if not (f == "index" and side == "R")])
+        if worst < best[0]:  # the search can wander; what's kept is the clearest pose it found
+            best = (worst, {k: pose[k] for k in ("at", *FINGERS)})
+        if DEBUG:
+            print(f"  clear {key}: palm {depth['palm'] * 1000:.1f} mm, fingers {[(f, round(depth[f] * 1000, 1)) for f in FINGERS]}")
+        if (depth["palm"] <= CLEAR and not bad) or n == 24:
+            break
+        if depth["palm"] > CLEAR:  # +Z runs out of the palm, into the gun
+            x, y, z, q = pose["rot"]
+            Z = Quaternion((q, x, y, z)).to_matrix().col[2]
+            pose["at"] = tuple(Vector(pose["at"]) - Z * (depth["palm"] - CLEAR * 0.5))
+            continue
+        for f in bad:
+            was = pose[f]
+            tries = [opened(was)] + [turned(was, j, ax, d) for j in (0, 1, 2) for ax in ((1, 0, 0), (0, 0, 1)) for d in (-16, -8, 8, 16)]
+            scored = []
+            for t in tries:
+                pose[f] = t
+                scored.append((cost(*measure(f)), len(scored), t))
+            # Out of the gun, but still holding it: a thumb freed by pointing it at the sky is no grip.
+            pose[f] = min(scored)[2] if min(scored)[0] < cost(depth[f], 0.0) else tries[0]
+    pose.update(best[1])
 
 
 def _remove(w):
@@ -164,209 +464,335 @@ def _trigger_face(w):
     return Vector(((lo.x + hi.x) / 2, hi.y - (hi.y - lo.y) * 0.5, lo.z))
 
 
-def _cradle(w, at):
-    """`at` moved to the middle of the bare gun's cross-section there, where the cradling hand's
-    fist closes around it."""
-    ys = [v[1] for name, (vs, _) in w.parts.items() if not name.startswith("att.") or name in BARE
-          for v in vs if abs(v[2] - at.z) < 0.015 and abs(v[0] - at.x) < 0.04]
-    if not ys:
-        return at
-    return Vector((at.x, (min(ys) + max(ys)) / 2, at.z))
+# ---------------------------------------------------------------------------------- the hold
+
+def _cylinder(verts, seed, hint, half, reach):
+    """Fit the cylinder of the part round `seed`: its axis (through the centroids of 1 cm stations
+    along `hint`, within `half` of the seed and `reach` of the axis), the axis point nearest the
+    seed, its mean radius and the verts it was fitted to."""
+    a = Vector(hint).normalized()
+    sel = []
+    for v in verts:
+        q = v - seed
+        t = q.dot(a)
+        if abs(t) < half and (q - a * t).length < reach:
+            sel.append((t, v))
+    bins = {}
+    for t, v in sel:
+        bins.setdefault(round(t / 0.01), []).append(v)
+    cents = [sum(vs, Vector()) / len(vs) for _, vs in sorted(bins.items()) if len(vs) >= 3]
+    d, mean = a, seed
+    if len(cents) >= 2:
+        import numpy as np
+        mean = sum(cents, Vector()) / len(cents)
+        P = np.array([[c.x - mean.x, c.y - mean.y, c.z - mean.z] for c in cents])
+        _, _, vt = np.linalg.svd(P)
+        d = Vector(vt[0]).normalized()
+        if d.dot(a) < 0:
+            d = -d
+        if d.angle(a) > math.radians(25):
+            d = a
+    cen = mean + d * (seed - mean).dot(d)
+    rs = sorted(((v - cen) - d * (v - cen).dot(d)).length for _, v in sel) or [0.015]
+    return cen, d, rs[len(rs) // 2], [v for _, v in sel]
 
 
-def _part_centre(w, name):
-    """Where the left hand holds a foregrip: its body's centre (the clamp at the top left out)."""
-    if name not in w.parts:
-        return None
-    vs = w.parts[name][0]
-    lo = Vector([min(v[i] for v in vs) for i in range(3)])
-    hi = Vector([max(v[i] for v in vs) for i in range(3)])
-    c = (lo + hi) / 2
-    c.y = lo.y + (hi.y - lo.y) * 0.45
-    return c
+def _hold(w, hold, seed, mirror=False):
+    """Place `hold` on the weapon: fit its cylinder and set the palm frame tangent to it. A right-hand
+    hold (`mirror`) is placed on the mirrored weapon as a left hand."""
+    hint, palm = Vector(hold.axis), Vector(hold.palm)
+    x_sign = hold.x_sign
+    if mirror:
+        seed, hint, palm, x_sign = MIRROR @ seed, MIRROR @ hint, MIRROR @ palm, -hold.x_sign
+    cen, d, r, sel = _cylinder(w.verts(hold.part, mirror), seed, hint, 0.03, hold.reach)
+    X = d * x_sign
+    Z = (palm - X * palm.dot(X)).normalized()
+    Y = Z.cross(X)
+    if hold.tilt:  # turned about the palm's normal: the knuckles up the grip, the wrist down
+        t = math.radians(hold.tilt)
+        X, Y = X * math.cos(t) - Y * math.sin(t), Y * math.cos(t) + X * math.sin(t)
+    rot = Matrix((X, Y, Z)).transposed()  # columns X, Y, Z: frame -> weapon
+    # The palm sits against the surface on its side: as far out as the part reaches toward it.
+    strip = [v for v in sel if abs((v - cen).dot(X)) < 0.025 and abs((v - cen).dot(Y)) < 0.015]
+    ext = max((-(v - cen).dot(Z) for v in strip), default=r)
+    at = cen - Z * (ext + TOUCH) + Y * hold.shift
+    # A cradled handguard keeps the fingertips under its top edge (over it, they read as claws on the
+    # rail), and lays the thumb along the near side just under that edge, where the player sees it.
+    cap = max(v.y for v in sel) + 0.012 if hold.thumb == "along" and not mirror else None
+    if DEBUG:
+        print(f"  hold {hold.point}: axis {tuple(round(x, 2) for x in d)} r {r * 1000:.1f} mm, palm {ext * 1000:.1f} mm from the axis"
+              + (f", fingertips under {cap * 1000:.0f} mm" if cap else ""))
+    # The fingers hug the real extent where it is deeper than the fitted cylinder (a boxy handguard),
+    # then settle on the mesh from outside rather than press through it.
+    return Frame(at, rot, cen, d, max(r, ext), hold.part, mirror, hold.thumb, cap)
+
+
+def _moved(F, dt, roll):
+    """`F` slid `dt` along its cylinder and turned `roll` radians round it."""
+    R = Matrix.Rotation(roll, 3, F.d)
+    at = F.cen + R @ (F.at - F.cen) + F.d * dt
+    return F._replace(at=at, rot=R @ F.rot)
+
+
+def _place(c, w, F, trig):
+    """Slide the right hand along the grip and turn it round the grip (within 2 cm and 16 degrees)
+    to where its index finger lies best on the trigger."""
+    best = None
+    for dt in (-0.02, -0.01, 0.0, 0.01, 0.02):
+        for roll in (-16, -8, 0, 8, 16):
+            F2 = _moved(F, dt, math.radians(roll))
+            cost = _pose(c, w, F2, trigger=(trig, 0.0), probe=True) + 0.1 * abs(dt) + 0.0004 * abs(roll)
+            if best is None or cost < best[0]:
+                best = (cost, F2, dt, roll)
+    if DEBUG:
+        print(f"  placed right hand: slid {best[2] * 1000:.0f} mm, turned {best[3]} deg, reach {best[0] * 1000:.1f} mm")
+    return best[1]
 
 
 # ------------------------------------------------------------------------------------ the solve
 
-def _pose(c, w, side, at, rot, trigger=None, extra=None, probe=False):
-    """One hand on the weapon: the grip frame at weapon point `at` turned by `rot`; returns the
-    palm-corrected `at`, `rot` and each finger's three joint rotations over the rest fist. With
-    `probe`, only how far the index finger falls short of the trigger (m)."""
+def _pose(c, w, F, trigger=None, probe=False):
+    """The left hand on the weapon at the placed hold `F`: the palm frame settled on the surface and
+    every finger wrapped. Returns the frame and each finger's three joint rotations over the relaxed
+    rest hand, mirrored back for a right-hand hold. With `probe`, only how far the index finger falls
+    short of the trigger (m)."""
     b = c.b
-    tree = w.tree(extra)
-    # Solved on the left hand (the bodies are symmetric); a right-hand pose sees the gun mirrored.
-    G, fwd, up = (Vector(v) for v in b.grips[side])
-    if side == "R":
-        G, fwd, up = _mirror(G), _mirror(fwd), _mirror(up)
-        X = -fwd.cross(up)  # the mirror of the right frame's X = fwd x up
-    else:
-        X = fwd.cross(up)
-    R = rot.to_matrix()
+    tree = w.tree(F.extra, F.mirror)
+    G, fwd, up = (Vector(v) for v in b.grips["L"])
+    X = fwd.cross(up)
+    R = F.rot
+    Rt = R.transposed()
+    at = F.at.copy()
 
-    def weapon_point(p, shift):
-        q = p + shift - G
+    def weapon_point(p):
+        q = p - G
         return at + R @ Vector((q.dot(X), q.dot(fwd), q.dot(up)))
 
-    rest = b.rest
-    W = Vector(rest["hand.L"][0])
-    mid = Vector(rest["hand.L"][1])
-    L = (mid - W).normalized()
-    T = Vector(rest["f_index.1.L"][0]) - Vector(rest["f_pinky.1.L"][0])
-    T = (T - L * T.dot(L)).normalized()
-    Pn = L.cross(T).normalized()
-    if Pn.x > 0:
-        Pn = -Pn
-    palm = (mid - W).length
-    thick = 0.0125 * b.s
+    def to_hand(wp):
+        u = Rt @ (wp - at)
+        return G + X * u.x + fwd * u.y + up * u.z
 
-    def signed(p, shift):
+    def to_hand_dir(wv):
+        u = Rt @ wv
+        return X * u.x + fwd * u.y + up * u.z
+
+    rest = b.rest
+    L, T, Pn, palm, thick = real.hand_axes(rest, b.s)
+    W = Vector(rest["hand.L"][0])
+
+    def signed(p):
         """Distance from the gun's surface, negative inside it."""
-        q = weapon_point(p, shift)
-        loc, nrm, _, d = tree.find_nearest(q)
+        q = weapon_point(p)
+        loc, nrm, _, dist = tree.find_nearest(q)
         if loc is None:
             return 1.0
-        return -d if (q - loc).dot(nrm) < 0 else d
+        return -dist if (q - loc).dot(nrm) < 0 else dist
 
-    # Palm on the gun: slide the gun along the palm normal until the palm just touches it.
-    palm_pts = [W + L * (k * palm) + Pn * thick for k in (0.35, 0.6, 0.85)]
+    # Palm on the gun: settle the frame along the palm normal until the palm just touches.
+    thick += GLOVE
+    palm_pts = [W + L * (k * palm) + Pn * thick for k in (0.45, 0.65, 0.85)]
     palm_pts += [Vector(rest[f"f_{f}.1.L"][0]) + Pn * thick * 0.8 for f in ("index", "middle", "ring", "pinky")]
-    shift = Vector()
+    found = _skin(c.id)
+    skin = None
+    if found and (found[1] - W).length < 0.002:
+        skin = found[0]
+        # The real palm and the heel of the thumb, which the grip presses hardest.
+        palm_pts = skin["hand.L"] + skin["f_thumb.1.L"]
+    Zw = R @ Vector((0, 0, 1))
+    moved = 0.0
     for _ in range(6):
-        d = min(signed(p, shift) for p in palm_pts)
+        d = min(signed(p) for p in palm_pts)
         if abs(d - TOUCH) < 2e-4:
             break
-        shift += Pn * (d - TOUCH)
-    shift.length = min(shift.length, 0.03)
+        step = max(-0.01 - moved, min(0.01 - moved, d - TOUCH))
+        at += Zw * step
+        moved += step
+    # Wrap the fingers; if the heel of the thumb, swung round the grip, has gone into the gun, back
+    # the palm off until it clears and wrap them again.
+    for _ in range(4):
+        # The cylinder in hand space.
+        c_h, d_h = to_hand(F.cen), to_hand_dir(F.d).normalized()
 
-    axis_c = L.cross(Pn).normalized()
-    out = {}
-    for f in ("index",) if probe else FINGERS:
-        names = [f"f_{f}.{i}.L" for i in (1, 2, 3)]
-        js = [Vector(rest[names[0]][0])] + [Vector(rest[n][1]) for n in names]
-        segs = [Matrix() for _ in names]
-        rho = b.finger_r[f]
+        def dist_axis(p):
+            q = p - c_h
+            return (q - d_h * q.dot(d_h)).length
 
-        def turn(j, Rm, js=js, segs=segs):
-            M = _pivot(Rm, js[j])
-            for q in range(j + 1, 4):
-                js[q] = M @ js[q]
-            for q in range(j, 3):
-                segs[q] = M @ segs[q]
+        axis_c = L.cross(Pn).normalized()  # flexion: rotating about this brings a finger toward the palm
+        out = {}
+        for f in ("index",) if probe else FINGERS:
+            names = [f"f_{f}.{i}.L" for i in (1, 2, 3)]
+            js = [Vector(rest[names[0]][0])] + [Vector(rest[n][1]) for n in names]
+            segs = [Matrix() for _ in names]
+            rho = b.finger_r[f] + GLOVE
+            hug = F.r + rho + 0.0025 * b.s
 
-        def near(j, js=js, rho=rho):
-            """Whether the chain from joint j out touches the gun."""
-            return any(signed(js[q].lerp(js[q + 1], t), shift) <= rho + TOUCH for q in range(j, 3) for t in (0.5, 1.0))
+            def turn(j, Rm, js=js, segs=segs):
+                M = _pivot(Rm, js[j])
+                for q in range(j + 1, 4):
+                    js[q] = M @ js[q]
+                for q in range(j, 3):
+                    segs[q] = M @ segs[q]
 
-        def through(js=js, rho=rho, first=1 if f == "thumb" else 0):
-            """Whether the finger ends up inside the gun anywhere (the thumb's first bone lies in the
-            palm's heel, which presses into the grip)."""
-            return any(signed(js[q].lerp(js[q + 1], t), shift) < rho * 0.4 - TOUCH for q in range(first, 3) for t in (0.25, 0.5, 0.75, 1.0))
+            bones = [skin[n] for n in names] if skin else None
 
-        if f == "thumb":
-            # Opposition: swing the thumb across toward the grip, a degree at a time, until it meets
-            # the gun.
-            d0 = js[3] - js[0]
-            tgt = (G - shift + T * 0.012 * b.s) - js[0]
-            swing = d0.rotation_difference(d0.lerp(tgt, 0.55))
-            ax, total = swing.axis, swing.angle
-            for _ in range(int(math.degrees(total))):
-                turn(0, Matrix.Rotation(math.radians(1.0), 3, ax))
-                if near(0):
-                    turn(0, Matrix.Rotation(math.radians(-1.0), 3, ax))
-                    break
-            lims = (30, 55, 60)
-        else:
-            d = js[3] - js[0]
-            dp = (d - Pn * d.dot(Pn)).normalized()
-            ang = math.atan2(dp.cross(L).dot(Pn), dp.dot(L))
-            turn(0, Matrix.Rotation(ang * 0.85, 3, Pn))
-            lims = (88, 105, 75)
-        if f == "index" and trigger is not None:
-            ok = _on_trigger(js, turn, signed, shift, weapon_point, rho, axis_c, Pn, trigger, coarse=probe)
-            if probe:
-                return ok
-        else:
-            for j in range(3):
-                ax = axis_c if f != "thumb" else (js[j + 1] - js[j]).cross(Pn).normalized()
-                n = int(lims[j] / math.degrees(STEP))
-                if near(j):
-                    # Already on (or in) the gun: open the joint until the finger just clears it.
+            def touching(j, js=js, rho=rho, bones=bones, segs=segs):
+                """Whether phalanx j touches the gun."""
+                if bones:
+                    return any(signed(segs[j] @ p) <= TOUCH for p in bones[j])
+                return any(signed(js[j].lerp(js[j + 1], t)) <= rho + TOUCH for t in (0.5, 1.0))
+
+            def through(j, js=js, rho=rho, bones=bones, segs=segs):
+                """Whether the chain from joint j out is inside the gun anywhere, its fingertip pad
+                included (the thumb's first bone carries the palm's heel, a little fuller). With the
+                glove's real surface, it may sink SINK into the gun (the leather gives a little)."""
+                if bones:
+                    return any(signed(segs[q] @ p) < -SINK for q in range(j, 3) for p in bones[q])
+
+                def r(q):
+                    return rho * (1.3 if f == "thumb" and q == 0 else 1.0) * PRESS - TOUCH
+                tip = js[3] + (js[3] - js[2]).normalized() * rho * 0.5
+                return any(signed(js[q].lerp(js[q + 1], t)) < r(q) for q in range(j, 3) for t in (0.25, 0.5, 0.75, 1.0)) or signed(tip) < r(2)
+
+            def capped(q, js=js, rho=rho):
+                """Whether joint q has reached the hold's height cap."""
+                return F.cap is not None and weapon_point(js[q]).y > F.cap - 0.012 - rho
+
+            def refine(j, ax, close=True):
+                """Nudge joint j against the real mesh: open until the chain clears it, else close until
+                this phalanx touches it, within REFINE of the wrap."""
+                n = int(REFINE / STEP)
+                if through(j):
                     for _ in range(n):
                         turn(j, Matrix.Rotation(-STEP, 3, ax))
-                        if not near(j):
+                        if not through(j):
                             break
-                else:
+                elif close and not touching(j) and not capped(j + 1):
                     for _ in range(n):
-                        if near(j):
-                            break
                         turn(j, Matrix.Rotation(STEP, 3, ax))
-            ok = not through()
-        if DEBUG:
-            seg = [min(signed(js[q].lerp(js[q + 1], t), shift) for t in (0.25, 0.5, 0.75, 1.0)) for q in range(3)]
-            print(f"  {side} {f}: {'ok' if ok else 'rest'} rho {rho * 1000:.1f} segs {[round(x * 1000, 1) for x in seg]}")
-        # A finger the gun's shape defeats keeps the rest fist: never worse than before.
-        out[f] = segs if ok else None
-    return {"at": weapon_point(G, shift), "rot": (rot.x, rot.y, rot.z, rot.w), **_deltas(c, side, out)}
+                        if touching(j) or through(j) or capped(j + 1):
+                            break
+                    if through(j):
+                        turn(j, Matrix.Rotation(-STEP, 3, ax))
+
+            def thumb_axis(j, js=js):
+                return (js[j + 1] - js[j]).cross(Pn).normalized()
 
 
-def _place(c, w, right, trig):
-    """Slide the right hand up, down, forward or back along the grip (within 3 cm of the shared grip
-    point) to where its index finger lies best on the trigger."""
-    best = None
-    for dy in range(-30, 33, 3):
-        for dz in range(-21, 24, 3):
-            at = right + Vector((0.0, dy / 1000, dz / 1000))
-            cost = _pose(c, w, "R", at, DEFAULT_ROT, trigger=(trig, 0.0), probe=True) + 0.1 * (dy * dy + dz * dz) ** 0.5 / 1000
-            if best is None or cost < best[0]:
-                best = (cost, at)
-    if DEBUG:
-        print(f"  placed right hand {tuple(round(x, 3) for x in best[1])}, reach {best[0] * 1000:.1f} mm")
-    return best[1]
+            if f == "thumb":
+                d0 = js[3] - js[0]
+                if F.thumb == "wrap":
+                    # Opposition: swing the thumb round the back of the grip toward its far side (the
+                    # fingers take the front), then flex each joint until it lands on the cylinder.
+                    # Square to the grip, however the hand lies across it, and up toward the top of
+                    # it (the web of the hand sits high on the grip), so the thumb stays high.
+                    back = (fwd - d_h * fwd.dot(d_h)).normalized()
+                    tgt = (c_h + d_h * 0.04 - back * F.r + up * (F.r + rho)) - js[0]
+                    turn(0, _toward(d0, d0.lerp(tgt, 0.7)))
+                    # Round the cylinder the opposite way to the fingers: back to far side. It curls
+                    # about the grip itself; the hand's own axis lies across a diagonal grip.
+                    curl = -d_h if d_h.dot(axis_c) > 0 else d_h
+                    for j, lim in enumerate((30, 55, 60)):
+                        for _ in range(lim * 2):
+                            if dist_axis(js[j + 1]) <= hug:
+                                break
+                            turn(j, Matrix.Rotation(STEP, 3, curl))
+                    for j in range(3):
+                        refine(j, curl)
+                else:
+                    # Along the near side, pointing the way the fingers' knuckle line runs (-X: forward
+                    # on a handguard), straight, its tip laid on the nearest skin of the gun; only backed
+                    # off the mesh.
+                    ahead = weapon_point(js[0] - X * d0.length)
+                    if F.cap is not None:  # on a handguard, up along its top edge
+                        ahead.y = max(ahead.y, F.cap - 0.012 + rho)
+                    loc, nrm, _, _ = tree.find_nearest(ahead)
+                    tgt = (to_hand(loc + nrm * rho) if loc is not None else js[0] - X * d0.length) - js[0]
+                    turn(0, _toward(d0, tgt))
+                    for j in range(3):
+                        refine(j, thumb_axis(j), close=False)
+            else:
+                # Close the spread: each finger parallel to the hand axis, side by side.
+                d = js[3] - js[0]
+                dp = (d - Pn * d.dot(Pn)).normalized()
+                ang = math.atan2(dp.cross(L).dot(Pn), dp.dot(L))
+                turn(0, Matrix.Rotation(ang * 0.85, 3, Pn))
+                if f == "index" and trigger is not None:
+                    ok = _on_trigger(js, turn, signed, weapon_point, rho, axis_c, Pn, trigger, coarse=probe)
+                    if probe:
+                        return ok
+                else:
+                    for j, lim in enumerate((88, 105, 75)):
+                        for _ in range(lim * 2):
+                            if dist_axis(js[j + 1]) <= hug or capped(j + 1):
+                                break
+                            turn(j, Matrix.Rotation(STEP, 3, axis_c))
+                    for j in range(3):
+                        refine(j, axis_c)
+            if DEBUG:
+                seg = [min(signed(js[q].lerp(js[q + 1], t)) for t in (0.25, 0.5, 0.75, 1.0)) for q in range(3)]
+                unm = (lambda v: MIRROR @ v) if F.mirror else (lambda v: v)
+                tip = tuple(round(x * 1000) for x in unm(weapon_point(js[3])))
+                print(f"  {'R' if F.mirror else 'L'} {f}: rho {rho * 1000:.1f} gap {[round((x - rho) * 1000, 1) for x in seg]} mm, tip {tip} mm")
+                if bones:
+                    print(f"    skin gap {[round(min(signed(segs[q] @ p) for p in bones[q]) * 1000, 1) for q in range(3)]} mm, samples {[len(x) for x in bones]}")
+            out[f] = segs
+        if not skin:
+            break
+        heel = skin["hand.L"] + [out["thumb"][0] @ p for p in skin["f_thumb.1.L"]]
+        depth = -min(signed(p) for p in heel)
+        if depth <= SINK:
+            break
+        at -= Zw * (depth - SINK * 0.5)  # +Z runs out of the palm, into the gun
+    side = "R" if F.mirror else "L"
+    if F.mirror:
+        at = MIRROR @ at
+        rot = Matrix((-(MIRROR @ R.col[0]), MIRROR @ R.col[1], MIRROR @ R.col[2])).transposed()
+    else:
+        rot = R
+    q = rot.to_quaternion().normalized()
+    return {"at": tuple(at), "rot": (q.x, q.y, q.z, q.w), **_deltas(c, side, out)}
 
 
-def _on_trigger(js, turn, signed, shift, weapon_point, rho, axis_c, spread, trigger, coarse=False):
+def _on_trigger(js, turn, signed, weapon_point, rho, axis_c, spread, trigger, coarse=False):
     """Lay the index finger's last pad on the trigger's front face: a search over the finger's spread
     and its first two joints' flexion (the last follows at 0.6 of the second) that keeps the finger
     off the gun elsewhere. `trigger` is the blade's front face and how far it is pulled back (m)."""
     face, pull = trigger
     target = face + Vector((0.0, 0.0, pull - rho * 0.8))  # the finger's centre, its pad on the face
     start = [v.copy() for v in js]
-    best, best_d = None, 1.0
+    best = None
     k = 3 if coarse else 1
-    for a0, a1, a2 in ((a0, a1, a2) for a0 in range(-24, 28, 4 * k) for a1 in range(0, 84, 4 * k) for a2 in range(0, 104, 4 * k)):
-        p = [v.copy() for v in start]
+    for a0 in range(-24, 28, 4 * k):
+        for a1 in range(0, 84, 4 * k):
+            for a2 in range(0, 104, 4 * k):
+                p = [v.copy() for v in start]
 
-        def flex(j, deg, axis=axis_c, p=p):
-            M = _pivot(Matrix.Rotation(math.radians(deg), 3, axis), p[j])
-            for q in range(j + 1, 4):
-                p[q] = M @ p[q]
-        flex(0, a0, spread)
-        flex(0, a1)
-        flex(1, a2)
-        flex(2, a2 * 0.6)
-        pad = p[2].lerp(p[3], 0.65)
-        cost = (weapon_point(pad, shift) - target).length
-        for q in range(2):  # the last bone may rest on the trigger
-            for t in (0.3, 0.7, 1.0):
-                pen = rho - signed(p[q].lerp(p[q + 1], t), shift)
-                if pen > 0:
-                    cost += pen * 4.0
-        if best is None or cost < best[0]:
-            best = (cost, a0, a1, a2)
-        best_d = min(best_d, (weapon_point(pad, shift) - target).length)
+                def flex(j, deg, axis=axis_c, p=p):
+                    M = _pivot(Matrix.Rotation(math.radians(deg), 3, axis), p[j])
+                    for q in range(j + 1, 4):
+                        p[q] = M @ p[q]
+                flex(0, a0, spread)
+                flex(0, a1)
+                flex(1, a2)
+                flex(2, a2 * 0.6)
+                pad = p[2].lerp(p[3], 0.65)
+                cost = (weapon_point(pad) - target).length
+                for q in range(2):  # the last bone may rest on the trigger
+                    for t in (0.3, 0.7, 1.0):
+                        pen = rho - signed(p[q].lerp(p[q + 1], t))
+                        if pen > 0:
+                            cost += pen * 4.0
+                if best is None or cost < best[0]:
+                    best = (cost, a0, a1, a2)
     cost, a0, a1, a2 = best
     if coarse:
         return cost
     if DEBUG:
-        wp = lambda v: tuple(round(x, 3) for x in weapon_point(v, shift))  # noqa: E731
-        print(f"  index mcp {wp(start[0])} tip {wp(start[3])} closest pad {best_d * 1000:.1f} mm")
-        print(f"  trigger cost {cost * 1000:.1f} mm at {a1},{a2}, target {tuple(round(x, 3) for x in target)}")
-    if cost > 0.02:
-        return False
+        print(f"  trigger: pad {cost * 1000:.1f} mm off at spread {a0}, flex {a1}/{a2}")
     turn(0, Matrix.Rotation(math.radians(a0), 3, spread))
     for j, deg in ((0, a1), (1, a2), (2, a2 * 0.6)):
         turn(j, Matrix.Rotation(math.radians(deg), 3, axis_c))
-    return True
+    return cost <= 0.02
 
 
 def _deltas(c, side, segs):
@@ -376,9 +802,6 @@ def _deltas(c, side, segs):
     hand = b.fit["hand." + side]
     out = {}
     for f in FINGERS:
-        if segs[f] is None:
-            out[f] = [(0.0, 0.0, 0.0, 1.0)] * 3
-            continue
         posed = {}
         qs = []
         for i in (1, 2, 3):
@@ -398,10 +821,6 @@ def _deltas(c, side, segs):
     return out
 
 
-def _mirror(p):
-    return Vector((-p[0], p[1], p[2]))
-
-
 def _mirror_matrix(M):
     X = Matrix.Scale(-1, 4, (1, 0, 0))
     return X @ M @ X
@@ -413,3 +832,192 @@ def _pivot(R, p):
 
 def _toward(a, b):
     return a.normalized().rotation_difference(b.normalized()).to_matrix()
+
+
+# ----------------------------------------------------------------------------------- the check
+
+def render(cid, weapons=("rifle", "shotgun", "pistol", "dmr", "smg"), out_dir=SHOTS, res=384):
+    """Render the built character's hands on each weapon, posed from its grips file, as the game
+    poses them: <out_dir>/<cid>-hands-<weapon>.png, the right hand from the gun's left and front,
+    the support hand from the right and below. Headless Workbench, seconds per weapon."""
+    glb = os.path.join(kit.OUT, f"{cid}.glb")
+    with open(os.path.join(kit.OUT, f"{cid}.grips.toml"), "rb") as f:
+        poses = tomllib.load(f)
+    os.makedirs(out_dir, exist_ok=True)
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    scene = bpy.context.scene
+    scene.render.engine = "CYCLES"  # headless: no GPU context for Workbench or Eevee
+    scene.cycles.device = "CPU"
+    scene.cycles.samples = 12
+    scene.cycles.use_denoising = False
+    scene.view_settings.view_transform = "Standard"
+    scene.render.resolution_x, scene.render.resolution_y = res, res
+    scene.world = bpy.data.worlds.new("w")
+    scene.world.use_nodes = True
+    scene.world.node_tree.nodes["Background"].inputs["Color"].default_value = (0.5, 0.55, 0.62, 1)
+    scene.world.node_tree.nodes["Background"].inputs["Strength"].default_value = 1.2
+    for name, energy, rot in (("key", 3.0, (50, 10, -30)), ("fill", 1.5, (60, 0, 150))):
+        ld = bpy.data.lights.new(name, "SUN")
+        ld.energy = energy
+        lo = bpy.data.objects.new(name, ld)
+        lo.rotation_euler = tuple(math.radians(a) for a in rot)
+        scene.collection.objects.link(lo)
+    cam = bpy.data.objects.new("cam", bpy.data.cameras.new("cam"))
+    cam.data.lens = 50
+    cam.data.clip_start = 0.01
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    bpy.ops.import_scene.gltf(filepath=glb)
+    arm = next(o for o in bpy.data.objects if o.type == "ARMATURE")
+    arm.animation_data_clear()
+    arm.data.pose_position = "POSE"
+    for o in bpy.data.objects:
+        if o.type == "MESH" and o.name not in kit.MESHES:
+            o.hide_render = True
+    for pb in arm.pose.bones:
+        pb.rotation_mode = "QUATERNION"
+    outs = []
+    for wid in weapons:
+        views = [("R", (-0.22, -0.06, -0.16)), ("R", (0.04, -0.12, -0.30))]
+        if f"{wid}.L" in poses:
+            views += [("L", (0.26, -0.14, -0.45)), ("L", (-0.1, -0.3, -0.55))]
+        gun = _import(os.path.join(WEAPONS, f"{wid}.glb")).objects
+        for o in gun:
+            if o.type == "MESH":
+                name = re.sub(r"\.\d{3}$", "", o.name)
+                o.hide_render = name.startswith("att.") and name not in BARE
+        base = {o: o.matrix_world.copy() for o in gun if o.parent is None}
+        cols = []
+        for i, (side, eye) in enumerate(views):
+            pose = poses[f"{wid}.{side}"]
+            for pb in arm.pose.bones:
+                pb.rotation_quaternion = (1, 0, 0, 0)
+            for fg in FINGERS:
+                for j in range(3):
+                    x, y, z, w = pose[fg][j]
+                    arm.pose.bones[f"f_{fg}.{j + 1}.{side}"].rotation_quaternion = (w, x, y, z)
+            bpy.context.view_layer.update()
+            x, y, z, w = pose["rot"]
+            frame = Matrix.Translation(Vector(pose["at"])) @ Quaternion((w, x, y, z)).to_matrix().to_4x4()
+            hand = arm.matrix_world @ arm.pose.bones[f"prop_hand.{side}"].matrix
+            place = hand @ frame.inverted() @ TO_GLTF
+            for o, m in base.items():
+                o.matrix_world = place @ m
+            bpy.context.view_layer.update()
+            look = place @ TO_GLTF.inverted() @ Vector(pose["at"])
+            cam.location = place @ TO_GLTF.inverted() @ (Vector(pose["at"]) + Vector(eye))
+            cam.rotation_euler = (look - cam.location).to_track_quat("-Z", "Y").to_euler()
+            path = os.path.join(out_dir, f"{cid}-hands-{wid}-{i}.png")
+            scene.render.filepath = path
+            bpy.ops.render.render(write_still=True)
+            cols.append(path)
+        for o in gun:
+            bpy.data.objects.remove(o, do_unlink=True)
+        outs.append(_sheet(cols, os.path.join(out_dir, f"{cid}-hands-{wid}.png")))
+    return outs
+
+
+# Where the game rests the viewmodel's trigger in front of the eye (src/viewmodel.rs REST) and its
+# vertical field of view, for the first-person check renders.
+FP_REST = (0.14, -0.21, -0.26)
+FP_FOV = 75.0
+
+
+def render_fp(cid, weapons=("rifle",), out_dir=SHOTS, res=(960, 540)):
+    """Render what the player sees of each hand on each weapon: the gun at the game's hip rest in
+    front of the eye, each hand posed from the grips file (the arm is not solved here, only where the
+    hand sits). Writes <out_dir>/<cid>-fp-<weapon>.png: the right hand's frame beside the left's."""
+    glb = os.path.join(kit.OUT, f"{cid}.glb")
+    with open(os.path.join(kit.OUT, f"{cid}.grips.toml"), "rb") as f:
+        poses = tomllib.load(f)
+    os.makedirs(out_dir, exist_ok=True)
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    scene = bpy.context.scene
+    scene.render.engine = "CYCLES"
+    scene.cycles.device = "CPU"
+    scene.cycles.samples = 12
+    scene.cycles.use_denoising = False
+    scene.view_settings.view_transform = "Standard"
+    scene.render.resolution_x, scene.render.resolution_y = res
+    scene.world = bpy.data.worlds.new("w")
+    scene.world.use_nodes = True
+    scene.world.node_tree.nodes["Background"].inputs["Color"].default_value = (0.5, 0.55, 0.62, 1)
+    scene.world.node_tree.nodes["Background"].inputs["Strength"].default_value = 1.2
+    for name, energy, rot in (("key", 3.0, (50, 10, -30)), ("fill", 1.5, (60, 0, 150))):
+        ld = bpy.data.lights.new(name, "SUN")
+        ld.energy = energy
+        lo = bpy.data.objects.new(name, ld)
+        lo.rotation_euler = tuple(math.radians(a) for a in rot)
+        scene.collection.objects.link(lo)
+    cam = bpy.data.objects.new("cam", bpy.data.cameras.new("cam"))
+    cam.data.sensor_fit = "VERTICAL"
+    cam.data.angle_y = math.radians(FP_FOV)
+    cam.data.clip_start = 0.01
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    bpy.ops.import_scene.gltf(filepath=glb)
+    arm = next(o for o in bpy.data.objects if o.type == "ARMATURE")
+    arm.animation_data_clear()
+    arm.data.pose_position = "POSE"
+    for o in bpy.data.objects:
+        if o.type == "MESH" and o.name != "mesh.arms":  # the eye sits inside the resting body
+            o.hide_render = True
+    for pb in arm.pose.bones:
+        pb.rotation_mode = "QUATERNION"
+    outs = []
+    for wid in weapons:
+        gun = _import(os.path.join(WEAPONS, f"{wid}.glb")).objects
+        for o in gun:
+            if o.type == "MESH":
+                name = re.sub(r"\.\d{3}$", "", o.name)
+                o.hide_render = name.startswith("att.") and name not in BARE
+        base = {o: o.matrix_world.copy() for o in gun if o.parent is None}
+        tiles = []
+        for side in ("R", "L"):
+            if f"{wid}.{side}" not in poses:
+                continue
+            pose = poses[f"{wid}.{side}"]
+            for pb in arm.pose.bones:
+                pb.rotation_quaternion = (1, 0, 0, 0)
+            for fg in FINGERS:
+                for j in range(3):
+                    x, y, z, w = pose[fg][j]
+                    arm.pose.bones[f"f_{fg}.{j + 1}.{side}"].rotation_quaternion = (w, x, y, z)
+            bpy.context.view_layer.update()
+            x, y, z, w = pose["rot"]
+            frame = Matrix.Translation(Vector(pose["at"])) @ Quaternion((w, x, y, z)).to_matrix().to_4x4()
+            hand = arm.matrix_world @ arm.pose.bones[f"prop_hand.{side}"].matrix
+            place = hand @ frame.inverted() @ TO_GLTF
+            for o, m in base.items():
+                o.matrix_world = place @ m
+            cam.matrix_world = place @ TO_GLTF.inverted() @ Matrix.Translation(-Vector(FP_REST))
+            bpy.context.view_layer.update()
+            path = os.path.join(out_dir, f"{cid}-fp-{wid}-{side}.png")
+            scene.render.filepath = path
+            bpy.ops.render.render(write_still=True)
+            tiles.append(path)
+        for o in gun:
+            bpy.data.objects.remove(o, do_unlink=True)
+        outs.append(_sheet(tiles, os.path.join(out_dir, f"{cid}-fp-{wid}.png")))
+    return outs
+
+
+def _sheet(paths, out):
+    """Tile renders side by side into one image (and drop the tiles)."""
+    imgs = [bpy.data.images.load(p) for p in paths]
+    w, h = imgs[0].size
+    sheet = bpy.data.images.new("sheet", w * len(imgs), h, alpha=False)
+    px = [0.0] * (w * len(imgs) * h * 4)
+    for k, im in enumerate(imgs):
+        src = list(im.pixels)
+        for row in range(h):
+            a = (row * w * len(imgs) + k * w) * 4
+            s = row * w * 4
+            px[a:a + w * 4] = src[s:s + w * 4]
+    sheet.pixels = px
+    sheet.filepath_raw = out
+    sheet.file_format = "PNG"
+    sheet.save()
+    for p in paths:
+        os.remove(p)
+    return out

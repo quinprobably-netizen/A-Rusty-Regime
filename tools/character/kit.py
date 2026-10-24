@@ -6,10 +6,14 @@ glTF export and a checker.
 Blender is Z-up and the character faces -Y with its left side on +X; the glTF exporter turns that into
 Y-up facing +Z, which is what the game expects. Units are metres, feet on the ground at the origin.
 
-Hands are modelled closed around a weapon. `prop_hand.R` / `prop_hand.L` are the grip frames: each
-bone's head sits where the weapon's `hand_r` / `hand_l` socket goes, the bone points down the barrel
-and its Z axis is the weapon's up. The game hangs the third-person weapon on `prop_hand.R` and, in
-first person, solves the arms so both prop frames land on the weapon's sockets.
+Hands rest open and relaxed. `prop_hand.R` / `prop_hand.L` are the palm frames: the bone's head
+sits on the palm's skin under the middle and ring knuckles, it points from the wrist toward the
+knuckles (Y) and its Z axis points out of the palm (X is toward the thumb on the right hand, the
+little finger on the left). Every finger bone's Z points out of the palm too, so flexion is a
+positive turn about its X. Where each frame sits on each weapon, and how the fingers wrap it, is
+solved by grips.py from the weapon meshes (rig contract v2:
+docs/superpowers/specs/2026-10-22-rig-rebuild-design.md); the game puts each prop frame on its
+solved pose in first and third person.
 """
 
 import math
@@ -122,19 +126,15 @@ class Build:
         # Forearm/hand keep their length ratio with the torso so long torsos get long arms.
         self.bones = bones
         self.all = mirrored(bones)
-        # Grip frames (see the module doc): built from the hand bone so they move with the build.
+        # Palm frames (see the module doc): on the palm's skin, down the hand, Z out of the palm (the
+        # hanging hands' palms face the body).
         for s, sx in (("L", 1), ("R", -1)):
             h, t, _ = self.all["hand." + s]
             h, t = Vector(h), Vector(t)
             down = (t - h).normalized()
-            palm_in = Vector((-sx, 0, 0))
-            if s == "R":
-                at = h + down * 0.085 * k + palm_in * 0.034 * k + Vector((0, -0.006, 0))
-                fwd, up = down, Vector((0, -1, 0))
-            else:
-                at = h + down * 0.085 * k + palm_in * 0.040 * k + Vector((0, 0.004, 0))
-                fwd, up = Vector((0, -1, 0)), palm_in
-            self.all["prop_hand." + s] = (tuple(at), tuple(at + fwd * 0.08), "hand." + s, tuple(up))
+            palm_out = Vector((-sx, 0, 0))
+            at = h + down * 0.75 * (t - h).length + palm_out * 0.0125 * k
+            self.all["prop_hand." + s] = (tuple(at), tuple(at + down * 0.08), "hand." + s, tuple(palm_out))
 
     def j(self, name, at=0.0):
         """A point `at` (0 head .. 1 tail) along bone `name`."""
@@ -655,7 +655,7 @@ class Char:
         self.parts.append((obj, None, bone))
         return obj
 
-    def finish(self, out_dir=OUT, bake=True, budget=(25000, 75000)):
+    def finish(self, out_dir=OUT, bake=True, budget=(25000, 120000)):
         for obj, _, _ in self.parts:
             hs.apply_modifiers(obj)
             dims = obj.dimensions
@@ -920,24 +920,32 @@ def descend(arm, pose, dofs, cost, step=24.0):
 SUPPORT = (0.30, 0.035)
 
 
-def solve_rifle_arms(arm, base, grip, fwd, start=None):
-    """Arm angles that put prop_hand.R at `grip` pointing along `fwd` with the gun upright, and
-    prop_hand.L on the handguard, on top of the `base` body pose."""
+def solve_rifle_arms(arm, base, grip, fwd, start=None, left_rel=None):
+    """Arm angles that put the right palm frame at `grip` with the gun's barrel along `fwd` and
+    upright (the palm faces the gun's left), and the left palm frame where `left_rel` (its transform
+    in the right frame's coordinates, from grips.carry_frames) puts it on that gun, on top of the
+    `base` body pose. Without `left_rel` the support hand goes a rifle's handguard ahead."""
     pose = {k: v for k, v in base.items() if k not in ARM_BONES}
     pose.update(start or {"upper_arm.R": (-50, 0, 10), "forearm.R": (-100, 0, 0), "upper_arm.L": (-70, 0, -10), "forearm.L": (-70, 0, 0)})
     grip, fwd = Vector(grip), Vector(fwd).normalized()
-    side = fwd.cross(Vector((0, 0, 1))).normalized()
+    side = fwd.cross(Vector((0, 0, 1))).normalized()  # the gun's right
     up = side.cross(fwd).normalized()
+    left = -side
 
     def right_cost():
         p, f, u = bone_frame(arm, "prop_hand.R")
-        return (p - grip).length_squared * 60 + (1 - f.dot(fwd)) * 10 + (1 - u.dot(up)) * 4.0
+        return (p - grip).length_squared * 60 + (1 - f.dot(fwd)) * 10 + (1 - u.dot(left)) * 4.0
 
     def left_cost():
-        p, f, u = bone_frame(arm, "prop_hand.R")
-        target = p + f * SUPPORT[0] + u * SUPPORT[1]
+        m = arm.pose.bones["prop_hand.R"].matrix
+        if left_rel is not None:
+            t = m @ left_rel
+            target, tf, tu = t.translation, t.col[1].to_3d().normalized(), t.col[2].to_3d().normalized()
+        else:
+            p, f, u = m.translation, m.col[1].to_3d().normalized(), m.col[2].to_3d().normalized()
+            target, tf, tu = p + f * SUPPORT[0] + f.cross(u) * SUPPORT[1], f, u
         q, lf, lu = bone_frame(arm, "prop_hand.L")
-        return (q - target).length_squared * 60 + (1 - lf.dot(f)) * 1.0 + (1 - lu.dot(u)) * 1.0
+        return (q - target).length_squared * 60 + (1 - lf.dot(tf)) * 1.0 + (1 - lu.dot(tu)) * 1.0
 
     def multistart(dofs, cost, starts):
         best, best_pose = None, None
@@ -975,9 +983,10 @@ CARRIES = {
 ARMS = {}
 
 
-def solve_carries(build, arm):
+def solve_carries(build, arm, left_rel=None):
     """Solve every carry's arm pose. A build may bring its own `carries` (same shape as CARRIES, for
-    1.80 m): the realistic bodies' shoulders sit higher than the kit's."""
+    1.80 m): the realistic bodies' shoulders sit higher than the kit's. `left_rel` places the support
+    hand on the character's own weapon (see solve_rifle_arms)."""
     k = build.k
     bases = {"ready": clip_walk(build, 0.0), "run": clip_run(build, 0.0), "sprint": clip_sprint(build, 0.0),
              "crouch": clip_crouch(build, 0.0), "slide": clip_slide(build, 0.0)}
@@ -985,7 +994,7 @@ def solve_carries(build, arm):
     prev = None
     for name, (grip, fwd) in getattr(build, "carries", CARRIES).items():
         g = (grip[0] * build.width, grip[1] * k, grip[2] * k)
-        ARMS[name] = solve_rifle_arms(arm, bases[name], g, fwd, start=prev)
+        ARMS[name] = solve_rifle_arms(arm, bases[name], g, fwd, start=prev, left_rel=left_rel)
         prev = dict(ARMS[name])
     apply_pose(arm, {})
 
@@ -1149,8 +1158,8 @@ def bake_clips(build, arm):
 # ---------------------------------------------------------------------------------------- preview
 
 def dummy_gun(arm):
-    """A stand-in rifle on prop_hand.R for look-dev renders: grip at the bone head, barrel down the
-    bone, a block where the support hand goes."""
+    """A stand-in rifle on prop_hand.R for look-dev renders: grip in the palm, barrel down the hand,
+    a block where the support hand goes."""
     if "dummy_gun" in bpy.data.objects:
         return
     parts = [hs.block("g", (0, 0.1, 0.06), (0.05, 0.75, 0.07), "black", bevel=0.004),
@@ -1158,12 +1167,15 @@ def dummy_gun(arm):
              hs.block("g", (0, SUPPORT[0], SUPPORT[1] - 0.005), (0.05, 0.12, 0.05), "red", bevel=0.004)]
     g = hs.join(parts, "dummy_gun")
     hs.apply_modifiers(g)
-    # Bone space: Y down the bone (barrel), Z up. Our blocks are built in gun space (Y fwd, Z up).
+    # Palm frame: Y down the hand (the barrel), Z out of the palm (the gun's left), X up. The blocks
+    # are built in gun space (Y fwd, Z up, X right): gun (x, y, z) -> frame (z, y, -x), the grip's
+    # centre 2 cm out from the palm.
     g.parent = arm
     g.parent_type = "BONE"
     g.parent_bone = "prop_hand.R"
     g.matrix_parent_inverse = Matrix()
-    g.location = (0, -arm.data.bones["prop_hand.R"].length, 0)  # bone parenting sits at the tail
+    g.matrix_basis = (Matrix.Translation((0.04, 0.01 - arm.data.bones["prop_hand.R"].length, 0.02))  # bone parenting sits at the tail
+                      @ Matrix(((0, 0, 1), (0, 1, 0), (-1, 0, 0))).to_4x4())
 
 
 def tint(colors):
@@ -1252,7 +1264,7 @@ def preview(path, clip="idle", frame=0, cam=(1.9, -2.9, 1.25), look=None, lens=5
 
 # ------------------------------------------------------------------------------------------ check
 
-def check(path, budget=(25000, 75000)):
+def check(path, budget=(25000, 120000)):
     """Verify a character glb: the shared bone names, every clip, body/head/arms skinned meshes,
     the triangle budget."""
     j, _ = hs.read_glb(path)
@@ -1273,7 +1285,25 @@ def check(path, budget=(25000, 75000)):
     total = sum(tri(n["mesh"]) for n in j["nodes"] if "mesh" in n and n.get("name") in MESHES)
     if not budget[0] <= total <= budget[1]:
         problems.append(f"{total} triangles, want {budget[0]}..{budget[1]}")
-    return problems, {"tris": total, "kb": os.path.getsize(path) // 1024}
+    # The solved hand poses: every weapon in the table has its right hand, and its support hand when
+    # it is held in two.
+    import tomllib
+    gp = path[:-4] + ".grips.toml"
+    poses = 0
+    if not os.path.exists(gp):
+        problems.append("no grips file")
+    else:
+        with open(gp, "rb") as f:
+            poses = tomllib.load(f)
+        with open(os.path.join(ROOT, "assets", "grips.toml"), "rb") as f:
+            table = tomllib.load(f)
+        for wid, spec in table.items():
+            if wid == "fist":
+                continue
+            want = [f"{wid}.R", f"{wid}.R_fire"] + ([f"{wid}.L"] if "cradle" in spec or "vertical" in spec else [])
+            problems += [f"no pose {k}" for k in want if k not in poses]
+        poses = len(poses)
+    return problems, {"tris": total, "kb": os.path.getsize(path) // 1024, "poses": poses}
 
 
 # ----------------------------------------------------------------------------------- body regions

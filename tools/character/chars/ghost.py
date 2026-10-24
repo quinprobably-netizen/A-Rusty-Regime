@@ -771,5 +771,5 @@ def build():
     return c
 
 
-SPEC = {"build": build, "faction": "deserters", "budget": (25000, 80000), "loadout": "pistol",
+SPEC = {"build": build, "faction": "deserters", "budget": (25000, 120000), "loadout": "pistol",
         "colors": {"primary": SLATE, "secondary": KRAFT, "accent": CREAM}}

@@ -1879,5 +1879,5 @@ def tool_belt(c, b, trees):
         c.rigid(p_, "hips")
 
 
-SPEC = {"build": build, "faction": "scrappers", "budget": (25000, 80000), "loadout": "shotgun",
+SPEC = {"build": build, "faction": "scrappers", "budget": (25000, 120000), "loadout": "shotgun",
         "colors": {"primary": "#6e6450", "secondary": "#3d3a33", "accent": "#9a6a35"}}

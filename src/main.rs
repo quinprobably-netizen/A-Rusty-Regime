@@ -93,6 +93,8 @@ fn level_plugin() -> bevy::app::PluginGroupBuilder {
 fn dev_screenshot(
     mut commands: Commands,
     mut frames: Local<u32>,
+    mut waited: Local<u32>,
+    arms: Query<&Visibility, With<arms::Arms>>,
     mut exit: MessageWriter<AppExit>,
     mut arsenal: ResMut<weapon::Arsenal>,
     mut view: ResMut<input::ViewAngles>,
@@ -103,6 +105,12 @@ fn dev_screenshot(
     use bevy::render::view::screenshot::{Screenshot, save_to_disk};
     // `RUST_REGIME_SCREENSHOT_FRAME` waits longer for slow loads (default 150).
     let at = std::env::var("RUST_REGIME_SCREENSHOT_FRAME").ok().and_then(|f| f.parse().ok()).unwrap_or(150u32);
+    // The first-person arms load last: hold the count until they show (for a while at most), so a
+    // slow load doesn't leave them out of the shot.
+    if *frames > 1 && *frames < at && arms.iter().any(|v| *v == Visibility::Hidden) && *waited < at * 2 {
+        *waited += 1;
+        return;
+    }
     *frames += 1;
     if *frames == at {
         for (tf, v, children) in &vehicles {
