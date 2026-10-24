@@ -83,6 +83,7 @@ pub struct Settings {
     pub mouse_sensitivity: f32,
     pub invert_y: bool,
     pub fov_degrees: f32,
+    pub third_person: bool,
     pub master: f32,
     pub guns: f32,
     pub effects: f32,
@@ -111,6 +112,7 @@ impl Settings {
             mouse_sensitivity: t.mouse_sensitivity,
             invert_y: t.invert_y,
             fov_degrees: t.fov_degrees,
+            third_person: t.third_person,
             master: s.master,
             guns: s.guns,
             effects: s.effects,
@@ -130,6 +132,7 @@ impl Settings {
         t.mouse_sensitivity = self.mouse_sensitivity;
         t.invert_y = self.invert_y;
         t.fov_degrees = self.fov_degrees;
+        t.third_person = self.third_person;
         t.sound.master = self.master;
         t.sound.guns = self.guns;
         t.sound.effects = self.effects;
@@ -205,6 +208,7 @@ const SECTIONS: &[(&str, &[Field])] = &[
             field("MOUSE SENSITIVITY", Kind::Slider { min: 0.0005, max: 0.01, step: 0.0005, fmt: sens }, false, |s| s.mouse_sensitivity, |s, v| s.mouse_sensitivity = v),
             field("INVERT Y", Kind::Toggle, false, |s| bool_f(s.invert_y), |s, v| s.invert_y = v > 0.5),
             field("FIELD OF VIEW", Kind::Slider { min: 60.0, max: 110.0, step: 5.0, fmt: int }, false, |s| s.fov_degrees, |s, v| s.fov_degrees = v),
+            field("THIRD PERSON", Kind::Toggle, false, |s| bool_f(s.third_person), |s, v| s.third_person = v > 0.5),
         ],
     ),
     (
@@ -358,6 +362,7 @@ const CONTROLS: &[(&str, &str, &str)] = &[
     ("Aim down sights", "Right mouse", "LT"),
     ("Grapple", "G or mouse 4", "L3"),
     ("Flashlight", "F", ""),
+    ("First / third person", "T", ""),
     ("Weapon 1-10", "1 - 9, 0", "D-pad (1-4)"),
     ("Reload", "R", "R3"),
     ("Inspect weapon", "V", ""),

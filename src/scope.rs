@@ -220,6 +220,7 @@ fn hide_modelled_dots(
 #[allow(clippy::too_many_arguments)]
 fn activate(
     mut commands: Commands,
+    tuning: Res<Tuning>,
     scoped: Res<Scoped>,
     arsenal: Res<Arsenal>,
     aim: Res<Aim>,
@@ -231,7 +232,7 @@ fn activate(
     camera: Single<(Entity, &mut Camera, Has<AtmosphereSettings>), With<ScopeCamera>>,
 ) {
     let (e, mut camera, has_sky) = camera.into_inner();
-    let in_game = menu.as_ref().is_none_or(|m| m.playing) && vm.presented() < 0.05 && driving.is_empty();
+    let in_game = menu.as_ref().is_none_or(|m| m.playing) && vm.presented() < 0.05 && driving.is_empty() && !tuning.third_person;
     let eye = models.iter().find(|m| m.index == arsenal.current).and_then(|m| m.sights().0);
     let active = scope_active(aim.level, scoped.0.is_some(), in_game) && eye.is_some();
     if camera.is_active != active {

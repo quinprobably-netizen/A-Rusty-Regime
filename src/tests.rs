@@ -1661,3 +1661,41 @@ fn weapon_models_carry_their_rigs() {
         }
     }
 }
+
+fn camera_and_eye(app: &mut App) -> (Vec3, Vec3) {
+    let tuning = app.world().resource::<Tuning>().clone();
+    let mut q = app.world_mut().query::<(&Player, &Transform)>();
+    let (p, tf) = q.single(app.world()).unwrap();
+    let eye = tf.translation + Vec3::Y * p.eye_offset(&tuning);
+    let mut q = app.world_mut().query_filtered::<&Transform, With<crate::camera::PlayerCamera>>();
+    (q.single(app.world()).unwrap().translation, eye)
+}
+
+#[test]
+fn third_person_camera_sits_over_the_shoulder_and_stops_at_walls() {
+    let mut tuning = Tuning::default();
+    tuning.third_person = true;
+    let mut app = build_app(tuning.clone());
+    app.add_plugins(crate::camera::CameraPlugin);
+    app.finish();
+    app.update();
+    set_player(&mut app, Vec3::new(0.0, 1.0, 0.0), Vec3::ZERO);
+    run(&mut app, 1.0);
+    // Yaw 0 looks down -Z: behind is +Z, the right shoulder +X.
+    let (cam, eye) = camera_and_eye(&mut app);
+    let off = cam - eye;
+    assert!((off.z - tuning.third_person_distance).abs() < 0.1, "camera {off} behind the eyes");
+    assert!((off.x - tuning.third_person_shoulder).abs() < 0.1, "camera {off} over the right shoulder");
+
+    // A wall a metre behind: the camera stays in front of it.
+    wall(&mut app, Vec3::new(10.0, 10.0, 0.4), Vec3::new(0.0, 2.0, eye.z + 1.2));
+    run(&mut app, 0.2);
+    let (cam, eye) = camera_and_eye(&mut app);
+    assert!(cam.z < eye.z + 1.0 - 0.15, "camera at {cam} went into the wall behind {eye}");
+
+    // First person again: the camera is in the head.
+    app.world_mut().resource_mut::<Tuning>().third_person = false;
+    run(&mut app, 0.1);
+    let (cam, eye) = camera_and_eye(&mut app);
+    assert!(cam.distance(eye) < 0.2, "first person camera at {cam}, eyes at {eye}");
+}
