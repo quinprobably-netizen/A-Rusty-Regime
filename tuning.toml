@@ -310,3 +310,11 @@ day_minutes = 48            # real minutes per game day; 0 stops the clock
 weather = true              # clear, overcast, rain and fog come and go
 weather_minutes = 6         # roughly how long each lasts
 sky = "auto"                # or hold one: "clear", "overcast", "rain", "fog"
+
+[terrain]
+cell = 0.5          # finest terrain cell, m; 1 on a weak machine
+split = 2.5         # a chunk splits when you will be nearer than this many chunk sizes in a second; merges past 3
+bubble = 400        # m, solid ground and awake physics around you
+site_range = 1500   # m, sites load within this and unload 500 m further out
+origin_step = 2000  # m, the world re-centres on you after this far
+workers = 4         # chunk builds in flight

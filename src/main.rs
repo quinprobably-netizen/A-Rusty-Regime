@@ -33,6 +33,7 @@ mod scope;
 mod fingers;
 mod system;
 mod surface;
+mod planet;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;

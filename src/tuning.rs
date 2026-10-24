@@ -106,6 +106,7 @@ pub struct Tuning {
     pub graphics: Graphics,
     pub sound: Sound,
     pub world: WorldTuning,
+    pub terrain: TerrainTuning,
 
     // Look
     pub mouse_sensitivity: f32,
@@ -313,6 +314,7 @@ impl Default for Tuning {
 
             island: Island::default(),
             soldier: Soldier::default(),
+            terrain: TerrainTuning::default(),
             player: PlayerTuning::default(),
             vehicle: VehicleTuning::default(),
             loot: LootTuning::default(),
@@ -489,6 +491,38 @@ pub struct Soldier {
 impl Default for Soldier {
     fn default() -> Self {
         Self { health: 100.0, speed: 3.5, sight: 40.0, fire_interval: 0.6, damage: 12.0, spread: 0.02, forget: 4.0, hold: 12.0, bullet_speed: 750.0, hearing: 150.0, squad_radius: 60.0, cover_time: 2.5 }
+    }
+}
+
+/// The planet's terrain and streaming (table `[terrain]`).
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct TerrainTuning {
+    /// The finest terrain cell (m).
+    pub cell: f32,
+    /// A chunk splits when the player will be nearer than this many chunk sizes in a second.
+    pub split: f32,
+    /// Solid ground and awake physics within this of the player (m).
+    pub bubble: f32,
+    /// Sites load within this (m) and unload 500 m further out.
+    pub site_range: f32,
+    /// The world re-centres on the player after this far (m).
+    pub origin_step: f32,
+    /// Chunk builds in flight.
+    pub workers: usize,
+}
+
+impl Default for TerrainTuning {
+    fn default() -> Self {
+        Self { cell: 0.5, split: 2.5, bubble: 400.0, site_range: 1500.0, origin_step: 2000.0, workers: 4 }
+    }
+}
+
+impl TerrainTuning {
+    /// A split chunk merges back only past this many chunk sizes, half a chunk beyond `split`.
+    #[allow(dead_code)] // terrain streaming is not wired in yet
+    pub fn merge(&self) -> f32 {
+        self.split + 0.5
     }
 }
 
@@ -747,5 +781,17 @@ fn reload(keys: Res<ButtonInput<KeyCode>>, mut tuning: ResMut<Tuning>) {
     if keys.just_pressed(KeyCode::F5) {
         *tuning = load();
         info!("Reloaded {PATH}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terrain_table_defaults() {
+        let t = TerrainTuning::default();
+        assert_eq!((t.cell, t.split, t.bubble, t.site_range, t.origin_step, t.workers), (0.5, 2.5, 400.0, 1500.0, 2000.0, 4));
+        assert_eq!(t.merge(), 3.0);
     }
 }
