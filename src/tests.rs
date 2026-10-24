@@ -4,6 +4,7 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::time::TimeUpdateStrategy;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::controller::{self, ControllerPlugin, MoveState, Player};
@@ -14,9 +15,10 @@ use crate::terrain;
 use crate::tuning::{Island, Tuning};
 use crate::targets::{self, Target, TargetsPlugin};
 use crate::island::{Placed, Sites};
-use crate::planet::chunk;
+use crate::planet::chunk::{self, ChunkMesh};
+use crate::planet::gravity::gravitate;
 use crate::surface::testing::random_dirs;
-use crate::surface::{Origin, Sphere, QUANTUM};
+use crate::surface::{Origin, Sphere, Surface, QUANTUM};
 use crate::system::Body;
 use crate::loot::{self, ExtractPad, Inventory, Loot, LootPlugin, Save, SaveFile};
 use crate::mission::{MissionPlugin, Missions};
@@ -537,6 +539,28 @@ fn colliders_match_heightmap() {
     }
 }
 
+/// A headless app on the test moon: the player spawns 1 m above the ground in `spawn_dir`,
+/// dynamic bodies fall toward the centre, and terrain chunks of `cell` metres cover
+/// `ground_radius` around the spawn (none when it is 0).
+fn sphere_app(cell: f32, spawn_dir: Vec3, ground_radius: f32) -> (App, Arc<Sphere>, Origin, Vec<Arc<ChunkMesh>>) {
+    let mut tuning = Tuning::default();
+    tuning.terrain.cell = cell;
+    let mut app = build_app(tuning);
+    drop_flat_floor(&mut app);
+    let sphere = Arc::new(Sphere::new(Body::test_moon()));
+    let spawn = sphere.surface_point(spawn_dir) + spawn_dir * 1.0;
+    let origin = Origin::at(spawn, QUANTUM);
+    app.insert_resource(Surface::Sphere(sphere.clone()))
+        .insert_resource(origin)
+        .insert_resource(controller::WorldBounds { spawn, kill_y: f32::MIN })
+        .insert_resource(Gravity(Vec3::ZERO))
+        .add_systems(FixedUpdate, gravitate.before(controller::ControllerSet));
+    app.finish();
+    app.update();
+    let meshes = if ground_radius > 0.0 { chunk::spawn_ground(app.world_mut(), &sphere, &origin, cell, spawn, ground_radius) } else { Vec::new() };
+    (app, sphere, origin, meshes)
+}
+
 #[test]
 fn chunk_colliders_match_their_meshes() {
     let sphere = Sphere::new(Body::test_moon());
@@ -551,6 +575,29 @@ fn chunk_colliders_match_their_meshes() {
         let hit = app.world_mut().run_system_once(move |q: SpatialQuery| q.cast_ray(from, Dir3::new(-dir).unwrap(), 300.0, true, &SpatialQueryFilter::default())).unwrap().expect("ray hits the chunk");
         assert!(origin.body(from - dir * hit.distance).distance(g.point) < 1e-2);
     }
+}
+
+#[test]
+fn crates_fall_toward_the_centre_and_rest() {
+    let (mut app, sphere, origin, meshes) = sphere_app(4.0, Vec3::X, 80.0);
+    let dir = Vec3::X;
+    let id = app.world_mut().spawn((RigidBody::Dynamic, Collider::cuboid(1.0, 1.0, 1.0), Mass(40.0), Transform::from_translation(origin.world(sphere.surface_point(dir) + dir * 50.0)))).id();
+    run(&mut app, 6.0);
+    let pos = origin.body(app.world().get::<Transform>(id).unwrap().translation);
+    let ground = meshes.iter().find_map(|m| m.ground_on(pos.normalize())).unwrap().point;
+    assert!(pos.normalize().dot(dir) > 0.99996, "fell radially: {pos}");
+    assert!((pos.length() - ground.length() - 0.5).abs() < 0.1, "rests on the ground, {} over it", pos.length() - ground.length());
+    assert!(app.world().get::<LinearVelocity>(id).unwrap().0.length() < 0.05);
+}
+
+#[test]
+fn resting_bodies_stay_asleep_under_gravity() {
+    let (mut app, sphere, origin, _) = sphere_app(4.0, Vec3::X, 80.0);
+    let id = app.world_mut().spawn((RigidBody::Dynamic, Collider::cuboid(1.0, 1.0, 1.0), Mass(40.0), Transform::from_translation(origin.world(sphere.surface_point(Vec3::X) + Vec3::X * 3.0)))).id();
+    run(&mut app, 5.0);
+    assert!(app.world().get::<Sleeping>(id).is_some(), "asleep after settling");
+    run(&mut app, 1.0);
+    assert!(app.world().get::<Sleeping>(id).is_some(), "gravity does not keep waking it");
 }
 
 #[test]
