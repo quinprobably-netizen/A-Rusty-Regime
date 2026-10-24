@@ -286,8 +286,8 @@ fn animate(
     let want = if showcase == crate::menu::Showcase::Gun { 1.0 } else { 0.0 };
     vm.showcase += (want - vm.showcase) * (1.0 - (-8.0 * real.delta_secs()).exp());
     vm.spin += real.delta_secs();
-    // Out of sight on the title and pause screens, unless the gunsmith is showing it.
-    let in_game = menu.as_ref().is_none_or(|m| m.playing);
+    // Out of sight on the title and pause screens and in third person, unless the gunsmith is showing it.
+    let in_game = menu.as_ref().is_none_or(|m| m.playing) && !tuning.third_person;
     let want_vis = if in_game || showcase == crate::menu::Showcase::Gun { Visibility::Inherited } else { Visibility::Hidden };
     if **vis != want_vis {
         **vis = want_vis;

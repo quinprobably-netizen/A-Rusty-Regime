@@ -78,6 +78,9 @@ stick_deadzone = 0.15
 stick_look_curve = 2.0      # higher = finer aim near the center of the stick
 invert_y = false
 fov_degrees = 75
+third_person = false        # play from behind the right shoulder (T toggles in game)
+third_person_distance = 2.6 # metres behind the eyes, about half that while aiming
+third_person_shoulder = 0.55
 ads_fov = 0.7               # field of view multiplier aiming down sights (right mouse)
 ads_fov_scoped = 0.85       # the same through a magnifying scope (the scope's picture does the zooming)
 ads_time = 0.15             # seconds to settle into the aimed view

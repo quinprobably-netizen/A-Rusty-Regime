@@ -1,9 +1,11 @@
 //! The player's own body: our character standing under the first-person camera, casting your
 //! shadow. It is driven by the controller's move state (idle, walk, sprint, jump, fall,
-//! crouch/slide). It renders only into shadow maps (see `character`); the arms are their own rig.
+//! crouch/slide). In first person it renders only into shadow maps (see `character`) and the arms
+//! are their own rig; in third person it is the player you see.
 
 use std::f32::consts::PI;
 
+use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 
 pub use crate::character::{Pose, SHADOW_ONLY_LAYER};
@@ -11,6 +13,7 @@ use crate::character::{self, CharacterAssets, FirstPerson, Rig, RigPose};
 use crate::controller::{MoveState, Player};
 use crate::input::ViewAngles;
 use crate::tuning::Tuning;
+use crate::vehicle::Driving;
 
 /// How far behind the eyes the body stands, so the camera sits in the head.
 const BACK: f32 = 0.12;
@@ -68,7 +71,7 @@ impl Plugin for BodyPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn)
             .add_systems(Update, (animate, arm))
-            .add_systems(PostUpdate, follow.before(TransformSystems::Propagate));
+            .add_systems(PostUpdate, (follow.before(TransformSystems::Propagate), show));
     }
 }
 
@@ -89,6 +92,27 @@ fn arm(arsenal: Option<Res<crate::weapon::Arsenal>>, mut body: Single<&mut Rig, 
     let kind = arsenal.map(|a| a.kind());
     if body.weapon != kind {
         body.weapon = kind;
+    }
+}
+
+/// Seen in third person, only a shadow in first person. Driving it stays a shadow: there is no seated
+/// pose yet. Runs every frame so freshly dressed meshes and a newly held gun follow too.
+fn show(
+    tuning: Res<Tuning>,
+    menu: Option<Res<crate::menu::Menu>>,
+    driving: Query<(), (With<Player>, With<Driving>)>,
+    body: Single<Entity, With<Body>>,
+    children: Query<&Children>,
+    mut layers: Query<&mut RenderLayers>,
+) {
+    let seen = crate::camera::third_person(&tuning, !driving.is_empty(), menu.as_deref());
+    let want = RenderLayers::layer(if seen { 0 } else { SHADOW_ONLY_LAYER });
+    for e in children.iter_descendants(*body) {
+        if let Ok(mut l) = layers.get_mut(e)
+            && *l != want
+        {
+            *l = want.clone();
+        }
     }
 }
 

@@ -350,6 +350,11 @@ impl Rig {
         Self { outfit: outfit.into(), team: None, weapon: None, character: None, model: None, pose: None, player: None, held: None, dressed: false }
     }
 
+    /// Wearing its outfit, and holding its weapon if it has one.
+    pub fn ready(&self) -> bool {
+        self.dressed && self.held.map(|h| h.0) == self.weapon
+    }
+
     /// A soldier of `team`, dressed and armed from the roster.
     pub fn team(team: u8) -> Self {
         Self { team: Some(team), ..Self::new("") }
