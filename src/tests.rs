@@ -404,18 +404,21 @@ fn rocket_damages_targets() {
 fn body_pose_follows_movement() {
     use crate::body::{Pose, playback_rate, pose_for};
     let max = 7.5;
-    assert_eq!(pose_for(MoveState::Ground, false, 0.0, 0.0, max, 0.0, false), Pose::Idle);
-    assert_eq!(pose_for(MoveState::Ground, false, 2.0, 0.0, max, 0.0, false), Pose::Walk);
-    assert_eq!(pose_for(MoveState::Ground, false, 5.0, 0.0, max, 0.0, false), Pose::Run);
-    assert_eq!(pose_for(MoveState::Ground, false, 7.0, 0.0, max, 0.0, false), Pose::Sprint);
-    assert_eq!(pose_for(MoveState::Ground, true, 2.0, 0.0, max, 0.0, false), Pose::Crouch);
-    assert_eq!(pose_for(MoveState::Slide, true, 8.0, 0.0, max, 0.0, false), Pose::Slide);
-    assert_eq!(pose_for(MoveState::Air, false, 5.0, 4.0, max, 0.0, false), Pose::Jump);
-    assert_eq!(pose_for(MoveState::Air, false, 5.0, -4.0, max, 0.0, false), Pose::Fall);
-    assert_eq!(pose_for(MoveState::Air, false, 5.0, -4.0, max, 0.0, true), Pose::Grapple);
-    assert_eq!(pose_for(MoveState::WallRun, false, 8.0, 1.0, max, 1.0, false), Pose::WallRunL);
-    assert_eq!(pose_for(MoveState::WallRun, false, 8.0, 1.0, max, -1.0, false), Pose::WallRunR);
-    assert_eq!(pose_for(MoveState::Mantle, false, 0.0, 0.0, max, 0.0, false), Pose::Mantle);
+    assert_eq!(pose_for(MoveState::Ground, false, 0.0, 0.0, max, 0.0, false, false), Pose::Idle);
+    assert_eq!(pose_for(MoveState::Ground, false, 2.0, 0.0, max, 0.0, false, false), Pose::Walk);
+    assert_eq!(pose_for(MoveState::Ground, false, 5.0, 0.0, max, 0.0, false, false), Pose::Run);
+    assert_eq!(pose_for(MoveState::Ground, false, 7.0, 0.0, max, 0.0, false, false), Pose::Sprint);
+    assert_eq!(pose_for(MoveState::Ground, true, 0.0, 0.0, max, 0.0, false, false), Pose::Crouch);
+    assert_eq!(pose_for(MoveState::Ground, true, 2.0, 0.0, max, 0.0, false, false), Pose::CrouchWalk);
+    assert_eq!(pose_for(MoveState::Air, false, 5.0, 4.0, max, 0.0, false, true), Pose::DoubleJump);
+    assert_eq!(pose_for(MoveState::Air, false, 5.0, -4.0, max, 0.0, true, true), Pose::Grapple);
+    assert_eq!(pose_for(MoveState::Slide, true, 8.0, 0.0, max, 0.0, false, false), Pose::Slide);
+    assert_eq!(pose_for(MoveState::Air, false, 5.0, 4.0, max, 0.0, false, false), Pose::Jump);
+    assert_eq!(pose_for(MoveState::Air, false, 5.0, -4.0, max, 0.0, false, false), Pose::Fall);
+    assert_eq!(pose_for(MoveState::Air, false, 5.0, -4.0, max, 0.0, true, false), Pose::Grapple);
+    assert_eq!(pose_for(MoveState::WallRun, false, 8.0, 1.0, max, 1.0, false, false), Pose::WallRunL);
+    assert_eq!(pose_for(MoveState::WallRun, false, 8.0, 1.0, max, -1.0, false, false), Pose::WallRunR);
+    assert_eq!(pose_for(MoveState::Mantle, false, 0.0, 0.0, max, 0.0, false, false), Pose::Mantle);
     // Feet speed up with the run and never stall.
     assert!(playback_rate(Pose::Sprint, 7.5, max) > playback_rate(Pose::Sprint, 5.5, max));
     assert!(playback_rate(Pose::Walk, 0.3, max) >= 0.7);
