@@ -76,11 +76,18 @@ pilots, your side: Runner, Breaker, Ghost) and the **PMC** (contractors who sell
 Contractor, Juggernaut, Handler). `tools/character/build.sh [ids] [--no-bake] [--preview]
 [--check]` sets up `bpy` on Python 3.11 and writes one `assets/models/character/<id>.glb` per
 character from `tools/character/chars/<id>.py` and the shared kit (`kit.py`). Each has its own
-body and proportions on one 22-bone skeleton with twelve procedural clips (idle, walk, run,
-sprint, jump, fall, crouch, slide, wall run left/right, mantle, grapple), baked edge wear and dirt,
-and three skinned meshes (`mesh.body`, `mesh.head`, `mesh.arms`). `--check` verifies bones,
-meshes, clips and the triangle budget. Design notes:
-`docs/superpowers/specs/2026-10-18-character-roster-design.md`.
+body and proportions on one 22-bone skeleton, baked edge wear and dirt, and three skinned meshes
+(`mesh.body`, `mesh.head`, `mesh.arms`). `--check` verifies bones, meshes, clips and the triangle
+budget. Design notes: `docs/superpowers/specs/2026-10-18-character-roster-design.md`.
+
+The twenty clips come from `tools/character/anim.py`, which needs no Blender: idle, walk, run,
+sprint, jump, fall and the backward death are CMU motion capture (`cmu.py` cut the takes into
+`tools/character/mocap/`) retargeted onto each character's own skeleton; crouch, crouch walk, slide,
+wall runs, mantle, grapple, double jump, the forward death and the car and bike seats are
+hand-keyed; `reload` (arms only) and `fire` (added recoil) play over whatever the body does.
+`python3 tools/character/glbanim.py [ids]` rewrites the clips in the glbs in seconds (a full build
+runs it too). In game, `RUST_REGIME_SCREENSHOT_POSE=<clip>` holds the player's body in a clip for
+third-person screenshots.
 
 `assets/characters.toml` holds each character's faction, default colours and the weapon bots
 wearing it carry, which factions each soldier team fields (team 0 is your side: Deserters; team 1
