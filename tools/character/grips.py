@@ -57,18 +57,21 @@ DEBUG = bool(os.environ.get("GRIPS_DEBUG"))
 # the little finger on the left) runs with (+1) or against (-1) that axis; how far the palm slides
 # toward its knuckles (m); how the thumb lies ("wrap" round the far side, "along" the near side);
 # the gunsmith part it needs.
-Hold = namedtuple("Hold", "point axis reach palm x_sign shift thumb part")
+Hold = namedtuple("Hold", "point axis reach palm x_sign shift thumb part tilt", defaults=(0.0,))
 HOLDS = {
     # The right hand round the pistol grip: the grip leans back, the palm faces the gun's left and a
-    # little forward, the thumb at the top.
-    "R": Hold("right", (0, 1, -0.4), 0.035, (-1, 0, -0.35), +1, 0.0, "wrap", None),
-    # The support hand grips the handguard from its near side, the back of the hand toward the eye:
-    # the fingers wrap under it and up the far side, the thumb runs forward over the near top edge.
-    "cradle": Hold("cradle", (0, 0, -1), 0.05, (1, 0.4, 0), -1, 0.0, "along", None),
+    # little forward, the thumb at the top. The grip lies diagonally across the palm, as in a real
+    # hand: square across it, the wrist rode up level with the receiver.
+    "R": Hold("right", (0, 1, -0.4), 0.035, (-1, 0, -0.35), +1, 0.0, "wrap", None, -30.0),
+    # The support hand cradles the handguard from below, the wrist low on the near side: the palm
+    # under it, the fingers pointing forward across it and up the far side to just under its top, the
+    # thumb forward along the near top edge. Gripped from its side, the hand hung over the top with
+    # the wrist above the gun.
+    "cradle": Hold("cradle", (0, 0, -1), 0.05, (0.2, 1, 0), -1, 0.0, "along", None, -35.0),
     # A vertical foregrip is held like a pistol grip with the left hand, thumb up.
     "vertical": Hold("vertical", (0, 1, 0), 0.035, (1, 0, -0.35), -1, 0.0, "wrap", "att.grip.vertical"),
     # An angled grip is a stop: the hand cradles the handguard just behind it.
-    "angled": Hold("angled", (0, 0, -1), 0.05, (1, 0.4, 0), -1, 0.0, "along", "att.grip.angled"),
+    "angled": Hold("angled", (0, 0, -1), 0.05, (0.2, 1, 0), -1, 0.0, "along", "att.grip.angled", -35.0),
 }
 # A placed hold: the palm frame in (possibly mirrored) weapon space, its cylinder, and what it needs.
 Frame = namedtuple("Frame", "at rot cen d r extra mirror thumb cap")
@@ -505,13 +508,16 @@ def _hold(w, hold, seed, mirror=False):
     X = d * x_sign
     Z = (palm - X * palm.dot(X)).normalized()
     Y = Z.cross(X)
+    if hold.tilt:  # turned about the palm's normal: the knuckles up the grip, the wrist down
+        t = math.radians(hold.tilt)
+        X, Y = X * math.cos(t) - Y * math.sin(t), Y * math.cos(t) + X * math.sin(t)
     rot = Matrix((X, Y, Z)).transposed()  # columns X, Y, Z: frame -> weapon
     # The palm sits against the surface on its side: as far out as the part reaches toward it.
     strip = [v for v in sel if abs((v - cen).dot(X)) < 0.025 and abs((v - cen).dot(Y)) < 0.015]
     ext = max((-(v - cen).dot(Z) for v in strip), default=r)
     at = cen - Z * (ext + TOUCH) + Y * hold.shift
-    # A cradled handguard lets the fingertips lie over its top edge but not rise above it, and lays
-    # the thumb along the near side just under that edge, where the player sees it.
+    # A cradled handguard keeps the fingertips under its top edge (over it, they read as claws on the
+    # rail), and lays the thumb along the near side just under that edge, where the player sees it.
     cap = max(v.y for v in sel) + 0.012 if hold.thumb == "along" and not mirror else None
     if DEBUG:
         print(f"  hold {hold.point}: axis {tuple(round(x, 2) for x in d)} r {r * 1000:.1f} mm, palm {ext * 1000:.1f} mm from the axis"
@@ -649,7 +655,7 @@ def _pose(c, w, F, trigger=None, probe=False):
 
             def capped(q, js=js, rho=rho):
                 """Whether joint q has reached the hold's height cap."""
-                return F.cap is not None and weapon_point(js[q]).y > F.cap - rho
+                return F.cap is not None and weapon_point(js[q]).y > F.cap - 0.012 - rho
 
             def refine(j, ax, close=True):
                 """Nudge joint j against the real mesh: open until the chain clears it, else close until
@@ -677,16 +683,21 @@ def _pose(c, w, F, trigger=None, probe=False):
                 if F.thumb == "wrap":
                     # Opposition: swing the thumb round the back of the grip toward its far side (the
                     # fingers take the front), then flex each joint until it lands on the cylinder.
-                    tgt = (c_h - fwd * F.r + up * (F.r + rho)) - js[0]
+                    # Square to the grip, however the hand lies across it, and up toward the top of
+                    # it (the web of the hand sits high on the grip), so the thumb stays high.
+                    back = (fwd - d_h * fwd.dot(d_h)).normalized()
+                    tgt = (c_h + d_h * 0.04 - back * F.r + up * (F.r + rho)) - js[0]
                     turn(0, _toward(d0, d0.lerp(tgt, 0.7)))
-                    # Round the cylinder the opposite way to the fingers: back to far side.
+                    # Round the cylinder the opposite way to the fingers: back to far side. It curls
+                    # about the grip itself; the hand's own axis lies across a diagonal grip.
+                    curl = -d_h if d_h.dot(axis_c) > 0 else d_h
                     for j, lim in enumerate((30, 55, 60)):
                         for _ in range(lim * 2):
                             if dist_axis(js[j + 1]) <= hug:
                                 break
-                            turn(j, Matrix.Rotation(STEP, 3, -axis_c))
+                            turn(j, Matrix.Rotation(STEP, 3, curl))
                     for j in range(3):
-                        refine(j, -axis_c)
+                        refine(j, curl)
                 else:
                     # Along the near side, pointing the way the fingers' knuckle line runs (-X: forward
                     # on a handguard), straight, its tip laid on the nearest skin of the gun; only backed
