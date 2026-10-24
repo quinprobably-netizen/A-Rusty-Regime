@@ -321,6 +321,9 @@ impl Space<'_, '_, '_> {
 // ---------------------------------------------------------------------------
 // The tick
 
+/// A player `player_tick` moves, unless they are driving or held by the physics bubble.
+type PlayerItem<'a> = (Entity, &'a mut Player, &'a mut Transform, Has<crate::vehicle::Driving>, Has<crate::planet::bubble::Held>);
+
 fn player_tick(
     bounds: Res<WorldBounds>,
     surface: Res<Surface>,
@@ -330,7 +333,7 @@ fn player_tick(
     mut input: ResMut<PlayerInput>,
     mut view: ResMut<ViewAngles>,
     spatial: SpatialQuery,
-    mut players: Query<(Entity, &mut Player, &mut Transform, Has<crate::vehicle::Driving>)>,
+    mut players: Query<PlayerItem>,
     mut bodies: Query<(&RigidBody, &mut LinearVelocity, &ComputedMass), Without<Player>>,
 ) {
     let t = &*tuning;
@@ -341,8 +344,13 @@ fn player_tick(
     let jump_pressed = std::mem::take(&mut input.jump_pressed);
     let reset = std::mem::take(&mut input.reset_pressed);
 
-    for (entity, mut p, mut tf, driving) in &mut players {
+    for (entity, mut p, mut tf, driving, held) in &mut players {
         if driving {
+            continue;
+        }
+        if held {
+            // Hovering until the ground under them is solid: nothing to interpolate.
+            p.prev_pos = tf.translation;
             continue;
         }
         let world_pos = tf.translation;

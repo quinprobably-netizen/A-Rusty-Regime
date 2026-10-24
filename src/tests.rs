@@ -813,10 +813,14 @@ fn a_body_inside_the_bubble_stays_frozen_until_its_ground_is_built() {
 fn the_player_hovers_until_the_ground_under_them_is_built() {
     let (mut app, sphere, origin) = streaming_app(4);
     let spawn = origin.body(player(&mut app).0);
-    for _ in 0..8 {
+    let mut held = 0;
+    for _ in 0..600 {
+        if app.world().resource::<planet::Chunks>().is_solid(spawn) { break; }
         app.update();
         assert!(origin.body(player(&mut app).0).distance(spawn) < 0.01, "held in place with no ground");
+        held += 1;
     }
+    assert!(held >= 1, "the ground was solid before the first update");
     settle(&mut app);
     run(&mut app, 1.0);
     let body = origin.body(player(&mut app).0);

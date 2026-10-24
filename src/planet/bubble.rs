@@ -70,7 +70,9 @@ pub fn freeze(
             commands.entity(entity).insert((RigidBodyDisabled, Frozen));
         } else if frozen && distance < bubble - WAKE_MARGIN && solid {
             commands.entity(entity).remove::<(RigidBodyDisabled, Frozen)>();
-            // Avian 0.7 leaves a woken body's collider proxies marked disabled and keeps the contact
+            // Works around Avian 0.7 panicking with `islands/mod.rs:518 assertion failed:
+            // contact.island.is_none()` when a woken body lands; drop on the next Avian upgrade.
+            // Avian leaves a woken body's collider proxies marked disabled and keeps the contact
             // pairs found while it was, which double-links the first contact it then touches.
             // Taking the colliders out of the broad phase and back, once the body is enabled,
             // starts them afresh.
@@ -81,13 +83,21 @@ pub fn freeze(
     }
 }
 
-/// Keeps the player hovering where they are while the ground under them has no collider; once
-/// it does the controller sets them down on it.
-pub fn hold_player(chunks: Res<Chunks>, origin: Res<Origin>, mut players: Query<(&Transform, &mut Player)>) {
-    for (tf, mut p) in &mut players {
-        if !chunks.is_solid(origin.body(tf.translation)) {
+/// A player hovering in place, untouched by the controller, until the ground under them is solid.
+#[derive(Component)]
+pub struct Held;
+
+/// Holds the player while the ground under them has no collider and lets go once it does; the
+/// controller then sets them down on it.
+pub fn hold_player(mut commands: Commands, chunks: Res<Chunks>, origin: Res<Origin>, mut players: Query<(Entity, &Transform, &mut Player, Has<Held>)>) {
+    for (entity, tf, mut p, held) in &mut players {
+        let solid = chunks.is_solid(origin.body(tf.translation));
+        if !solid && !held {
             p.velocity = Vec3::ZERO;
             p.knockback_lock = 0.0;
+            commands.entity(entity).insert(Held);
+        } else if solid && held {
+            commands.entity(entity).remove::<Held>();
         }
     }
 }
