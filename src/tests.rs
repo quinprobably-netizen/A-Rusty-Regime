@@ -14,6 +14,10 @@ use crate::terrain;
 use crate::tuning::{Island, Tuning};
 use crate::targets::{self, Target, TargetsPlugin};
 use crate::island::{Placed, Sites};
+use crate::planet::chunk;
+use crate::surface::testing::random_dirs;
+use crate::surface::{Origin, Sphere, QUANTUM};
+use crate::system::Body;
 use crate::loot::{self, ExtractPad, Inventory, Loot, LootPlugin, Save, SaveFile};
 use crate::mission::{MissionPlugin, Missions};
 use crate::targets::{Killed, Team};
@@ -503,17 +507,21 @@ fn site_pads_are_flat_and_above_water() {
     assert!(sites[5].center.y > island.core * 0.6, "lighthouse is on the south coast");
 }
 
+/// Drops make_app's flat floor so only the terrain under test can be hit.
+fn drop_flat_floor(app: &mut App) {
+    let floor: Vec<Entity> = app.world_mut().query_filtered::<Entity, (With<Collider>, Without<Player>)>().iter(app.world()).collect();
+    for e in floor {
+        app.world_mut().despawn(e);
+    }
+}
+
 #[test]
 fn colliders_match_heightmap() {
     // 500 m at 4 m cells is 125 cells: three full chunks and a short one per side.
     let island = Island { size: 500.0, ..Island::default() };
     let hm = terrain::generate(&island);
     let mut app = make_app(Tuning::default());
-    // Drop make_app's flat floor so only the terrain can be hit.
-    let floor: Vec<Entity> = app.world_mut().query_filtered::<Entity, (With<Collider>, Without<Player>)>().iter(app.world()).collect();
-    for e in floor {
-        app.world_mut().despawn(e);
-    }
+    drop_flat_floor(&mut app);
     terrain::spawn_colliders(app.world_mut(), &hm);
     app.update();
     for (x, z) in [(0.0, 0.0), (100.0, -37.0), (-211.0, 180.0), (245.0, 3.0), (-3.0, -245.0), (130.0, 130.0), (240.0, -240.0)] {
@@ -526,6 +534,22 @@ fn colliders_match_heightmap() {
             .expect("ray hits terrain");
         let want = hm.height_at(x, z);
         assert!((got - want).abs() < 0.1, "at {x},{z}: collider {got} vs heightmap {want}");
+    }
+}
+
+#[test]
+fn chunk_colliders_match_their_meshes() {
+    let sphere = Sphere::new(Body::test_moon());
+    let origin = Origin::at(sphere.surface_point(Vec3::X), QUANTUM);
+    let mut app = make_app(Tuning::default());
+    drop_flat_floor(&mut app);
+    let meshes = chunk::spawn_ground(app.world_mut(), &sphere, &origin, 4.0, sphere.surface_point(Vec3::X), 60.0);
+    app.update();
+    for dir in random_dirs(20).into_iter().map(|d| (Vec3::X * 40.0 + d).normalize()) {
+        let Some(g) = meshes.iter().find_map(|m| m.ground_on(dir)) else { continue };
+        let from = origin.world(sphere.surface_point(dir) + dir * 100.0);
+        let hit = app.world_mut().run_system_once(move |q: SpatialQuery| q.cast_ray(from, Dir3::new(-dir).unwrap(), 300.0, true, &SpatialQueryFilter::default())).unwrap().expect("ray hits the chunk");
+        assert!(origin.body(from - dir * hit.distance).distance(g.point) < 1e-2);
     }
 }
 
