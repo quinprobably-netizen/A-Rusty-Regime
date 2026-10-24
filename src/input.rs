@@ -40,19 +40,26 @@ pub struct PlayerInput {
     pub flashlight_pressed: bool,
 }
 
-/// Where the player is looking, in radians.
+/// Where the player is looking, in radians, relative to the player's local frame.
 #[derive(Resource, Default, Debug, Clone, Copy)]
 pub struct ViewAngles {
     pub yaw: f32,
     pub pitch: f32,
+    /// The player's carried frame (local +Y is up), published by the controller each tick.
+    pub frame: Quat,
 }
 
 impl ViewAngles {
     pub fn rotation(&self) -> Quat {
-        Quat::from_euler(EulerRot::YXZ, self.yaw, self.pitch, 0.0)
+        self.frame * Quat::from_euler(EulerRot::YXZ, self.yaw, self.pitch, 0.0)
     }
-    /// Horizontal forward and right vectors.
+    /// Horizontal forward and right vectors, in the world.
     pub fn flat_basis(&self) -> (Vec3, Vec3) {
+        let (forward, right) = self.local_basis();
+        (self.frame * forward, self.frame * right)
+    }
+    /// Horizontal forward and right vectors in the player's frame.
+    pub fn local_basis(&self) -> (Vec3, Vec3) {
         let (s, c) = self.yaw.sin_cos();
         (Vec3::new(-s, 0.0, -c), Vec3::new(c, 0.0, -s))
     }

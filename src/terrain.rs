@@ -264,7 +264,7 @@ impl Plugin for TerrainPlugin {
             info!("site {}: x {:.0} z {:.0} y {:.1}", s.name, s.center.x, s.center.y, s.height);
         }
         let camp = sites[0].origin();
-        app.insert_resource(crate::controller::WorldBounds { spawn: camp + Vec3::new(0.0, 1.0, 6.0), kill_y: island.water_level - 2.0 })
+        app.insert_resource(crate::controller::WorldBounds { spawn: camp + Vec3::new(0.0, 1.0, 6.0), kill_altitude: island.water_level - 2.0 })
             .insert_resource(crate::island::Sites(sites))
             .insert_resource(roads)
             .insert_resource(hm)

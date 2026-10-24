@@ -9,6 +9,7 @@ use bevy::prelude::*;
 use crate::character::Characters;
 use crate::controller::{ControllerSet, Player};
 use crate::input::{PlayerInput, ViewAngles};
+use crate::surface::{Origin, Surface};
 use crate::tuning::{GrappleTuning, Tuning};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -106,6 +107,8 @@ pub fn power_step(power: f32, pulling: bool, t: &GrappleTuning, dt: f32) -> f32 
 fn grapple_tick(
     time: Res<Time>,
     tuning: Res<Tuning>,
+    surface: Res<Surface>,
+    origin: Res<Origin>,
     view: Res<ViewAngles>,
     characters: Res<Characters>,
     class: Res<Class>,
@@ -121,7 +124,7 @@ fn grapple_tick(
     }
     let pressed = std::mem::take(&mut input.ability_pressed);
     let (entity, p, tf) = &mut *player;
-    let eye = tf.translation + Vec3::Y * p.eye_offset(&tuning);
+    let eye = tf.translation + p.up() * p.eye_offset(&tuning);
     let look = view.rotation() * Vec3::NEG_Z;
     let filter = SpatialQueryFilter::from_excluded_entities([*entity]);
 
@@ -149,7 +152,9 @@ fn grapple_tick(
         } else {
             p.velocity = pull_velocity(p.velocity, eye, &Hook { anchor: hook.anchor, rope: hook.rope }, look, t, dt);
             // The taut rope carries most of your weight, so a low anchor still lifts you.
-            p.velocity.y += tuning.gravity * t.gravity_cancel * dt;
+            let g = surface.gravity(origin.body(tf.translation), tuning.gravity).length();
+            let up = p.up();
+            p.velocity += up * g * t.gravity_cancel * dt;
             // Being pulled counts as airborne: no ground snap, air jumps refunded.
             p.knockback_lock = dt * 2.0;
             p.air_jumps_left = tuning.air_jumps;
@@ -190,7 +195,7 @@ fn draw_rope(
     let (p, tf) = *player;
     let center = p.prev_pos.lerp(tf.translation, fixed.overstep_fraction());
     let (forward, right) = view.flat_basis();
-    let hand = center + Vec3::Y * (p.eye_offset(&tuning) - 0.35) - right * 0.25 + forward * 0.3;
+    let hand = center + p.up() * (p.eye_offset(&tuning) - 0.35) - right * 0.25 + forward * 0.3;
     let to = hook.anchor - hand;
     let len = to.length().max(0.01);
     let transform = Transform {

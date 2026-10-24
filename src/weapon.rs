@@ -431,7 +431,7 @@ fn fire(
 
     let (player_entity, p, tf) = &mut *player;
     let player_entity = *player_entity;
-    let eye = tf.translation + Vec3::Y * p.eye_offset(t);
+    let eye = tf.translation + p.up() * p.eye_offset(t);
     let aim = view.rotation();
     let forward = aim * Vec3::NEG_Z;
     // Where tracers start: the viewmodel's muzzle.

@@ -15,7 +15,7 @@ use crate::terrain;
 use crate::tuning::{Island, Tuning};
 use crate::targets::{self, Target, TargetsPlugin};
 use crate::island::{Placed, Sites};
-use crate::planet::chunk::{self, ChunkMesh};
+use crate::planet::{self, chunk::{self, ChunkMesh}};
 use crate::planet::gravity::gravitate;
 use crate::surface::testing::random_dirs;
 use crate::surface::{Origin, Sphere, Surface, QUANTUM};
@@ -552,7 +552,7 @@ fn sphere_app(cell: f32, spawn_dir: Vec3, ground_radius: f32) -> (App, Arc<Spher
     let origin = Origin::at(spawn, QUANTUM);
     app.insert_resource(Surface::Sphere(sphere.clone()))
         .insert_resource(origin)
-        .insert_resource(controller::WorldBounds { spawn, kill_y: f32::MIN })
+        .insert_resource(controller::WorldBounds { spawn, kill_altitude: -2.0 })
         .insert_resource(Gravity(Vec3::ZERO))
         .add_systems(FixedUpdate, gravitate.before(controller::ControllerSet));
     app.finish();
@@ -580,7 +580,8 @@ fn chunk_colliders_match_their_meshes() {
 #[test]
 fn crates_fall_toward_the_centre_and_rest() {
     let (mut app, sphere, origin, meshes) = sphere_app(4.0, Vec3::X, 80.0);
-    let dir = Vec3::X;
+    // About 3 m from the player, who now stands upright at the spawn.
+    let dir = (Vec3::X + Vec3::Z * 0.003).normalize();
     let id = app.world_mut().spawn((RigidBody::Dynamic, Collider::cuboid(1.0, 1.0, 1.0), Mass(40.0), Transform::from_translation(origin.world(sphere.surface_point(dir) + dir * 50.0)))).id();
     run(&mut app, 6.0);
     let pos = origin.body(app.world().get::<Transform>(id).unwrap().translation);
@@ -600,10 +601,114 @@ fn resting_bodies_stay_asleep_under_gravity() {
     assert!(app.world().get::<Sleeping>(id).is_some(), "gravity does not keep waking it");
 }
 
+/// The surface point under `at_dir` and the local frame there.
+fn course_frame(sphere: &Arc<Sphere>, at_dir: Vec3) -> (Vec3, Quat) {
+    let at = sphere.surface_point(at_dir);
+    (at, Surface::Sphere(sphere.clone()).frame(at))
+}
+
+/// `set_player` in the course frame at `at_dir`, with local y measured from the deck top.
+fn set_player_local(app: &mut App, origin: &Origin, sphere: &Arc<Sphere>, at_dir: Vec3, local_pos: Vec3, local_vel: Vec3) {
+    let (at, frame) = course_frame(sphere, at_dir);
+    set_player(app, origin.world(at + frame * (local_pos + Vec3::Y * planet::COURSE_DECK)), frame * local_vel);
+}
+
+/// `player` in the course frame at `at_dir`: position over the deck top, velocity in the frame.
+fn player_local(app: &mut App, origin: &Origin, sphere: &Arc<Sphere>, at_dir: Vec3) -> (Vec3, Vec3, MoveState) {
+    let (at, frame) = course_frame(sphere, at_dir);
+    let (pos, vel, state) = player(app);
+    (frame.inverse() * (origin.body(pos) - at) - Vec3::Y * planet::COURSE_DECK, frame.inverse() * vel, state)
+}
+
+#[test]
+fn runs_along_the_surface_for_a_minute() {
+    // On the equator 150 m short of the +X/+Z face seam; local -X is west, toward +Z and across it.
+    let theta = std::f32::consts::FRAC_PI_4 - 150.0 / 2000.0;
+    let start = Vec3::new(theta.cos(), 0.0, theta.sin());
+    let (mut app, _, origin, meshes) = sphere_app(4.0, start, 650.0);
+    app.world_mut().resource_mut::<ViewAngles>().yaw = std::f32::consts::FRAC_PI_2;
+    input(&mut app).movement = Vec2::Y;
+    run(&mut app, 60.0);
+    let (pos, _, state) = player(&mut app);
+    let body = origin.body(pos);
+    let dir = body.normalize();
+    assert_eq!(state, MoveState::Ground);
+    assert!(dir.angle_between(start) * 2000.0 > 380.0, "travelled {} m", dir.angle_between(start) * 2000.0);
+    assert!(dir.z > start.z + 0.1, "went toward +Z, across the seam");
+    let ground = meshes.iter().find_map(|m| m.ground_on(dir)).expect("still on built ground").point;
+    assert!((body.length() - ground.length() - 0.9).abs() < 0.05, "feet {} m over the mesh", body.length() - ground.length());
+}
+
+#[test]
+fn jump_height_on_the_sphere_matches_the_flat_world() {
+    let flat = {
+        let mut app = make_app(Tuning::default());
+        run(&mut app, 0.5);
+        jump_apex(&mut app, |a| player(a).0.y)
+    };
+    for dir in [Vec3::Y, Vec3::X] {
+        let (mut app, _, origin, _) = sphere_app(4.0, dir, 60.0);
+        run(&mut app, 0.5);
+        let apex = jump_apex(&mut app, |a| origin.body(player(a).0).length());
+        assert!((apex - flat).abs() < 0.02 * flat, "apex {apex} vs flat {flat} at {dir}");
+    }
+}
+
+#[test]
+fn stairs_wall_runs_mantles_and_slides_on_the_sphere() {
+    let at = Vec3::new(0.2, 0.7, 0.68).normalize();
+    let (mut app, sphere, origin, _) = sphere_app(4.0, at, 40.0);
+    let surface = Surface::Sphere(sphere.clone());
+    planet::spawn_course(app.world_mut(), &surface, &origin, sphere.surface_point(at));
+    // Wall run and wall jump, as in wall_runs_along_wall.
+    set_player_local(&mut app, &origin, &sphere, at, Vec3::new(0.2, 2.5, -18.0), Vec3::new(0.0, 2.0, -9.0));
+    input(&mut app).movement = Vec2::Y;
+    run(&mut app, 1.0);
+    assert_eq!(player(&mut app).2, MoveState::WallRun);
+    input(&mut app).jump_pressed = true;
+    app.update();
+    let (_, vel, state) = player_local(&mut app, &origin, &sphere, at);
+    assert!(state == MoveState::Air && vel.x < -3.0 && vel.y > 3.0, "wall jump {vel}");
+    // Mantle, as in mantles_onto_ledge.
+    set_player_local(&mut app, &origin, &sphere, at, Vec3::new(-8.0, 0.95, 0.0), Vec3::ZERO);
+    input(&mut app).movement = Vec2::Y;
+    run(&mut app, 0.3);
+    input(&mut app).jump_pressed = true;
+    run(&mut app, 0.6);
+    assert!(player_local(&mut app, &origin, &sphere, at).0.y > 2.6, "mantled");
+    // Stair step onto the 0.4 m block and keep walking on it.
+    set_player_local(&mut app, &origin, &sphere, at, Vec3::new(8.0, 0.95, -2.0), Vec3::ZERO);
+    run(&mut app, 1.2);
+    let (p, _, state) = player_local(&mut app, &origin, &sphere, at);
+    assert!(state == MoveState::Ground && p.y > 1.2 && p.z < -6.0, "stepped up: {p}");
+    // Slide under the tunnel roof, as in slides_under_low_ceiling.
+    set_player_local(&mut app, &origin, &sphere, at, Vec3::new(16.0, 0.95, 0.0), Vec3::new(0.0, 0.0, -8.0));
+    {
+        let mut i = input(&mut app);
+        i.movement = Vec2::Y;
+        i.crouch_held = true;
+    }
+    run(&mut app, 0.4);
+    assert_eq!(player(&mut app).2, MoveState::Slide);
+    run(&mut app, 2.5);
+    assert!(player_local(&mut app, &origin, &sphere, at).0.z < -15.0, "slid through the tunnel");
+}
+
+#[test]
+fn falling_under_the_sea_respawns_on_the_sphere() {
+    let (mut app, sphere, origin, _) = sphere_app(4.0, Vec3::X, 60.0);
+    set_player(&mut app, origin.world(sphere.point(Vec3::Z, -5.0)), Vec3::ZERO); // 5 m under sea level, deep inside the test moon
+    run(&mut app, 0.1);
+    let (pos, _, _) = player(&mut app);
+    assert!(origin.body(pos).distance(sphere.surface_point(Vec3::X) + Vec3::X) < 1.0);
+    let frame = app.world_mut().query::<&Player>().single(app.world()).unwrap().frame;
+    assert!((frame * Vec3::Y).dot(Vec3::X) > 0.9999);
+}
+
 #[test]
 fn falling_in_water_respawns_at_world_bounds() {
     let mut app = make_app(Tuning::default());
-    app.insert_resource(controller::WorldBounds { spawn: Vec3::new(5.0, 30.0, -5.0), kill_y: 10.0 });
+    app.insert_resource(controller::WorldBounds { spawn: Vec3::new(5.0, 30.0, -5.0), kill_altitude: 10.0 });
     set_player(&mut app, Vec3::new(50.0, 9.0, 50.0), Vec3::new(3.0, -5.0, 0.0));
     run(&mut app, 0.1);
     let (pos, vel, state) = player(&mut app);
@@ -635,7 +740,7 @@ fn soldier_state(app: &mut App) -> (Vec3, Option<f32>) {
 #[test]
 fn player_dies_and_respawns_with_full_health() {
     let mut app = make_app(Tuning::default());
-    app.insert_resource(controller::WorldBounds { spawn: Vec3::new(5.0, 1.0, -5.0), kill_y: -30.0 });
+    app.insert_resource(controller::WorldBounds { spawn: Vec3::new(5.0, 1.0, -5.0), kill_altitude: -30.0 });
     set_player(&mut app, Vec3::new(40.0, 1.0, 40.0), Vec3::ZERO);
     hit_player(&mut app, 30.0);
     run(&mut app, 0.1);

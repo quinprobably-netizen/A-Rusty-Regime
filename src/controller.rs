@@ -4,27 +4,33 @@
 //! Source engine's order: categorize ground, jump, friction, accelerate,
 //! collide-and-slide. Air strafing, bunny hopping and ramp sliding fall out
 //! of that math rather than being special cases.
+//!
+//! The player carries a local frame whose +Y is the surface's up. Each tick
+//! the frame is tilted to follow up, the state is rotated into it, the same
+//! math runs on local vectors, and the result is rotated back. On the flat
+//! world the frame is the identity.
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
 use crate::input::{PlayerInput, ViewAngles};
+use crate::surface::{Origin, Surface};
 use crate::tuning::Tuning;
 
 pub const SKIN: f32 = 0.015;
 pub const SPAWN: Vec3 = Vec3::new(0.0, 1.0, 10.0);
 
-/// Where the player starts and the height below which they are sent back
-/// there. The arena uses the defaults; the island inserts its own.
+/// Where the player starts (in body coordinates) and the altitude below which
+/// they are sent back there. The arena uses the defaults; the island inserts its own.
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct WorldBounds {
     pub spawn: Vec3,
-    pub kill_y: f32,
+    pub kill_altitude: f32,
 }
 
 impl Default for WorldBounds {
     fn default() -> Self {
-        Self { spawn: SPAWN, kill_y: -30.0 }
+        Self { spawn: SPAWN, kill_altitude: -30.0 }
     }
 }
 const GROUND_PROBE: f32 = 0.06;
@@ -63,6 +69,8 @@ pub struct Player {
     pub knockback_lock: f32,
     /// Air jumps left before touching ground, a wall, a ledge or a grapple anchor again.
     pub air_jumps_left: u32,
+    /// The carried local frame: local +Y is up. Transported with the player, never spun about up.
+    pub frame: Quat,
     jump_buffer: f32,
     slide_cooldown: f32,
     wallrun_time: f32,
@@ -78,8 +86,26 @@ impl Player {
     pub fn eye_offset(&self, t: &Tuning) -> f32 {
         self.half_height(t) - t.eye_from_top
     }
+    pub fn up(&self) -> Vec3 {
+        self.frame * Vec3::Y
+    }
+    /// Speed along up.
+    pub fn vertical(&self) -> f32 {
+        self.velocity.dot(self.up())
+    }
     pub fn horizontal_speed(&self) -> f32 {
-        self.velocity.xz().length()
+        (self.velocity - self.up() * self.vertical()).length()
+    }
+    /// Moves the stored positions by `-delta`, for when the origin moves by `delta`.
+    // Nothing moves the origin until the rebase lands.
+    #[allow(dead_code)]
+    pub fn shift(&mut self, delta: Vec3) {
+        self.prev_pos -= delta;
+        if let Some(m) = &mut self.mantle {
+            m.from -= delta;
+            m.mid -= delta;
+            m.to -= delta;
+        }
     }
 }
 
@@ -99,19 +125,21 @@ pub struct ControllerPlugin;
 
 impl Plugin for ControllerPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<WorldBounds>().add_systems(Startup, spawn_player).add_systems(
-            FixedUpdate,
-            (player_tick, sync_hull).chain().in_set(ControllerSet),
-        );
+        app.init_resource::<WorldBounds>()
+            .init_resource::<Surface>()
+            .init_resource::<Origin>()
+            .add_systems(Startup, spawn_player)
+            .add_systems(FixedUpdate, (player_tick, sync_hull).chain().in_set(ControllerSet));
     }
 }
 
-fn spawn_player(mut commands: Commands, tuning: Res<Tuning>, bounds: Res<WorldBounds>) {
+fn spawn_player(mut commands: Commands, tuning: Res<Tuning>, bounds: Res<WorldBounds>, surface: Res<Surface>, origin: Res<Origin>) {
+    let (spawn, frame) = (origin.world(bounds.spawn), surface.frame(bounds.spawn));
     commands.spawn((
         Name::new("Player"),
-        Player { prev_pos: bounds.spawn, ..default() },
+        Player { prev_pos: spawn, frame, ..default() },
         HullCrouched(false),
-        Transform::from_translation(bounds.spawn),
+        Transform::from_translation(spawn).with_rotation(frame),
         RigidBody::Kinematic,
         hull(&tuning, false),
     ));
@@ -172,14 +200,17 @@ struct Hit {
     entity: Entity,
 }
 
+/// Collision queries in the player's frame: positions, directions and normals
+/// going in and coming out are frame-local.
 struct Space<'a, 'w, 's> {
     query: &'a SpatialQuery<'w, 's>,
     filter: SpatialQueryFilter,
+    frame: Quat,
 }
 
 impl Space<'_, '_, '_> {
     fn cast(&self, shape: &Collider, pos: Vec3, dir: Vec3, max: f32) -> Option<Hit> {
-        let dir = Dir3::new(dir).ok()?;
+        let dir = Dir3::new(self.frame * dir).ok()?;
         let config = ShapeCastConfig {
             max_distance: max,
             compute_contact_on_penetration: true,
@@ -187,19 +218,19 @@ impl Space<'_, '_, '_> {
             ..ShapeCastConfig::DEFAULT
         };
         self.query
-            .cast_shape(shape, pos, Quat::IDENTITY, dir, &config, &self.filter)
-            .map(|h| Hit { distance: h.distance, normal: h.normal1, entity: h.entity })
+            .cast_shape(shape, self.frame * pos, self.frame, dir, &config, &self.filter)
+            .map(|h| Hit { distance: h.distance, normal: self.frame.inverse() * h.normal1, entity: h.entity })
     }
 
     fn ray(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<Hit> {
-        let dir = Dir3::new(dir).ok()?;
+        let dir = Dir3::new(self.frame * dir).ok()?;
         self.query
-            .cast_ray(origin, dir, max, true, &self.filter)
-            .map(|h| Hit { distance: h.distance, normal: h.normal, entity: h.entity })
+            .cast_ray(self.frame * origin, dir, max, true, &self.filter)
+            .map(|h| Hit { distance: h.distance, normal: self.frame.inverse() * h.normal, entity: h.entity })
     }
 
     fn fits(&self, shape: &Collider, pos: Vec3) -> bool {
-        self.query.shape_intersections(shape, pos, Quat::IDENTITY, &self.filter).is_empty()
+        self.query.shape_intersections(shape, self.frame * pos, self.frame, &self.filter).is_empty()
     }
 
     /// Quake-style collide and slide. Returns true if a wall (non-walkable
@@ -292,10 +323,12 @@ impl Space<'_, '_, '_> {
 
 fn player_tick(
     bounds: Res<WorldBounds>,
+    surface: Res<Surface>,
+    origin: Res<Origin>,
     time: Res<Time>,
     tuning: Res<Tuning>,
     mut input: ResMut<PlayerInput>,
-    view: Res<ViewAngles>,
+    mut view: ResMut<ViewAngles>,
     spatial: SpatialQuery,
     mut players: Query<(Entity, &mut Player, &mut Transform, Has<crate::vehicle::Driving>)>,
     mut bodies: Query<(&RigidBody, &mut LinearVelocity, &ComputedMass), Without<Player>>,
@@ -312,13 +345,21 @@ fn player_tick(
         if driving {
             continue;
         }
-        let space = Space { query: &spatial, filter: SpatialQueryFilter::from_excluded_entities([entity]) };
-        let mut pos = tf.translation;
-        p.prev_pos = pos;
+        let world_pos = tf.translation;
+        let body_pos = origin.body(world_pos);
+        p.prev_pos = world_pos;
 
-        if reset || pos.y < bounds.kill_y {
-            *p = Player { prev_pos: bounds.spawn, crouched: p.crouched, ..default() };
-            tf.translation = bounds.spawn;
+        // Carry the frame: tilt it so its up follows the surface's, never spinning it about up.
+        let up = surface.up(body_pos);
+        p.frame = (Quat::from_rotation_arc(p.frame * Vec3::Y, up) * p.frame).normalize();
+        view.frame = p.frame;
+
+        if reset || surface.altitude(body_pos) < bounds.kill_altitude {
+            let (spawn, frame) = (origin.world(bounds.spawn), surface.frame(bounds.spawn));
+            *p = Player { prev_pos: spawn, crouched: p.crouched, frame, ..default() };
+            tf.translation = spawn;
+            tf.rotation = frame;
+            view.frame = frame;
             continue;
         }
 
@@ -330,10 +371,20 @@ fn player_tick(
 
         if p.mantle.is_some() {
             tf.translation = advance_mantle(&mut p, dt, t);
+            tf.rotation = p.frame;
             continue;
         }
 
-        let (forward, right) = view.flat_basis();
+        // Into the frame: from here until `leave_frame` every vector is frame-local.
+        let frame = p.frame;
+        let space = Space { query: &spatial, filter: SpatialQueryFilter::from_excluded_entities([entity]), frame };
+        let mut pos = frame.inverse() * world_pos;
+        p.velocity = frame.inverse() * p.velocity;
+        p.wall_normal = frame.inverse() * p.wall_normal;
+        p.last_wall = p.last_wall.map(|n| frame.inverse() * n);
+        let gravity = surface.gravity(body_pos, t.gravity).length();
+
+        let (forward, right) = view.local_basis();
         let wish = forward * input.movement.y + right * input.movement.x;
         let wish_dir = wish.normalize_or_zero();
         let mut wish_speed = wish.length().min(1.0) * t.max_speed;
@@ -389,7 +440,7 @@ fn player_tick(
         let grounded = matches!(p.state, MoveState::Ground | MoveState::Slide);
 
         // Slide start: crouch while running fast (also works landing into it)
-        if grounded && p.state != MoveState::Slide && input.crouch_held && p.horizontal_speed() >= t.slide_min_speed {
+        if grounded && p.state != MoveState::Slide && input.crouch_held && p.velocity.xz().length() >= t.slide_min_speed {
             p.state = MoveState::Slide;
             if p.slide_cooldown <= 0.0 {
                 let dir = p.velocity.with_y(0.0).normalize_or_zero();
@@ -408,7 +459,7 @@ fn player_tick(
                 friction(&mut vel, t.slide_friction, 0.0, dt);
                 if let Some(h) = ground {
                     // Gravity along the slope: slides speed up downhill.
-                    let g = Vec3::NEG_Y * t.gravity;
+                    let g = Vec3::NEG_Y * gravity;
                     vel += clip_velocity(g, h.normal).with_y(0.0) * dt;
                 }
                 accelerate(&mut vel, wish_dir, wish_speed, t.slide_steer, dt);
@@ -441,18 +492,19 @@ fn player_tick(
                 vel = clip_velocity(vel, n);
                 let along = vel.with_y(0.0).normalize_or_zero();
                 accelerate(&mut vel, along, t.wallrun_speed, t.accelerate, dt);
-                vel.y -= t.gravity * t.wallrun_gravity_scale * dt;
+                vel.y -= gravity * t.wallrun_gravity_scale * dt;
                 vel -= n * 0.5; // hug the wall
             } else {
                 air_accelerate(&mut vel, wish_dir, wish_speed, t.air_accelerate, t.air_speed_cap, dt);
-                vel.y -= t.gravity * dt;
+                vel.y -= gravity * dt;
                 if input.movement.y > 0.5 {
                     if let Some(m) = try_mantle(&space, &p, &shape, pos, forward, vel, t) {
-                        p.mantle = Some(m);
+                        // A mantle stores world points.
+                        p.mantle = Some(Mantle { from: frame * m.from, mid: frame * m.mid, to: frame * m.to, exit_velocity: frame * m.exit_velocity, ..m });
                         p.air_jumps_left = t.air_jumps;
                         p.state = MoveState::Mantle;
                         p.velocity = Vec3::ZERO;
-                        tf.translation = pos;
+                        leave_frame(&mut p, &mut tf, pos);
                         continue;
                     }
                 }
@@ -462,7 +514,7 @@ fn player_tick(
         }
 
         p.velocity = vel;
-        tf.translation = pos;
+        leave_frame(&mut p, &mut tf, pos);
 
         // Shove dynamic props we ran into.
         let mut pushed: Vec<Entity> = Vec::new();
@@ -474,18 +526,29 @@ fn player_tick(
             let into = -v_before.dot(h.normal);
             if *body == RigidBody::Dynamic && into > 0.0 {
                 let scale = (t.prop_ref_mass * mass.inverse()).min(1.0);
-                lv.0 += -h.normal * into * t.push_strength * scale;
+                lv.0 += -(frame * h.normal) * into * t.push_strength * scale;
                 pushed.push(h.entity);
             }
         }
     }
 }
 
+/// Rotates the tick's frame-local position, velocity and wall normals back out to the world.
+fn leave_frame(p: &mut Player, tf: &mut Transform, pos: Vec3) {
+    let frame = p.frame;
+    p.velocity = frame * p.velocity;
+    p.wall_normal = frame * p.wall_normal;
+    p.last_wall = p.last_wall.map(|n| frame * n);
+    tf.translation = frame * pos;
+    tf.rotation = frame;
+}
+
 fn jump(p: &mut Player, t: &Tuning) {
     p.jump_buffer = 0.0;
     if t.bhop_speed_cap > 0.0 {
         let cap = t.bhop_speed_cap * t.max_speed;
-        let speed = p.horizontal_speed();
+        // The tick runs in the player's frame, where horizontal is xz.
+        let speed = p.velocity.xz().length();
         if speed > cap {
             let s = cap * 0.9 / speed;
             p.velocity.x *= s;

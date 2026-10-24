@@ -211,6 +211,8 @@ fn drive(
     time: Res<Time>,
     tuning: Res<Tuning>,
     bounds: Res<WorldBounds>,
+    surface: Res<crate::surface::Surface>,
+    origin: Res<crate::surface::Origin>,
     roads: Option<Res<crate::roads::Roads>>,
     fx: Option<Res<crate::weapon::FxAssets>>,
     mut materials: Option<ResMut<Assets<StandardMaterial>>>,
@@ -293,7 +295,7 @@ fn drive(
         }
         step(&mut v, &mut forces, &spatial, entity, driver, ctl, t, roads.as_deref(), power, g, dt);
 
-        if forces.position().y < bounds.kill_y {
+        if surface.altitude(origin.body(forces.position().0)) < bounds.kill_altitude {
             let home = v.home;
             for w in &mut v.wheels {
                 *w = WheelState { normal: Vec3::Y, ..default() };
