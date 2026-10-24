@@ -1,6 +1,8 @@
 # Where each weapon's holds are, in the weapon's glTF space (-Z down the barrel, +Y up, the trigger
 # at the origin): `right` is the middle of the pistol grip, `cradle` the middle of the handguard (or
-# the pump, with `left_bone` the bone it rides), `vertical` and `angled` the foregrips when fitted.
+# the pump, with `left_bone` the bone it rides), `vertical` and `angled` the foregrips when fitted;
+# `thumb`, on a handgun, the point on the frame the firing thumb's outer joints aim at, forward
+# and under the slide (else it wraps up the grip).
 # tools/character/grips.py fits each hold's cylinder round its point in the weapon mesh and solves
 # every character's palm frames and finger poses (assets/models/character/<id>.grips.toml); the game
 # (src/character.rs) reads only `right`, `left` and `left_bone`, to hang a weapon with no solved pose
@@ -22,6 +24,7 @@ angled = [0.0, 0.0063, -0.265]
 
 [pistol]
 right = [0.0, -0.05, 0.055]
+thumb = [-0.015, -0.006, -0.015]
 
 [smg]
 right = [0.0, -0.05, 0.045]
@@ -39,6 +42,7 @@ angled = [0.0, 0.0, -0.28]
 
 [revolver]
 right = [0.0, -0.058, 0.045]
+thumb = [-0.018, -0.004, 0.005]
 
 [grenade]
 right = [0.0, -0.04, 0.035]
