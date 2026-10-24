@@ -94,14 +94,15 @@ pub fn build_chunk(sphere: &Sphere, node: NodeId) -> ChunkMesh {
         }
     }
     // The rim runs counterclockwise seen from outside; each wall quad lies in a plane through
-    // the body centre, wound to face the chunk's interior.
+    // the body centre, wound to face away from the chunk, so a crack seen from a neighbour
+    // shows the wall under back-face culling.
     let skirt = (GRID * GRID) as u32;
     for k in 0..rim.len() {
         let next = (k + 1) % rim.len();
         let (a, b) = (rim[k] as u32, rim[next] as u32);
         let (sa, sb) = (skirt + k as u32, skirt + next as u32);
-        indices.push([a, b, sa]);
-        indices.push([b, sb, sa]);
+        indices.push([a, sa, b]);
+        indices.push([b, sa, sb]);
     }
     let weights = vec![[1.0, 0.0, 0.0, 0.0]; positions.len()];
     ChunkMesh { node, center, positions, normals, weights, indices }
@@ -213,7 +214,12 @@ mod tests {
         }
         for tri in &c.indices {
             let [a, b, d] = tri.map(|i| c.positions[i as usize]);
-            assert!((b - a).cross(d - a).dot(c.center) >= -1e-3, "wound outward");
+            if tri.iter().any(|&i| i as usize >= GRID * GRID) {
+                // Skirt walls face away from the chunk; positions are chunk-local.
+                assert!((b - a).cross(d - a).dot((a + b + d) / 3.0) >= -1e-3, "skirt wound away from the chunk");
+            } else {
+                assert!((b - a).cross(d - a).dot(c.center) >= -1e-3, "wound outward");
+            }
         }
     }
 
