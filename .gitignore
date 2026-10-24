@@ -5,3 +5,4 @@ screenshots/characters/
 .venv
 __pycache__/
 /tools/character/vendor/
+.worktrees/
