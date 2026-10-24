@@ -1818,6 +1818,8 @@ class Char(kit.Char):
         # preview adds afterwards (the dummy gun) get flat palette materials of their own.
         for m in mats:
             m.name = m.name + ".baked"
+        import glbanim
+        glbanim.patch(path)
         print(f"wrote {path}: {os.path.getsize(path) // 1024} KB, {n} tris ({time.time() - t0:.0f}s)")
         if not budget[0] <= n <= budget[1]:
             print(f"WARNING {self.id}: {n} triangles, budget {budget[0]}..{budget[1]}")
