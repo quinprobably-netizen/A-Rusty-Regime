@@ -32,6 +32,7 @@ mod gunsmith;
 mod scope;
 mod fingers;
 mod system;
+mod surface;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
