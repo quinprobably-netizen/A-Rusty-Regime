@@ -49,6 +49,7 @@ REFINE = math.radians(25)  # how far the real mesh may move a joint off the clos
 PRESS = 0.75  # a finger may sink into the gun by this much of its radius (the flesh flattens)
 SINK = 0.0015  # how far the glove's real surface may sink into the gun
 CLEAR = 0.002  # after the solve, no part of the posed glove may be deeper in the gun than this
+BACK_OFF = 0.02  # how far the palm may back off the hold to free the heel of the thumb
 DEBUG = bool(os.environ.get("GRIPS_DEBUG"))
 
 # A hold: the table point it closes on; the direction its cylinder runs (weapon space: -Z down the
@@ -74,7 +75,7 @@ HOLDS = {
     "angled": Hold("angled", (0, 0, -1), 0.05, (0.2, 1, 0), -1, 0.0, "along", "att.grip.angled", -35.0),
 }
 # A placed hold: the palm frame in (possibly mirrored) weapon space, its cylinder, and what it needs.
-Frame = namedtuple("Frame", "at rot cen d r extra mirror thumb cap")
+Frame = namedtuple("Frame", "at rot cen d r extra mirror thumb cap tip", defaults=(None,))
 MIRROR = Matrix.Scale(-1, 3, (1, 0, 0))
 SHOTS = os.path.join(kit.ROOT, "screenshots", "characters")
 
@@ -97,7 +98,7 @@ def solve(c, out_dir=kit.OUT):
             if DEBUG:
                 print(wid)
             trig = _trigger_face(w)
-            right = _hold(w, HOLDS["R"], Vector(spec["right"]), mirror=True)
+            right = _hold(w, HOLDS["R"], Vector(spec["right"]), mirror=True, tip=spec.get("thumb"))
             right = _place(c, w, right, trig)
             extra = {}
             out[f"{wid}.R"] = _pose(c, w, right, trigger=(trig, 0.0))
@@ -497,9 +498,10 @@ def _cylinder(verts, seed, hint, half, reach):
     return cen, d, rs[len(rs) // 2], [v for _, v in sel]
 
 
-def _hold(w, hold, seed, mirror=False):
+def _hold(w, hold, seed, mirror=False, tip=None):
     """Place `hold` on the weapon: fit its cylinder and set the palm frame tangent to it. A right-hand
-    hold (`mirror`) is placed on the mirrored weapon as a left hand."""
+    hold (`mirror`) is placed on the mirrored weapon as a left hand. `tip`, the table's `thumb`: where
+    the thumb's outer joints aim instead of up the grip."""
     hint, palm = Vector(hold.axis), Vector(hold.palm)
     x_sign = hold.x_sign
     if mirror:
@@ -524,7 +526,9 @@ def _hold(w, hold, seed, mirror=False):
               + (f", fingertips under {cap * 1000:.0f} mm" if cap else ""))
     # The fingers hug the real extent where it is deeper than the fitted cylinder (a boxy handguard),
     # then settle on the mesh from outside rather than press through it.
-    return Frame(at, rot, cen, d, max(r, ext), hold.part, mirror, hold.thumb, cap)
+    if tip is not None:
+        tip = MIRROR @ Vector(tip) if mirror else Vector(tip)
+    return Frame(at, rot, cen, d, max(r, ext), hold.part, mirror, hold.thumb, cap, tip)
 
 
 def _moved(F, dt, roll):
@@ -608,7 +612,9 @@ def _pose(c, w, F, trigger=None, probe=False):
         at += Zw * step
         moved += step
     # Wrap the fingers; if the heel of the thumb, swung round the grip, has gone into the gun, back
-    # the palm off until it clears and wrap them again.
+    # the palm off until it clears (BACK_OFF at most) and wrap them again.
+    near, solids = w.tree(F.extra), w.solids(F.extra)
+    backed = 0.0
     for _ in range(4):
         # The cylinder in hand space.
         c_h, d_h = to_hand(F.cen), to_hand_dir(F.d).normalized()
@@ -698,6 +704,16 @@ def _pose(c, w, F, trigger=None, probe=False):
                             turn(j, Matrix.Rotation(STEP, 3, curl))
                     for j in range(3):
                         refine(j, curl)
+                    if F.tip is not None:
+                        # Thumbs forward: its outer joints aimed at the table's point on the frame,
+                        # under the slide. Curled up a pistol's short grip, the thumb stood up behind
+                        # the slide, across the sights when aimed.
+                        loc, nrm, _, _ = tree.find_nearest(F.tip)
+                        aim = to_hand(loc + nrm * rho if loc is not None else F.tip)
+                        for j in (1, 2):
+                            turn(j, _toward(js[3] - js[j], aim - js[j]))
+                        for j in (1, 2):
+                            refine(j, thumb_axis(j), close=False)
                 else:
                     # Along the near side, pointing the way the fingers' knuckle line runs (-X: forward
                     # on a handguard), straight, its tip laid on the nearest skin of the gun; only backed
@@ -739,10 +755,18 @@ def _pose(c, w, F, trigger=None, probe=False):
         if not skin:
             break
         heel = skin["hand.L"] + [out["thumb"][0] @ p for p in skin["f_thumb.1.L"]]
-        depth = -min(signed(p) for p in heel)
-        if depth <= SINK:
+        # Piece by piece, as the clearance pass tests: the nearest face's side misreads points by
+        # big parts like a launcher's tube or a drum, and backed hands off the gun by up to half a
+        # metre.
+        unm = (lambda v: MIRROR @ v) if F.mirror else (lambda v: v)
+        depth = max(_inside(solids, unm(weapon_point(p)), near) for p in heel)
+        step = min(depth - SINK * 0.5, BACK_OFF - backed)
+        if depth <= SINK or step <= 0.0:
             break
-        at -= Zw * (depth - SINK * 0.5)  # +Z runs out of the palm, into the gun
+        at -= Zw * step  # +Z runs out of the palm, into the gun
+        backed += step
+    if DEBUG and backed:
+        print(f"  backed the palm off {backed * 1000:.1f} mm")
     side = "R" if F.mirror else "L"
     if F.mirror:
         at = MIRROR @ at
