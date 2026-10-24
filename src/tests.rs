@@ -4,6 +4,7 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::time::TimeUpdateStrategy;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,7 +16,7 @@ use crate::terrain;
 use crate::tuning::{Island, Tuning};
 use crate::targets::{self, Target, TargetsPlugin};
 use crate::island::{Placed, Sites};
-use crate::planet::{self, chunk::{self, ChunkMesh}};
+use crate::planet::{self, chunk::{self, ChunkMesh}, quadtree::NodeId};
 use crate::planet::gravity::gravitate;
 use crate::surface::testing::random_dirs;
 use crate::surface::{Origin, Sphere, Surface, QUANTUM};
@@ -718,6 +719,51 @@ fn falling_in_water_respawns_at_world_bounds() {
     // Reset to zero, then a few ticks of gravity at the spawn point.
     assert!(vel.xz().length() < 0.01 && vel.y <= 0.0 && vel.y > -3.0, "velocity reset, got {vel}");
     assert_eq!(state, MoveState::Air);
+}
+
+// --- Terrain streaming ---
+
+fn streaming_app(workers: usize) -> (App, Arc<Sphere>, Origin) {
+    let (mut app, sphere, origin, _) = sphere_app(4.0, Vec3::X, 0.0);
+    app.world_mut().resource_mut::<Tuning>().terrain.workers = workers;
+    planet::add_streaming(&mut app);
+    (app, sphere, origin)
+}
+
+/// Updates until every wanted chunk is built and nothing else remains, then one more frame.
+fn settle(app: &mut App) {
+    for _ in 0..600 {
+        app.update();
+        let c = app.world().resource::<planet::Chunks>();
+        if c.pending.is_empty() && c.built.keys().copied().collect::<HashSet<_>>() == c.wanted { app.update(); return; }
+    }
+    panic!("streaming did not converge");
+}
+
+fn covered(app: &mut App, dir: Vec3) -> usize { app.world().resource::<planet::Chunks>().built.keys().filter(|n| n.contains(dir)).count() }
+
+#[test]
+fn streaming_converges_to_a_tiling_and_never_leaves_holes() {
+    let (mut app, sphere, origin) = streaming_app(4);
+    settle(&mut app);
+    let dirs = random_dirs(500);
+    for d in &dirs { assert_eq!(covered(&mut app, *d), 1, "{d}"); }
+    assert!(app.world().resource::<planet::Chunks>().built.contains_key(&NodeId::leaf_at(Vec3::X, 5)), "finest under the player");
+    for step in 1..=10 {
+        let dir = Vec3::new(1.0, 0.0, 0.15 * step as f32).normalize();
+        set_player(&mut app, origin.world(sphere.surface_point(dir) + dir), Vec3::ZERO);
+        for _ in 0..30 { app.update(); for d in &dirs { assert!(covered(&mut app, *d) >= 1, "hole at {d} during step {step}"); } }
+    }
+    settle(&mut app);
+    for d in &dirs { assert_eq!(covered(&mut app, *d), 1); }
+}
+
+#[test]
+fn builder_respects_the_worker_cap() {
+    for workers in [0usize, 2] {
+        let (mut app, _, _) = streaming_app(workers);
+        for _ in 0..200 { app.update(); assert!(app.world().resource::<planet::Chunks>().pending.len() <= workers.max(1)); }
+    }
 }
 
 // --- Health and soldiers ---

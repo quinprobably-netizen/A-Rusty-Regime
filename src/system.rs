@@ -55,7 +55,7 @@ impl Body {
             gravity: 9.8,
             day_minutes: 48.0,
             tilt: 0.0,
-            sea_level: -1000.0,
+            sea_level: 0.0,
             seed: 11,
             height: 10.0,
             wavelength: 2000.0,
@@ -113,7 +113,7 @@ mod tests {
         assert_eq!((home.radius, home.gravity, home.day_minutes, home.tilt), (17500.0, 9.8, 48.0, 12.0));
         assert_eq!(home.home.as_ref().map(|h| (h.lat, h.lon, h.core, h.continent)), Some((12.0, 40.0, 4000.0, 35000.0)));
         let moon = s.body("moon").expect("moon");
-        assert_eq!((moon.radius, moon.gravity, moon.sea_level), (2000.0, 9.8, -1000.0));
+        assert_eq!((moon.radius, moon.gravity, moon.sea_level), (2000.0, 9.8, 0.0));
         assert_eq!(Body::default().radius, 17500.0);
         assert_eq!(Body::test_moon().seed, 11);
     }

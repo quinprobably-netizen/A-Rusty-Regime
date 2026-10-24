@@ -84,6 +84,18 @@ impl Sphere {
     pub fn surface_point(&self, dir: Vec3) -> Vec3 {
         self.point(dir, self.height(dir))
     }
+
+    /// The terrain directly below (or above) `p`, from the height function.
+    pub fn ground(&self, p: Vec3) -> Ground {
+        let (east, up, north) = sphere_basis(p);
+        let point = self.surface_point(up);
+        // Neighbours 1 m away along each tangent.
+        let step = 1.0 / point.length().max(1.0);
+        let e = self.surface_point((up + east * step).normalize()) - point;
+        let n = self.surface_point((up + north * step).normalize()) - point;
+        let normal = e.cross(n).normalize();
+        Ground { point, normal: if normal.dot(up) < 0.0 { -normal } else { normal } }
+    }
 }
 
 /// A point on the ground and the outward normal there.
@@ -130,7 +142,7 @@ impl Surface {
         match self {
             Surface::Flat => Quat::IDENTITY,
             Surface::Sphere(_) => {
-                let (east, up, north) = self.basis(p);
+                let (east, up, north) = sphere_basis(p);
                 Quat::from_mat3(&Mat3::from_cols(east, up, -north))
             }
         }
@@ -141,7 +153,7 @@ impl Surface {
         match self {
             Surface::Flat => Some(Vec3::NEG_Z),
             Surface::Sphere(_) if Vec2::new(p.x, p.z).length() < POLE => None,
-            Surface::Sphere(_) => Some(self.basis(p).2),
+            Surface::Sphere(_) => Some(sphere_basis(p).2),
         }
     }
 
@@ -149,30 +161,21 @@ impl Surface {
     pub fn ground(&self, p: Vec3) -> Ground {
         match self {
             Surface::Flat => Ground { point: Vec3::new(p.x, 0.0, p.z), normal: Vec3::Y },
-            Surface::Sphere(s) => {
-                let (east, up, north) = self.basis(p);
-                let point = s.surface_point(up);
-                // Neighbours 1 m away along each tangent.
-                let step = 1.0 / point.length().max(1.0);
-                let e = s.surface_point((up + east * step).normalize()) - point;
-                let n = s.surface_point((up + north * step).normalize()) - point;
-                let normal = e.cross(n).normalize();
-                Ground { point, normal: if normal.dot(up) < 0.0 { -normal } else { normal } }
-            }
+            Surface::Sphere(s) => s.ground(p),
         }
     }
+}
 
-    /// Orthonormal `(east, up, north)` at `p` on the sphere; near a pole north falls back to
-    /// the +X meridian so the frame stays defined.
-    fn basis(&self, p: Vec3) -> (Vec3, Vec3, Vec3) {
-        let up = self.up(p);
-        let north = if Vec2::new(p.x, p.z).length() < POLE {
-            (Vec3::X - up * up.x).normalize()
-        } else {
-            (Vec3::Y - up * up.y).normalize()
-        };
-        (north.cross(up), up, north)
-    }
+/// Orthonormal `(east, up, north)` at `p` on a sphere; near a pole north falls back to the +X
+/// meridian so the frame stays defined.
+fn sphere_basis(p: Vec3) -> (Vec3, Vec3, Vec3) {
+    let up = p.try_normalize().unwrap_or(Vec3::Y);
+    let north = if Vec2::new(p.x, p.z).length() < POLE {
+        (Vec3::X - up * up.x).normalize()
+    } else {
+        (Vec3::Y - up * up.y).normalize()
+    };
+    (north.cross(up), up, north)
 }
 
 /// Origin offsets are multiples of this many meters.
@@ -255,10 +258,10 @@ mod tests {
     #[test]
     fn gravity_points_at_the_centre_and_falls_off() {
         let s = Surface::Sphere(Arc::new(Sphere::new(Body::test_moon())));
-        let g = s.gravity(Vec3::X * 1000.0, 1.0);
+        let g = s.gravity(Vec3::X * 2000.0, 1.0);
         assert!((g.length() - 9.8).abs() < 1e-4 && g.normalize().dot(Vec3::NEG_X) > 0.99999);
-        assert!((s.gravity(Vec3::X * 2000.0, 1.0).length() - 2.45).abs() < 1e-4);
-        assert_eq!(s.altitude(Vec3::X * 1000.0), 0.0); // the test moon's sea radius is 1000 m
+        assert!((s.gravity(Vec3::X * 4000.0, 1.0).length() - 2.45).abs() < 1e-4);
+        assert_eq!(s.altitude(Vec3::X * 2000.0), 0.0); // the test moon's sea radius is its radius, 2000 m
     }
 
     #[test]

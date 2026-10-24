@@ -2,9 +2,6 @@
 //! surface function, with a skirt hanging from its rim to hide cracks against coarser
 //! neighbours, a triangle-mesh collider and an exact ground lookup on the same triangles.
 
-// Nothing in the game uses the planet yet; the streaming task wires it in.
-#![allow(dead_code)]
-
 use avian3d::prelude::*;
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
@@ -47,6 +44,7 @@ pub struct ChunkMesh {
     /// per `rim_order()` entry.
     pub positions: Vec<Vec3>,
     pub normals: Vec<Vec3>,
+    #[allow(dead_code)] // splat weights for the terrain shader, not drawn yet
     pub weights: Vec<[f32; 4]>,
     pub indices: Vec<[u32; 3]>,
 }
@@ -77,7 +75,7 @@ pub fn build_chunk(sphere: &Sphere, node: NodeId) -> ChunkMesh {
         }
     }
     let rim = rim_order();
-    let depth = skirt_depth(node.arc(sphere.radius()));
+    let depth = skirt_depth(node.arc(sphere.sea_radius()));
     for &r in &rim {
         let down = (center + positions[r]).normalize() * depth;
         positions.push(positions[r] - down);
@@ -171,8 +169,8 @@ impl ChunkMesh {
 #[cfg(test)]
 pub fn spawn_ground(world: &mut World, sphere: &Sphere, origin: &Origin, cell: f32, around: Vec3, radius: f32) -> Vec<Arc<ChunkMesh>> {
     use std::f32::consts::FRAC_PI_4;
-    let depth = super::quadtree::finest_depth(sphere.radius(), cell);
-    let reach = radius + NodeId::leaf_at(around, depth).arc(sphere.radius());
+    let depth = super::quadtree::finest_depth(sphere.sea_radius(), cell);
+    let reach = radius + NodeId::leaf_at(around, depth).arc(sphere.sea_radius());
     // A leaf can only qualify if its centre direction is within this angle of `around`'s.
     let lowest = (sphere.sea_radius() - sphere.body.height.abs()).max(1.0);
     let spread = 2.0 * (reach / (2.0 * lowest)).min(1.0).asin();

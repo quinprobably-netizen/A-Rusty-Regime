@@ -1,9 +1,6 @@
 //! The planet's terrain quadtree: a cube projected onto the sphere, each face a quadtree of
 //! chunks `CHUNK` cells on a side. Pure geometry; the chunk meshes and streaming build on it.
 
-// Nothing in the game uses the planet yet; the streaming task wires it in.
-#![allow(dead_code)]
-
 use bevy::prelude::*;
 use std::collections::HashSet;
 use std::f32::consts::{FRAC_PI_4, PI};
@@ -102,6 +99,7 @@ impl NodeId {
     }
 
     /// Strictly: a node is not its own ancestor.
+    #[allow(dead_code)] // only the tests ask
     pub fn is_ancestor_of(self, other: NodeId) -> bool {
         let up = other.depth.wrapping_sub(self.depth);
         other.depth > self.depth && other.face == self.face && other.x >> up == self.x && other.y >> up == self.y

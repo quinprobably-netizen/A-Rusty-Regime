@@ -520,7 +520,6 @@ impl Default for TerrainTuning {
 
 impl TerrainTuning {
     /// A split chunk merges back only past this many chunk sizes, half a chunk beyond `split`.
-    #[allow(dead_code)] // terrain streaming is not wired in yet
     pub fn merge(&self) -> f32 {
         self.split + 0.5
     }
