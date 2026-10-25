@@ -767,6 +767,41 @@ fn builder_respects_the_worker_cap() {
 }
 
 #[test]
+fn rebase_keeps_the_world_together() {
+    use crate::abilities::{GrappleState, Hook};
+    let (mut app, sphere, origin0) = streaming_app(4);
+    settle(&mut app);
+    let body_of = |app: &App, id: Entity| app.world().resource::<Origin>().body(app.world().get::<Transform>(id).unwrap().translation);
+    // Beside the player, not on their head, so it is at rest before the walk.
+    let crate_id = app.world_mut().spawn((RigidBody::Dynamic, Collider::cuboid(1.0, 1.0, 1.0), Mass(40.0), Transform::from_translation(origin0.world(sphere.surface_point(Vec3::X) + Vec3::X * 3.0 - Vec3::Z * 6.0)))).id();
+    let block_id = app.world_mut().spawn((RigidBody::Static, Collider::cuboid(2.0, 2.0, 2.0), Transform::from_translation(origin0.world(sphere.surface_point(Vec3::X) + Vec3::Z * 6.0)))).id();
+    run(&mut app, 2.0);
+    let (crate_before, block_before) = (body_of(&app, crate_id), body_of(&app, block_id));
+    // Teleport-walk 2.5 km in 100 m hops; the crate and block fall out of the bubble and freeze where they are.
+    // The grapple lets go past 1.5x its 30 m range, so each hop hooks afresh 11 m over the player's head.
+    let (mut target, mut anchor) = (Vec3::ZERO, Vec3::ZERO);
+    for i in 1..=25 {
+        let dir = Quat::from_rotation_y(-(i as f32) * 100.0 / 2000.0) * Vec3::X;
+        target = sphere.surface_point(dir) + dir;
+        let o = *app.world().resource::<Origin>();
+        set_player(&mut app, o.world(target), Vec3::ZERO);
+        anchor = target + dir * 12.0;
+        app.world_mut().resource_mut::<GrappleState>().hook = Some(Hook { anchor, rope: 12.0 });
+        app.update();
+        assert_eq!(app.world().resource::<GrappleState>().hook.map(|h| h.anchor), Some(anchor), "hop {i}: hook held, body-coordinate anchor untouched");
+    }
+    let o = *app.world().resource::<Origin>();
+    assert_ne!(o.offset, origin0.offset, "a rebase happened");
+    let (pos, _, _) = player(&mut app);
+    assert!(pos.length() < 2100.0, "the player is near the new origin");
+    assert!(o.body(pos).distance(target) < 0.5, "player body coordinates survived the shift");
+    assert!(body_of(&app, crate_id).distance(crate_before) < 1e-3 && body_of(&app, block_id).distance(block_before) < 1e-3);
+    assert_eq!(app.world().resource::<GrappleState>().hook.map(|h| h.anchor), Some(anchor), "body-coordinate anchor untouched");
+    let p = app.world_mut().query::<(&Player, &Transform)>().single(app.world()).unwrap();
+    assert!(p.0.prev_pos.distance(p.1.translation) < 2.0, "no camera jump");
+}
+
+#[test]
 fn only_chunks_inside_the_bubble_are_solid() {
     let (mut app, _, origin) = streaming_app(4);
     settle(&mut app);

@@ -14,6 +14,7 @@ use crate::tuning::{GrappleTuning, Tuning};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Hook {
+    /// Where the hook bit, in body coordinates so the sliding origin leaves it in place.
     pub anchor: Vec3,
     /// Current rope length; it only ever shortens, which is what makes swings work.
     pub rope: f32,
@@ -80,6 +81,7 @@ pub fn pull_direction(to_anchor: Vec3, look: Vec3, t: &GrappleTuning) -> Vec3 {
 
 /// One tick of pull on `v`: accelerate along the pull, cap the speed along it, and never let the
 /// rope stretch: velocity away from the anchor past the rope length is clipped, which is the swing.
+/// `eye` and `hook.anchor` are in the same space; the systems pass the anchor in world space.
 pub fn pull_velocity(v: Vec3, eye: Vec3, hook: &Hook, look: Vec3, t: &GrappleTuning, dt: f32) -> Vec3 {
     let to_anchor = hook.anchor - eye;
     let dir = pull_direction(to_anchor, look, t);
@@ -135,7 +137,8 @@ fn grapple_tick(
     }
 
     if let Some(hook) = state.hook {
-        let to_anchor = hook.anchor - eye;
+        let anchor = origin.world(hook.anchor);
+        let to_anchor = anchor - eye;
         let dist = to_anchor.length();
         // Anchor hidden behind something: the rope is cut.
         let blocked = dist > 0.5
@@ -150,7 +153,7 @@ fn grapple_tick(
             }
             state.hook = None;
         } else {
-            p.velocity = pull_velocity(p.velocity, eye, &Hook { anchor: hook.anchor, rope: hook.rope }, look, t, dt);
+            p.velocity = pull_velocity(p.velocity, eye, &Hook { anchor, rope: hook.rope }, look, t, dt);
             // The taut rope carries most of your weight, so a low anchor still lifts you.
             let g = surface.gravity(origin.body(tf.translation), tuning.gravity).length();
             let up = p.up();
@@ -164,7 +167,7 @@ fn grapple_tick(
         }
     } else if pressed && state.power >= t.power_to_fire {
         if let Some(hit) = spatial.cast_ray(eye, Dir3::new(look).unwrap_or(Dir3::NEG_Z), t.range, true, &filter) {
-            let anchor = eye + look * hit.distance;
+            let anchor = origin.body(eye + look * hit.distance);
             state.hook = Some(Hook { anchor, rope: hit.distance });
             p.air_jumps_left = tuning.air_jumps;
             return;
@@ -179,6 +182,7 @@ fn draw_rope(
     state: Res<GrappleState>,
     tuning: Res<Tuning>,
     view: Res<ViewAngles>,
+    origin: Res<Origin>,
     fixed: Res<Time<Fixed>>,
     meshes: Option<ResMut<Assets<Mesh>>>,
     materials: Option<ResMut<Assets<StandardMaterial>>>,
@@ -196,7 +200,7 @@ fn draw_rope(
     let center = p.prev_pos.lerp(tf.translation, fixed.overstep_fraction());
     let (forward, right) = view.flat_basis();
     let hand = center + p.up() * (p.eye_offset(&tuning) - 0.35) - right * 0.25 + forward * 0.3;
-    let to = hook.anchor - hand;
+    let to = origin.world(hook.anchor) - hand;
     let len = to.length().max(0.01);
     let transform = Transform {
         translation: hand + to * 0.5,

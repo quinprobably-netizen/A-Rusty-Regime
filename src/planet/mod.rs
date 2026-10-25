@@ -1,6 +1,7 @@
 pub mod bubble;
 pub mod chunk;
 pub mod gravity;
+pub mod origin;
 pub mod quadtree;
 
 use avian3d::prelude::*;
@@ -121,6 +122,7 @@ impl Plugin for PlanetPlugin {
 pub fn add_streaming(app: &mut App) {
     let Some(Surface::Sphere(sphere)) = app.world().get_resource::<Surface>().cloned() else { return };
     let max_depth = finest_depth(sphere.sea_radius(), app.world().resource::<Tuning>().terrain.cell);
+    origin::add_rebase(app);
     app.insert_resource(Planet { sphere, max_depth })
         .init_resource::<Chunks>()
         .add_systems(Update, (plan, apply, bubble::solidify).chain())
