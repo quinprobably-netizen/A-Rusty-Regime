@@ -155,6 +155,30 @@ fn sync_hull(tuning: Res<Tuning>, mut q: Query<(&Player, &mut Collider, &mut Hul
 }
 
 // ---------------------------------------------------------------------------
+// The carried frame
+
+/// The shortest rotation taking unit `from` to unit `to`. Unlike glam's `from_rotation_arc`,
+/// which returns the identity below about 7e-4 rad, it turns by angles as small as one tick's
+/// walk on a small moon (6e-5 rad); identity only when the two agree to f32 precision.
+pub fn arc(from: Vec3, to: Vec3) -> Quat {
+    let (axis, cos) = (from.cross(to), from.dot(to));
+    let sin = axis.length();
+    if sin > 1e-7 || (sin > 0.0 && cos < 0.0) {
+        Quat::from_axis_angle(axis / sin, sin.atan2(cos))
+    } else if cos >= 0.0 {
+        Quat::IDENTITY
+    } else {
+        // Opposite: any half turn about an axis across `from` will do.
+        Quat::from_axis_angle(from.any_orthonormal_vector(), std::f32::consts::PI)
+    }
+}
+
+/// Carries `frame` to the new `up`: tilts it so its +Y follows, never spinning it about up.
+pub fn carry(frame: Quat, up: Vec3) -> Quat {
+    (arc(frame * Vec3::Y, up) * frame).normalize()
+}
+
+// ---------------------------------------------------------------------------
 // Source movement math (pure functions, unit tested)
 
 pub fn friction(v: &mut Vec3, friction: f32, stop_speed: f32, dt: f32) {
@@ -367,9 +391,7 @@ fn player_tick(
         let body_pos = origin.body(world_pos);
         p.prev_pos = world_pos;
 
-        // Carry the frame: tilt it so its up follows the surface's, never spinning it about up.
-        let up = surface.up(body_pos);
-        p.frame = (Quat::from_rotation_arc(p.frame * Vec3::Y, up) * p.frame).normalize();
+        p.frame = carry(p.frame, surface.up(body_pos));
         view.frame = p.frame;
 
         if reset || surface.altitude(body_pos) < bounds.kill_altitude {
@@ -698,4 +720,47 @@ fn advance_mantle(p: &mut Player, dt: f32, t: &Tuning) -> Vec3 {
         p.state = MoveState::Air;
     }
     pos
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::surface::Sphere;
+    use crate::system::Body;
+    use std::sync::Arc;
+
+    #[test]
+    fn arc_turns_by_tiny_angles_and_half_turns() {
+        let to = Quat::from_rotation_z(6e-5) * Vec3::Y;
+        assert!((arc(Vec3::Y, to) * Vec3::Y).distance(to) < 1e-7, "a tick's turn on the test moon is not lost");
+        assert_eq!(arc(Vec3::X, Vec3::X), Quat::IDENTITY);
+        assert!((arc(Vec3::Y, Vec3::NEG_Y) * Vec3::Y).distance(Vec3::NEG_Y) < 1e-6, "opposite vectors");
+        let (a, b) = (Vec3::new(0.3, -0.5, 0.8).normalize(), Vec3::new(-0.9, 0.1, 0.2).normalize());
+        assert!((arc(a, b) * a).distance(b) < 1e-6);
+    }
+
+    #[test]
+    fn the_carried_frame_stays_upright_over_both_poles() {
+        // A lap of the test moon through both poles at 10 m/s, one 66 Hz tick at a time.
+        let surface = Surface::Sphere(Arc::new(Sphere::new(Body::test_moon())));
+        let r = 2000.0_f64;
+        let ticks = (std::f64::consts::TAU * r / (10.0 / 66.0)).round() as usize;
+        let at = |i: usize| {
+            let a = std::f64::consts::TAU * i as f64 / ticks as f64;
+            Vec3::new(a.cos() as f32, a.sin() as f32, 0.0) * r as f32
+        };
+        let start = surface.frame(at(0));
+        let mut frame = start;
+        for i in 1..=ticks {
+            let up = surface.up(at(i));
+            frame = carry(frame, up);
+            let (x, y, z) = (frame * Vec3::X, frame * Vec3::Y, frame * Vec3::Z);
+            let skew = x.dot(y).abs().max(y.dot(z).abs()).max(z.dot(x).abs());
+            let stretch = [x, y, z].iter().map(|v| (v.length() - 1.0).abs()).fold(0.0, f32::max);
+            assert!(skew < 1e-5 && stretch < 1e-5, "tick {i}: not orthonormal, skew {skew}, stretch {stretch}");
+            assert!(y.dot(up) > 0.0 && y.cross(up).length() < 1e-5, "tick {i}: up off by {} rad", y.cross(up).length());
+        }
+        // A great circle turns nothing about up, so the frame comes home facing the same way.
+        assert!((frame * Vec3::NEG_Z).dot(start * Vec3::NEG_Z) > 1.0 - 1e-6, "turned {} rad over the lap", (frame * Vec3::NEG_Z).angle_between(start * Vec3::NEG_Z));
+    }
 }

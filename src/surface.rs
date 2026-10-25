@@ -166,16 +166,21 @@ impl Surface {
     }
 }
 
-/// Orthonormal `(east, up, north)` at `p` on a sphere; near a pole north falls back to the +X
-/// meridian so the frame stays defined.
+/// Orthonormal `(east, up, north)` at `p` on a sphere. East is `up` turned a quarter about the
+/// spin axis, flattened: no cancellation, so it stays precise close to the poles.
+///
+/// Within `POLE` metres of the axis there is no north, and north falls back to the +X meridian
+/// so the frame stays defined. That fallback is a yaw snap against the frame just outside it.
+/// The player only meets it when spawned or respawned there through `Surface::frame`: once
+/// moving they carry their own frame across the pole instead.
 fn sphere_basis(p: Vec3) -> (Vec3, Vec3, Vec3) {
     let up = p.try_normalize().unwrap_or(Vec3::Y);
-    let north = if Vec2::new(p.x, p.z).length() < POLE {
-        (Vec3::X - up * up.x).normalize()
-    } else {
-        (Vec3::Y - up * up.y).normalize()
-    };
-    (north.cross(up), up, north)
+    if Vec2::new(p.x, p.z).length() < POLE {
+        let north = (Vec3::X - up * up.x).normalize();
+        return (north.cross(up), up, north);
+    }
+    let east = Vec3::new(up.z, 0.0, -up.x).normalize();
+    (east, up, up.cross(east))
 }
 
 /// Origin offsets are multiples of this many meters.
@@ -253,6 +258,25 @@ mod tests {
         }
         assert!(s.north(Vec3::Y * 2000.0).is_none());
         assert!(s.north(Vec3::X * 2000.0).is_some());
+    }
+
+    #[test]
+    fn the_basis_keeps_its_orientation_and_stays_precise_near_the_poles() {
+        assert_eq!(sphere_basis(Vec3::X * 2000.0), (Vec3::NEG_Z, Vec3::X, Vec3::Y), "east is -Z and north +Y at +X");
+        // Just outside the fallback, 6 m from the axis on a 2 km body, either pole, any longitude.
+        for lon in 0..12 {
+            let a = lon as f32 * std::f32::consts::TAU / 12.0;
+            for pole in [1.0, -1.0] {
+                let p = Vec3::new(6.0 * a.cos(), pole * 2000.0, 6.0 * a.sin());
+                let (east, up, north) = sphere_basis(p);
+                for (u, v) in [(east, up), (up, north), (north, east)] {
+                    assert!(u.dot(v).abs() < 1e-6 && (u.length() - 1.0).abs() < 1e-6, "{p}");
+                }
+                assert!(east.cross(up).dot(-north) > 0.999999, "right-handed with north at local -Z, at {p}");
+                // Toward the north pole: across the axis near it, away from the axis near the south pole.
+                assert!(north.dot(p.with_y(0.0).normalize() * -pole) > 0.9999, "north {north} at {p}");
+            }
+        }
     }
 
     #[test]
