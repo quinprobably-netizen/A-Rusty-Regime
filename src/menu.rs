@@ -37,6 +37,7 @@ pub enum Screen {
 pub enum Panel {
     #[default]
     Main,
+    Maps,
     Settings,
     Controls,
     Gunsmith,
@@ -274,6 +275,7 @@ fn field_value(f: &Field, settings: &Settings) -> (String, Option<f32>) {
 enum Action {
     Play,
     Resume,
+    Maps,
     Gunsmith,
     Wardrobe,
     Settings,
@@ -297,6 +299,48 @@ enum Row {
     Character,
     /// A wardrobe colour (primary, secondary, accent).
     Colour(usize),
+    /// An entry of [`MAPS`].
+    Map(usize),
+}
+
+/// A level to launch: its `RUST_REGIME_LEVEL` and `RUST_REGIME_MODE`, then name and blurb.
+struct MapDef {
+    level: &'static str,
+    mode: &'static str,
+    name: &'static str,
+    desc: &'static str,
+}
+
+const MAPS: &[MapDef] = &[
+    MapDef { level: "island", mode: "", name: "ISLAND", desc: "4 km open island: sites, caches, extraction, missions" },
+    MapDef { level: "island", mode: "6v6", name: "ISLAND  6V6", desc: "You and five bots against six at the fort" },
+    MapDef { level: "arena", mode: "", name: "ARENA", desc: "The old walled parkour arena" },
+    MapDef { level: "system", mode: "", name: "SOLAR SYSTEM", desc: "Haven, its moon Ash and your ship: fly between worlds" },
+    MapDef { level: "moon", mode: "", name: "MOON", desc: "Debug round world with a parkour course" },
+];
+
+/// The [`MAPS`] entry this run was started with. An unknown level is the island, as in `main`.
+fn current_map() -> usize {
+    let level = std::env::var("RUST_REGIME_LEVEL").ok();
+    let level = match level.as_deref() {
+        Some(l @ ("arena" | "moon" | "system")) => l,
+        _ => "island",
+    };
+    let mode = if std::env::var("RUST_REGIME_MODE").is_ok_and(|m| m == "6v6") { "6v6" } else { "" };
+    MAPS.iter().position(|m| m.level == level && m.mode == mode).unwrap_or(0)
+}
+
+/// Levels are wired in when the app is built, so another map is a fresh run of the game that
+/// goes straight into play. The settings, save and loadout carry over through their files.
+fn launch(map: &MapDef) -> std::io::Result<()> {
+    let mut cmd = std::process::Command::new(std::env::current_exe()?);
+    cmd.args(std::env::args_os().skip(1)).env("RUST_REGIME_LEVEL", map.level).env("RUST_REGIME_MENU", "play");
+    if map.mode.is_empty() {
+        cmd.env_remove("RUST_REGIME_MODE");
+    } else {
+        cmd.env("RUST_REGIME_MODE", map.mode);
+    }
+    cmd.spawn().map(drop)
 }
 
 /// `tuned[slot]` says whether that gunsmith slot has a part to tune.
@@ -305,6 +349,7 @@ fn rows(panel: Panel, screen: Screen, tuned: [bool; 4]) -> Vec<Row> {
     match panel {
         Panel::Main => {
             rows.push(if screen == Screen::Paused { Row::Action("RESUME", Action::Resume) } else { Row::Action("PLAY", Action::Play) });
+            rows.push(Row::Action("MAPS", Action::Maps));
             rows.push(Row::Action("GUNSMITH", Action::Gunsmith));
             rows.push(Row::Action("WARDROBE", Action::Wardrobe));
             rows.push(Row::Action("SETTINGS", Action::Settings));
@@ -323,6 +368,10 @@ fn rows(panel: Panel, screen: Screen, tuned: [bool; 4]) -> Vec<Row> {
             rows.push(Row::Action("BACK", Action::Back));
         }
         Panel::Controls => rows.push(Row::Action("BACK", Action::Back)),
+        Panel::Maps => {
+            rows.extend((0..MAPS.len()).map(Row::Map));
+            rows.push(Row::Action("BACK", Action::Back));
+        }
         Panel::Gunsmith => {
             rows.push(Row::Weapon);
             for slot in 0..SLOTS.len() {
@@ -349,10 +398,11 @@ fn selectable(rows: &[Row]) -> impl Iterator<Item = Row> + '_ {
 /// The main-list row that opens `panel`, so Back lands on it.
 fn main_cursor(panel: Panel) -> usize {
     match panel {
-        Panel::Gunsmith => 1,
-        Panel::Wardrobe => 2,
-        Panel::Settings => 3,
-        Panel::Controls => 4,
+        Panel::Maps => 1,
+        Panel::Gunsmith => 2,
+        Panel::Wardrobe => 3,
+        Panel::Settings => 4,
+        Panel::Controls => 5,
         Panel::Main => 0,
     }
 }
@@ -400,7 +450,8 @@ impl Plugin for MenuPlugin {
 /// Boot to the title, unless a screenshot run asks for the game or a particular screen.
 fn initial() -> Screen {
     match std::env::var("RUST_REGIME_MENU").as_deref() {
-        Ok("pause" | "settings" | "controls" | "gunsmith" | "wardrobe") => Screen::Paused,
+        Ok("pause" | "settings" | "controls" | "maps" | "gunsmith" | "wardrobe") => Screen::Paused,
+        Ok("play") => Screen::Playing,
         Ok(_) => Screen::Title,
         Err(_) if std::env::var_os("RUST_REGIME_SCREENSHOT").is_some() => Screen::Playing,
         Err(_) => Screen::Title,
@@ -426,6 +477,7 @@ fn enter_menu(mut menu: ResMut<Menu>, cursor: Option<Single<&mut CursorOptions>>
         menu.panel = match std::env::var("RUST_REGIME_MENU").as_deref() {
             Ok("settings") => Panel::Settings,
             Ok("controls") => Panel::Controls,
+            Ok("maps") => Panel::Maps,
             Ok("gunsmith") => Panel::Gunsmith,
             Ok("wardrobe") => Panel::Wardrobe,
             _ => Panel::Main,
@@ -638,9 +690,27 @@ fn act(
                             switch_weapon(&mut arsenal, 1);
                         }
                     }
+                    Action::Maps => {
+                        open(&mut menu, Panel::Maps);
+                        menu.cursor = current_map();
+                    }
                     Action::Wardrobe => open(&mut menu, Panel::Wardrobe),
                     Action::Settings => open(&mut menu, Panel::Settings),
                     Action::Controls => open(&mut menu, Panel::Controls),
+                }
+            }
+        }
+        Row::Map(i) => {
+            if select {
+                if i == current_map() {
+                    next.set(Screen::Playing);
+                } else {
+                    match launch(&MAPS[i]) {
+                        Ok(()) => {
+                            exit.write(AppExit::Success);
+                        }
+                        Err(e) => warn!("could not start {}: {e}", MAPS[i].name),
+                    }
                 }
             }
         }
@@ -807,6 +877,7 @@ fn rebuild(
                 (Panel::Main, _) => ("RUST REGIME", "PAUSED"),
                 (Panel::Settings, _) => ("RUST REGIME", "SETTINGS"),
                 (Panel::Controls, _) => ("RUST REGIME", "CONTROLS"),
+                (Panel::Maps, _) => ("RUST REGIME", "MAPS"),
                 (Panel::Gunsmith, _) => ("RUST REGIME", "GUNSMITH"),
                 (Panel::Wardrobe, _) => ("RUST REGIME", "WARDROBE"),
             };
@@ -855,23 +926,28 @@ fn rebuild(
                         let f = fields().nth(i).unwrap();
                         let (value, fill) = field_value(f, &settings);
                         let label = if f.restart { format!("{} *", f.label) } else { f.label.to_string() };
-                        value_row(list, &label, &value, fill, None, index, index == menu.cursor);
+                        value_row(list, &label, &value, fill, None, index, index == menu.cursor, true);
                         index += 1;
                     }
                     Row::Weapon => {
-                        value_row(list, "WEAPON", kind.name(), None, None, index, index == menu.cursor);
+                        value_row(list, "WEAPON", kind.name(), None, None, index, index == menu.cursor, true);
                         list.spawn(Node { height: Val::Px(10.0), ..default() });
                         index += 1;
                     }
                     Row::Slot(slot) => {
                         let part = &PARTS[slot][loadout.part(kind, slot)];
-                        value_row(list, SLOTS[slot], part.name, None, Some(part.desc), index, index == menu.cursor);
+                        value_row(list, SLOTS[slot], part.name, None, Some(part.desc), index, index == menu.cursor, true);
                         index += 1;
                     }
                     Row::Tune(slot) => {
                         let t = loadout.tuning(kind, slot);
                         let (l, r) = TUNES[slot];
-                        value_row(list, &format!("  TUNE  {l} / {r}"), &format!("{t:+}"), Some((t + TUNE_MAX) as f32 / (2 * TUNE_MAX) as f32), None, index, index == menu.cursor);
+                        value_row(list, &format!("  TUNE  {l} / {r}"), &format!("{t:+}"), Some((t + TUNE_MAX) as f32 / (2 * TUNE_MAX) as f32), None, index, index == menu.cursor, true);
+                        index += 1;
+                    }
+                    Row::Map(i) => {
+                        let m = &MAPS[i];
+                        value_row(list, m.name, if i == current_map() { "LOADED" } else { "" }, None, Some(m.desc), index, index == menu.cursor, false);
                         index += 1;
                     }
                     Row::Character | Row::Colour(_) => {}
@@ -912,6 +988,7 @@ fn rebuild(
                 Panel::Gunsmith => &[("Q E / LB RB", "WEAPON"), ("A D", "PART / TUNE"), ("ESC / B", "BACK")],
                 Panel::Wardrobe => &[("A D", "STYLE"), ("ENTER / A", "NEXT"), ("ESC / B", "BACK")],
                 Panel::Controls => &[("ESC / B", "BACK")],
+                Panel::Maps => &[("ENTER / A", "PLAY"), ("ESC / B", "BACK")],
             };
             for (key, what) in hints {
                 bar.spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(8.0), ..default() }).with_children(|c| {
@@ -936,7 +1013,8 @@ fn action_row(p: &mut ChildSpawnerCommands, label: &str, index: usize, selected:
 }
 
 /// A label on the left, `<` value `>` on the right, an optional bar and a note underneath.
-fn value_row(p: &mut ChildSpawnerCommands, label: &str, value: &str, fill: Option<f32>, note: Option<&str>, index: usize, selected: bool) {
+/// `arrows` shows the < > steppers; a row that only launches something leaves them off.
+fn value_row(p: &mut ChildSpawnerCommands, label: &str, value: &str, fill: Option<f32>, note: Option<&str>, index: usize, selected: bool, arrows: bool) {
     p.spawn((
         Button,
         RowId(index),
@@ -948,7 +1026,9 @@ fn value_row(p: &mut ChildSpawnerCommands, label: &str, value: &str, fill: Optio
         row.spawn(Node { flex_direction: FlexDirection::Row, justify_content: JustifyContent::SpaceBetween, align_items: AlignItems::Center, width: Val::Percent(100.0), ..default() }).with_children(|r| {
             r.spawn(text(label, 17.0, if selected { WHITE } else { DIM }));
             r.spawn(Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: Val::Px(10.0), ..default() }).with_children(|v| {
-                arrow(v, index, -1, selected);
+                if arrows {
+                    arrow(v, index, -1, selected);
+                }
                 if let Some(fill) = fill {
                     v.spawn((Node { width: Val::Px(130.0), height: Val::Px(6.0), ..default() }, BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.12))))
                         .with_child((Node { width: Val::Percent(fill.clamp(0.0, 1.0) * 100.0), height: Val::Percent(100.0), ..default() }, BackgroundColor(if selected { AMBER } else { Color::srgba(1.0, 0.72, 0.25, 0.6) })));
@@ -956,7 +1036,9 @@ fn value_row(p: &mut ChildSpawnerCommands, label: &str, value: &str, fill: Optio
                 } else {
                     v.spawn((text(value, 18.0, if selected { AMBER } else { WHITE }), Node { width: Val::Px(190.0), justify_content: JustifyContent::Center, ..default() }, TextLayout { justify: Justify::Center, ..default() }));
                 }
-                arrow(v, index, 1, selected);
+                if arrows {
+                    arrow(v, index, 1, selected);
+                }
             });
         });
         if let Some(note) = note {
@@ -1044,7 +1126,7 @@ mod tests {
 
     #[test]
     fn every_panel_has_rows_and_back_lands_on_its_opener() {
-        for panel in [Panel::Main, Panel::Settings, Panel::Controls, Panel::Gunsmith, Panel::Wardrobe] {
+        for panel in [Panel::Main, Panel::Maps, Panel::Settings, Panel::Controls, Panel::Gunsmith, Panel::Wardrobe] {
             let panel_rows = rows(panel, Screen::Paused, [true; 4]);
             assert!(selectable(&panel_rows).count() > 0, "{panel:?}");
             if panel != Panel::Main {
@@ -1055,6 +1137,8 @@ mod tests {
         }
         assert_eq!(rows(Panel::Main, Screen::Title, [false; 4])[0], Row::Action("PLAY", Action::Play));
         assert_eq!(rows(Panel::Main, Screen::Paused, [false; 4])[0], Row::Action("RESUME", Action::Resume));
+        assert_eq!(selectable(&rows(Panel::Maps, Screen::Title, [false; 4])).count(), MAPS.len() + 1);
+        assert!(MAPS.iter().any(|m| m.level == "island" && m.mode.is_empty()) && MAPS[0].mode.is_empty(), "the island leads");
         assert_eq!(selectable(&rows(Panel::Gunsmith, Screen::Paused, [true, false, false, false])).count(), 1 + 4 + 1 + 1, "a tune row under the fitted optic");
     }
 }

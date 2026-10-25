@@ -50,9 +50,9 @@ back). Both lists lead to the same screens: **Gunsmith** (four attachment slots 
 parts change spread, recoil, rate, velocity and damage and show on the viewmodel; stat bars compare
 the bare gun), **Wardrobe** (pick a character and its three colours, shown from the front), **Settings** (mouse sensitivity, invert Y, FOV, five volumes, sky, bloom, ambient
 occlusion, anti-aliasing, shadow distance, grass, trees; saved to `settings.toml`, which lays over
-`tuning.toml` so F5 keeps your choices) and **Controls**. Navigate with W/S or arrows, adjust with
+`tuning.toml` so F5 keeps your choices), **Maps** (island, island 6v6, arena, solar system, moon: picking another map restarts the game straight into it, no env vars needed) and **Controls**. Navigate with W/S or arrows, adjust with
 A/D, Enter picks, Esc backs out; the d-pad, A and B do the same on a pad; the mouse works too.
-`RUST_REGIME_MENU=title|pause|settings|controls|gunsmith|wardrobe` opens straight into a screen
+`RUST_REGIME_MENU=title|pause|maps|settings|controls|gunsmith|wardrobe|play` opens straight into a screen
 (with `RUST_REGIME_SCREENSHOT` it skips the title unless set). Design notes:
 `docs/superpowers/specs/2026-10-18-menus-design.md`.
 
