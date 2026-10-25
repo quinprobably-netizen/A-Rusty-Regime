@@ -210,6 +210,45 @@ mod tests {
         assert!(moved.symmetric_difference(&a).count() <= 60, "{}", moved.symmetric_difference(&a).count());
     }
 
+    /// Walks the focus along the equator from +X through `path` (metres along the ground, one
+    /// selection per entry). Returns the total leaves added and removed, and how often each
+    /// node was added.
+    /// Walks the focus along the equator from +X through `path` (metres along the ground, one
+    /// selection per entry). Returns the total leaves added and removed, and how often each
+    /// node was added.
+    fn walk(path: &[f32], merge: f32) -> (usize, std::collections::HashMap<NodeId, usize>) {
+        let at = |s: f32| Quat::from_rotation_y(-s / 2000.0) * Vec3::X * 2000.0;
+        let mut leaves = select_leaves(2000.0, 8, at(0.0), 2.5, merge, &HashSet::new());
+        let (mut churn, mut added) = (0, std::collections::HashMap::new());
+        for &s in path {
+            let next = select_leaves(2000.0, 8, at(s), 2.5, merge, &leaves);
+            assert!(next.len() < 1000, "{} leaves at {s} m", next.len());
+            churn += next.symmetric_difference(&leaves).count();
+            for n in next.difference(&leaves) {
+                *added.entry(*n).or_insert(0) += 1;
+            }
+            leaves = next;
+        }
+        (churn, added)
+    }
+
+    #[test]
+    fn a_kilometre_walk_splits_and_merges_a_bounded_number_of_times() {
+        // Straight on in 1 m steps, and the same kilometre wobbling 3 m on and 2 m back.
+        let straight: Vec<f32> = (1..=1000).map(|i| i as f32).collect();
+        let wobble: Vec<f32> = (0..1000).flat_map(|i| [i as f32 + 3.0, i as f32 + 1.0]).collect();
+        let (churn, added) = walk(&straight, 3.0);
+        // A node is added at most twice: when its parent splits, and when its children merge
+        // back into it behind the focus. Nothing is rebuilt more often than that.
+        assert!(added.values().all(|&n| n <= 2), "a node added {:?} times", added.values().max());
+        // The 2 m steps back are inside the hysteresis band, so wobbling costs nothing...
+        let (wobble_churn, _) = walk(&wobble, 3.0);
+        assert_eq!(wobble_churn, churn, "wobbling churned {wobble_churn} leaves, walking straight {churn}");
+        // ...where with no band it would rebuild the edges over and over.
+        let (no_band, _) = walk(&wobble, 2.5);
+        assert!(no_band > 3 * churn, "{no_band} without the band, {churn} with it");
+    }
+
     #[test]
     fn finest_depth_matches_the_cell() {
         assert_eq!(finest_depth(17500.0, 0.5), 11);

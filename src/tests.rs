@@ -631,7 +631,15 @@ fn runs_along_the_surface_for_a_minute() {
     let (mut app, _, origin, meshes) = sphere_app(4.0, start, 650.0);
     app.world_mut().resource_mut::<ViewAngles>().yaw = std::f32::consts::FRAC_PI_2;
     input(&mut app).movement = Vec2::Y;
-    run(&mut app, 60.0);
+    // Within 5 cm of standing height over the mesh every tick, once landed from the 1 m spawn.
+    run(&mut app, 0.5);
+    for i in 0..(59.5 / DT).round() as usize {
+        app.update();
+        let body = origin.body(player(&mut app).0);
+        let ground = meshes.iter().find_map(|m| m.ground_on(body.normalize())).expect("on built ground").point;
+        let off = (body.length() - ground.length() - 0.9).abs();
+        assert!(off < 0.05, "tick {i}: feet {} m over the mesh", body.length() - ground.length());
+    }
     let (pos, _, state) = player(&mut app);
     let body = origin.body(pos);
     let dir = body.normalize();
