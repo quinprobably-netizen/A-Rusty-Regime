@@ -4,7 +4,7 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-use super::quadtree::node_distance;
+use super::quadtree::{node_distance, NodeId};
 use super::{Chunk, Chunks, Planet};
 use crate::controller::Player;
 use crate::surface::Origin;
@@ -53,6 +53,7 @@ type BodyItem<'a> = (Entity, &'a RigidBody, &'a Transform, Has<Frozen>, Option<&
 pub fn freeze(
     mut commands: Commands,
     chunks: Res<Chunks>,
+    planet: Res<Planet>,
     tuning: Res<Tuning>,
     origin: Res<Origin>,
     players: Query<&Transform, With<Player>>,
@@ -65,10 +66,11 @@ pub fn freeze(
             continue;
         }
         let distance = tf.translation.distance(player.translation);
-        let solid = chunks.is_solid(origin.body(tf.translation));
-        if !frozen && (distance > bubble || !solid) {
+        // Only asked inside the bubble, where the answer matters.
+        let solid = || chunks.is_solid(origin.body(tf.translation), planet.max_depth);
+        if !frozen && (distance > bubble || !solid()) {
             commands.entity(entity).insert((RigidBodyDisabled, Frozen));
-        } else if frozen && distance < bubble - WAKE_MARGIN && solid {
+        } else if frozen && distance < bubble - WAKE_MARGIN && solid() {
             commands.entity(entity).remove::<(RigidBodyDisabled, Frozen)>();
             // Works around Avian 0.7 panicking with `islands/mod.rs:518 assertion failed:
             // contact.island.is_none()` when a woken body lands; drop on the next Avian upgrade.
@@ -87,16 +89,32 @@ pub fn freeze(
 #[derive(Component)]
 pub struct Held;
 
-/// Holds the player while the ground under them has no collider and lets go once it does; the
-/// controller then sets them down on it.
-pub fn hold_player(mut commands: Commands, chunks: Res<Chunks>, origin: Res<Origin>, mut players: Query<(Entity, &Transform, &mut Player, Has<Held>)>) {
+/// Holds the player while the ground under them is inside the bubble but has no collider yet,
+/// and lets go once it does; the controller then sets them down on it. Ground outside the bubble
+/// is never made solid, so a player that high up (about `terrain.bubble` over it) is not held,
+/// and falls until it is in reach.
+///
+/// Holding zeroes the player's velocity and knockback lock: they must never fall through ground
+/// that is not built, so they keep no momentum to carry into it. Knockback written while they
+/// are held (a rocket, the grapple) is kept and applies when they are let go.
+pub fn hold_player(
+    mut commands: Commands,
+    chunks: Res<Chunks>,
+    planet: Res<Planet>,
+    tuning: Res<Tuning>,
+    origin: Res<Origin>,
+    mut players: Query<(Entity, &Transform, &mut Player, Has<Held>)>,
+) {
+    let radius = planet.sphere.sea_radius();
     for (entity, tf, mut p, held) in &mut players {
-        let solid = chunks.is_solid(origin.body(tf.translation));
-        if !solid && !held {
+        let body = origin.body(tf.translation);
+        let under = NodeId::leaf_at(body.try_normalize().unwrap_or(Vec3::Y), planet.max_depth);
+        let wait = node_distance(under, radius, body) <= tuning.terrain.bubble && !chunks.is_solid(body, planet.max_depth);
+        if wait && !held {
             p.velocity = Vec3::ZERO;
             p.knockback_lock = 0.0;
             commands.entity(entity).insert(Held);
-        } else if solid && held {
+        } else if !wait && held {
             commands.entity(entity).remove::<Held>();
         }
     }

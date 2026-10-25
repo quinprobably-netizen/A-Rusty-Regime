@@ -96,9 +96,7 @@ impl Player {
     pub fn horizontal_speed(&self) -> f32 {
         (self.velocity - self.up() * self.vertical()).length()
     }
-    /// Moves the stored positions by `-delta`, for when the origin moves by `delta`.
-    // Nothing moves the origin until the rebase lands.
-    #[allow(dead_code)]
+    /// Moves the stored positions by `-delta`, for when the origin moves by `delta` (the rebase).
     pub fn shift(&mut self, delta: Vec3) {
         self.prev_pos -= delta;
         if let Some(m) = &mut self.mantle {
@@ -133,8 +131,10 @@ impl Plugin for ControllerPlugin {
     }
 }
 
-fn spawn_player(mut commands: Commands, tuning: Res<Tuning>, bounds: Res<WorldBounds>, surface: Res<Surface>, origin: Res<Origin>) {
+fn spawn_player(mut commands: Commands, tuning: Res<Tuning>, bounds: Res<WorldBounds>, surface: Res<Surface>, origin: Res<Origin>, mut view: ResMut<ViewAngles>) {
     let (spawn, frame) = (origin.world(bounds.spawn), surface.frame(bounds.spawn));
+    // The view turns with the frame from the first frame, before the first tick publishes it.
+    view.frame = frame;
     commands.spawn((
         Name::new("Player"),
         Player { prev_pos: spawn, frame, ..default() },
@@ -382,11 +382,6 @@ fn player_tick(
         if driving {
             continue;
         }
-        if held {
-            // Hovering until the ground under them is solid: nothing to interpolate.
-            p.prev_pos = tf.translation;
-            continue;
-        }
         let world_pos = tf.translation;
         let body_pos = origin.body(world_pos);
         p.prev_pos = world_pos;
@@ -394,12 +389,18 @@ fn player_tick(
         p.frame = carry(p.frame, surface.up(body_pos));
         view.frame = p.frame;
 
+        // A held player still respawns, so a reset or a fall is never lost.
         if reset || surface.altitude(body_pos) < bounds.kill_altitude {
             let (spawn, frame) = (origin.world(bounds.spawn), surface.frame(bounds.spawn));
             *p = Player { prev_pos: spawn, crouched: p.crouched, frame, ..default() };
             tf.translation = spawn;
             tf.rotation = frame;
             view.frame = frame;
+            continue;
+        }
+        if held {
+            // Hovering until the ground under them is solid: nothing moves, nothing to interpolate.
+            tf.rotation = p.frame;
             continue;
         }
 

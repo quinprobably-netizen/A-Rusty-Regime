@@ -86,10 +86,11 @@ impl Chunks {
     }
 
     /// Whether the finest built chunk holding the direction of `p_body` has a collider, that is,
-    /// whether there is built ground inside the physics bubble under it.
-    pub fn is_solid(&self, p_body: Vec3) -> bool {
+    /// whether there is built ground inside the physics bubble under it. `max_depth` is the
+    /// planet's finest depth; the lookup walks the nodes holding the direction from there up.
+    pub fn is_solid(&self, p_body: Vec3, max_depth: u8) -> bool {
         let dir = p_body.try_normalize().unwrap_or(Vec3::Y);
-        self.built.keys().filter(|n| n.contains(dir)).max_by_key(|n| n.depth).is_some_and(|n| self.solid.contains(n))
+        (0..=max_depth).rev().map(|d| NodeId::leaf_at(dir, d)).find(|n| self.built.contains_key(n)).is_some_and(|n| self.solid.contains(&n))
     }
 }
 

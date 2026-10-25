@@ -907,9 +907,12 @@ fn only_chunks_inside_the_bubble_are_solid() {
     let bubble = app.world().resource::<Tuning>().terrain.bubble;
     let player_body = origin.body(player(&mut app).0);
     let mut q = app.world_mut().query::<(&planet::Chunk, Has<Collider>)>();
+    let with_colliders: HashSet<NodeId> = q.iter(app.world()).filter(|(_, solid)| *solid).map(|(c, _)| c.node).collect();
     for (c, solid) in q.iter(app.world()) {
         assert_eq!(solid, quadtree::node_distance(c.node, 2000.0, player_body) <= bubble, "{:?}", c.node);
     }
+    assert!(!with_colliders.is_empty());
+    assert_eq!(app.world().resource::<planet::Chunks>().solid, with_colliders, "Chunks::solid is exactly the chunks with colliders");
 }
 
 #[test]
@@ -943,14 +946,28 @@ fn a_body_inside_the_bubble_stays_frozen_until_its_ground_is_built() {
     assert!(origin.body(app.world().get::<Transform>(id).unwrap().translation).length() < start.length() - 2.0, "fell onto the built ground");
 }
 
+fn is_held(app: &mut App) -> bool {
+    app.world_mut().query_filtered::<(), (With<Player>, With<planet::bubble::Held>)>().iter(app.world()).count() == 1
+}
+
+fn is_solid(app: &App, p_body: Vec3) -> bool {
+    app.world().resource::<planet::Chunks>().is_solid(p_body, app.world().resource::<planet::Planet>().max_depth)
+}
+
 #[test]
 fn the_player_hovers_until_the_ground_under_them_is_built() {
     let (mut app, sphere, origin) = streaming_app(4);
     let spawn = origin.body(player(&mut app).0);
+    let frames = |app: &mut App| (app.world().resource::<ViewAngles>().frame, app.world_mut().query::<&Player>().single(app.world()).unwrap().frame);
+    let (view, frame) = frames(&mut app);
+    assert!(view == frame && (frame * Vec3::Y).dot(Vec3::X) > 0.9999, "the view turns with the spawn frame from the start");
     let mut held = 0;
     for _ in 0..600 {
-        if app.world().resource::<planet::Chunks>().is_solid(spawn) { break; }
+        if is_solid(&app, spawn) { break; }
         app.update();
+        assert!(is_held(&mut app), "update {held}: Held while the ground is not solid");
+        let (view, frame) = frames(&mut app);
+        assert_eq!(view, frame, "update {held}: the view keeps the frame while held");
         assert!(origin.body(player(&mut app).0).distance(spawn) < 0.01, "held in place with no ground");
         held += 1;
     }
@@ -963,6 +980,42 @@ fn the_player_hovers_until_the_ground_under_them_is_built() {
 }
 
 #[test]
+fn a_held_player_still_resets_and_respawns_after_a_fall() {
+    let (mut app, sphere, origin) = streaming_app(4);
+    let spawn = app.world().resource::<controller::WorldBounds>().spawn;
+    app.update();
+    assert!(is_held(&mut app), "no ground under the spawn yet");
+    // Moved 50 m while held, over ground that is not built either: still held, and the reset
+    // pressed now must bring them back.
+    let aside = Quat::from_rotation_y(-50.0 / 2000.0) * Vec3::X;
+    set_player(&mut app, origin.world(sphere.surface_point(aside) + aside), Vec3::ZERO);
+    app.update();
+    assert!(is_held(&mut app) && !is_solid(&app, spawn), "still held, nothing built under the spawn");
+    input(&mut app).reset_pressed = true;
+    app.update();
+    assert!(origin.body(player(&mut app).0).distance(spawn) < 0.01, "a reset while held respawns");
+    // Under the kill altitude while held: respawned too.
+    set_player(&mut app, origin.world(sphere.point(aside, -60.0)), Vec3::ZERO);
+    app.update();
+    assert!(origin.body(player(&mut app).0).distance(spawn) < 0.01, "a fall while held respawns");
+}
+
+#[test]
+fn a_player_high_over_the_ground_is_not_held_and_falls() {
+    // 600 m up, the ground under them is outside the 400 m bubble and will never be solid.
+    let (mut app, sphere, origin) = streaming_app(4);
+    let start = sphere.surface_point(Vec3::X) + Vec3::X * 600.0;
+    set_player(&mut app, origin.world(start), Vec3::ZERO);
+    for i in 0..(2.0 / DT).round() as usize {
+        app.update();
+        assert!(!is_held(&mut app), "update {i}: not held");
+    }
+    // Gravity is 5.8 m/s² that far out: 11.6 m in 2 s.
+    let fell = start.length() - origin.body(player(&mut app).0).length();
+    assert!(fell > 10.0, "fell {fell} m in 2 s");
+}
+
+#[test]
 fn the_moon_level_starts_the_player_on_the_course() {
     let mut app = build_app(Tuning::default());
     drop_flat_floor(&mut app);
@@ -970,7 +1023,7 @@ fn the_moon_level_starts_the_player_on_the_course() {
     app.finish();
     app.update();
     let spawn = app.world().resource::<controller::WorldBounds>().spawn;
-    assert!(app.world().resource::<planet::Chunks>().is_solid(spawn), "seeded ground under the spawn after startup");
+    assert!(is_solid(&app, spawn), "seeded ground under the spawn after startup");
     run(&mut app, 1.0);
     let id = app.world_mut().query_filtered::<Entity, With<Player>>().single(app.world()).unwrap();
     assert!(app.world().get::<planet::bubble::Held>(id).is_none(), "not held");
