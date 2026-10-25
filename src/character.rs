@@ -39,7 +39,8 @@ pub fn model_path(id: &str) -> String {
     format!("models/character/{id}.glb")
 }
 
-/// Animation clips, in the order they sit in every glb.
+/// Animation clips, in the order they sit in every glb (`tools/character/anim.py`). After them come
+/// the two overlays, `RELOAD_CLIP` and `FIRE_CLIP`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Pose {
     Idle,
@@ -54,18 +55,47 @@ pub enum Pose {
     WallRunR,
     Mantle,
     Grapple,
+    CrouchWalk,
+    DoubleJump,
+    Death,
+    DeathBack,
+    /// Seated at a car's wheel.
+    Drive,
+    /// Astride the dirt bike.
+    Ride,
 }
 
 impl Pose {
-    pub const ALL: [Pose; 12] = [
+    pub const ALL: [Pose; 18] = [
         Pose::Idle, Pose::Walk, Pose::Run, Pose::Sprint, Pose::Jump, Pose::Fall, Pose::Crouch,
-        Pose::Slide, Pose::WallRunL, Pose::WallRunR, Pose::Mantle, Pose::Grapple,
+        Pose::Slide, Pose::WallRunL, Pose::WallRunR, Pose::Mantle, Pose::Grapple, Pose::CrouchWalk,
+        Pose::DoubleJump, Pose::Death, Pose::DeathBack, Pose::Drive, Pose::Ride,
     ];
 
     fn index(self) -> usize {
         Pose::ALL.iter().position(|p| *p == self).unwrap()
     }
+
+    /// The clip's name in the glb.
+    pub fn name(self) -> &'static str {
+        ["idle", "walk", "run", "sprint", "jump", "fall", "crouch", "slide", "wallrun_l", "wallrun_r", "mantle", "grapple",
+         "crouch_walk", "double_jump", "death", "death_back", "drive", "ride"][self.index()]
+    }
+
+    /// Cycles repeat; the rest play once and hold their last frame.
+    pub fn loops(self) -> bool {
+        !matches!(self, Pose::Jump | Pose::Fall | Pose::Mantle | Pose::DoubleJump | Pose::Death | Pose::DeathBack)
+    }
 }
+
+/// The magazine change: the arms only, laid over whatever the body does.
+const RELOAD_CLIP: usize = Pose::ALL.len();
+/// Recoil: torso rotations added on top of the pose.
+const FIRE_CLIP: usize = Pose::ALL.len() + 1;
+/// The reload clip's length at speed 1 (seconds); it is sped up to fit the weapon's reload.
+const RELOAD_SECS: f32 = 2.0;
+/// How far the reload clip outweighs the pose on the arms it moves.
+const RELOAD_WEIGHT: f32 = 20.0;
 
 /// Where a weapon model's hands go, in the weapon's glTF space (-Z down the barrel, +Y up, the
 /// trigger at the origin): the middle of the pistol grip, and the support hand's hold (with the bone
@@ -311,7 +341,9 @@ pub fn parse_hex(s: &str) -> Option<Color> {
 pub struct Model {
     pub scene: Handle<WorldAsset>,
     graph: Handle<AnimationGraph>,
-    nodes: [AnimationNodeIndex; 12],
+    nodes: [AnimationNodeIndex; Pose::ALL.len()],
+    reload: AnimationNodeIndex,
+    fire: AnimationNodeIndex,
 }
 
 /// glTF handles for every character and held weapon; absent in headless tests.
@@ -339,6 +371,8 @@ pub struct Rig {
     character: Option<String>,
     model: Option<Entity>,
     pose: Option<Pose>,
+    /// The last `RigPose::shots` seen, so each new one kicks once.
+    shots: u32,
     /// The glTF's `AnimationPlayer`, once the model has spawned.
     player: Option<Entity>,
     held: Option<(WeaponKind, Entity)>,
@@ -347,7 +381,12 @@ pub struct Rig {
 
 impl Rig {
     pub fn new(outfit: &str) -> Self {
-        Self { outfit: outfit.into(), team: None, weapon: None, character: None, model: None, pose: None, player: None, held: None, dressed: false }
+        Self { outfit: outfit.into(), team: None, weapon: None, character: None, model: None, pose: None, shots: 0, player: None, held: None, dressed: false }
+    }
+
+    /// Wearing its outfit, and holding its weapon if it has one.
+    pub fn ready(&self) -> bool {
+        self.dressed && self.held.map(|h| h.0) == self.weapon
     }
 
     /// A soldier of `team`, dressed and armed from the roster.
@@ -377,11 +416,21 @@ impl Rig {
 pub struct RigPose {
     pub pose: Pose,
     pub rate: f32,
+    /// The weapon's whole reload time (seconds) while a reload runs, else 0.
+    pub reload: f32,
+    /// Counts shots fired; each change kicks the torso.
+    pub shots: u32,
+}
+
+impl RigPose {
+    pub fn new(pose: Pose, rate: f32) -> Self {
+        Self { pose, rate, reload: 0.0, shots: 0 }
+    }
 }
 
 impl Default for RigPose {
     fn default() -> Self {
-        Self { pose: Pose::Idle, rate: 1.0 }
+        Self::new(Pose::Idle, 1.0)
     }
 }
 
@@ -442,9 +491,16 @@ fn stream(server: Res<AssetServer>, assets: Option<ResMut<CharacterAssets>>, mut
     let at = assets.queue.iter().position(wanted).unwrap_or(0);
     let id = assets.queue.remove(at);
     let path = model_path(id);
-    let clips = Pose::ALL.map(|p| server.load(GltfAssetLabel::Animation(p.index()).from_asset(path.clone())));
-    let (graph, nodes) = AnimationGraph::from_clips(clips);
-    let model = Model { scene: server.load(GltfAssetLabel::Scene(0).from_asset(path)), graph: graphs.add(graph), nodes: nodes.try_into().expect("one node per pose") };
+    let clip = |i: usize| server.load(GltfAssetLabel::Animation(i).from_asset(path.clone()));
+    // The poses blend among themselves (the transitions set their weights) with the reload on the
+    // arms; recoil is added on top of the lot.
+    let mut graph = AnimationGraph::new();
+    let add = graph.add_additive_blend(1.0, graph.root);
+    let base = graph.add_blend(1.0, add);
+    let nodes = Pose::ALL.map(|p| graph.add_clip(clip(p.index()), 1.0, base));
+    let reload = graph.add_clip(clip(RELOAD_CLIP), 1.0, base);
+    let fire = graph.add_clip(clip(FIRE_CLIP), 1.0, add);
+    let model = Model { scene: server.load(GltfAssetLabel::Scene(0).from_asset(path)), graph: graphs.add(graph), nodes, reload, fire };
     assets.models.insert(id, model);
 }
 
@@ -640,10 +696,28 @@ fn animate(
         let node = model.nodes[want.pose.index()];
         if rig.pose != Some(want.pose) {
             rig.pose = Some(want.pose);
-            transitions.play(&mut anim, node, Duration::from_millis(150)).repeat();
+            let a = transitions.play(&mut anim, node, Duration::from_millis(150));
+            a.replay();
+            if want.pose.loops() {
+                a.repeat();
+            }
         }
         if let Some(a) = anim.animation_mut(node) {
             a.set_speed(want.rate);
+        }
+        // Overlays: the reload runs once over the weapon's reload time, the recoil once per shot.
+        if want.reload > 0.0 && !anim.is_playing_animation(model.reload) {
+            anim.start(model.reload).set_weight(RELOAD_WEIGHT).set_speed(RELOAD_SECS / want.reload);
+        }
+        if anim.animation(model.reload).is_some_and(|a| a.is_finished()) || (want.reload <= 0.0 && anim.is_playing_animation(model.reload)) {
+            anim.stop(model.reload);
+        }
+        if want.shots != rig.shots {
+            rig.shots = want.shots;
+            anim.start(model.fire).replay();
+        }
+        if anim.animation(model.fire).is_some_and(|a| a.is_finished()) {
+            anim.stop(model.fire);
         }
     }
 }
@@ -671,7 +745,7 @@ mod tests {
             for name in MESHES.iter().chain(&[GRIP_R, GRIP_L, "hips", "upper_arm.L", "forearm.R", "hand.R"]) {
                 assert!(text.contains(&format!("\"{name}\"")), "{id} has {name}");
             }
-            let clips = ["idle", "walk", "run", "sprint", "jump", "fall", "crouch", "slide", "wallrun_l", "wallrun_r", "mantle", "grapple"];
+            let clips: Vec<&str> = Pose::ALL.iter().map(|p| p.name()).chain(["reload", "fire"]).collect();
             let at: Vec<usize> = clips.iter().map(|c| text.find(&format!("\"name\":\"{c}\"")).unwrap_or_else(|| panic!("{id} has clip {c}"))).collect();
             assert!(at.windows(2).all(|w| w[0] < w[1]), "{id}: clips in Pose order");
         }

@@ -1,6 +1,6 @@
 """Character kit: a skeleton built from each character's proportions, an organic body from metaballs,
 garments and armour shelled off that body, hard-surface gear from the weapon kit, distance-based
-skinning, the twelve gameplay clips with solved two-hand carries, one baked wear texture per character,
+skinning, the solved two-hand carries (the clips themselves are anim.py, written in by glbanim.py), one baked wear texture per character,
 glTF export and a checker.
 
 Blender is Z-up and the character faces -Y with its left side on +X; the glTF exporter turns that into
@@ -20,6 +20,7 @@ import math
 import os
 import sys
 
+import anim  # noqa: E402  the clips themselves (no Blender needed)
 import bpy  # first: bpy makes bmesh importable
 import bmesh  # noqa: E402
 from mathutils import Matrix, Vector
@@ -95,7 +96,7 @@ BASE_BONES = {
 }
 DEFORM = ["hips", "spine", "chest", "neck", "head"] + [b + s for b in ("shoulder.", "upper_arm.", "forearm.", "hand.", "upper_leg.", "lower_leg.", "foot.") for s in ("L", "R")]
 ARM_BONES = [b + side for b in ("upper_arm.", "forearm.", "hand.") for side in ("L", "R")]
-CLIP_NAMES = ["idle", "walk", "run", "sprint", "jump", "fall", "crouch", "slide", "wallrun_l", "wallrun_r", "mantle", "grapple"]
+CLIP_NAMES = anim.CLIP_NAMES
 # Three bones per finger, root to tip, on both hands: `f_<finger>.<1-3>.<side>`, resting in a fist.
 FINGERS = ("thumb", "index", "middle", "ring", "pinky")
 FINGER_BONES = [f"f_{f}.{i}.{s}" for s in ("L", "R") for f in FINGERS for i in (1, 2, 3)]
@@ -690,6 +691,8 @@ class Char:
             export_all_influences=False, export_def_bones=False,
             export_materials="EXPORT", export_image_format="JPEG", export_jpeg_quality=88, export_yup=True,
         )
+        import glbanim
+        glbanim.patch(path)
         print(f"wrote {path}: {os.path.getsize(path) // 1024} KB, {n} tris")
         if not budget[0] <= n <= budget[1]:
             print(f"WARNING {self.id}: {n} triangles, budget {budget[0]}..{budget[1]}")
@@ -1112,28 +1115,28 @@ def clip_grapple(b, t):
     return p
 
 
-CLIPS = {
-    "idle": (clip_idle, 96), "walk": (clip_walk, 24), "run": (clip_run, 20), "sprint": (clip_sprint, 18),
-    "jump": (clip_jump, 24), "fall": (clip_fall, 48), "crouch": (clip_crouch, 96), "slide": (clip_slide, 48),
-    "wallrun_l": (clip_wallrun_l, 20), "wallrun_r": (clip_wallrun_r, 20), "mantle": (clip_mantle, 24), "grapple": (clip_grapple, 48),
-}
-assert list(CLIPS) == CLIP_NAMES
+# The carries' body poses, as they were solved (see solve_carries).
+CARRY_BASES = {"ready": clip_idle, "run": clip_run, "sprint": clip_sprint, "crouch": clip_crouch, "slide": clip_slide}
+assert tuple(CARRY_BASES) == anim.CARRY_BASES
 
 
 def bake_clips(build, arm):
+    """Bake one-frame clips `carry.<name>` (each carry's body pose with its arms). The real clips come
+    from anim.py, written over these by glbanim.patch once the glb is exported."""
     bpy.context.view_layer.objects.active = arm
     bpy.ops.object.mode_set(mode="POSE")
     for pb in arm.pose.bones:
         pb.rotation_mode = "XYZ"
     arm.animation_data_create()
-    for name, (fn, frames) in CLIPS.items():
+    for name, fn in CARRY_BASES.items():
+        name = f"carry.{name}"
         action = bpy.data.actions.new(name)
         arm.animation_data.action = action
         if hasattr(arm.animation_data, "action_slot") and len(action.slots) == 0:
             slot = action.slots.new(arm.id_type, arm.name)
             arm.animation_data.action_slot = slot
-        for f in range(frames + 1):
-            pose = fn(build, f / frames)
+        for f in range(2):
+            pose = fn(build, 0.0)
             for pb in arm.pose.bones:
                 if pb.name.startswith("prop_"):
                     continue
@@ -1206,7 +1209,7 @@ def tint(colors):
             inp.default_value = (*rgb, 1)
 
 
-def preview(path, clip="idle", frame=0, cam=(1.9, -2.9, 1.25), look=None, lens=55, res=(720, 960), show_fp=False, gun=True, colors=None):
+def preview(path, clip="carry.ready", frame=0, cam=(1.9, -2.9, 1.25), look=None, lens=55, res=(720, 960), show_fp=False, gun=True, colors=None):
     """Look-dev render (not shipped). Default: three-quarter front view of the idle pose."""
     scene = bpy.context.scene
     arm = bpy.data.objects["rig"]

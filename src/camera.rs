@@ -1,3 +1,4 @@
+use avian3d::prelude::*;
 use bevy::prelude::*;
 
 use crate::controller::{MoveState, Player};
@@ -6,14 +7,42 @@ use crate::terrain::Heightmap;
 use crate::tuning::Tuning;
 use crate::vehicle::{Driving, Vehicle};
 
-/// First-person camera. Interpolates between fixed ticks so 66 Hz physics
-/// looks smooth at any frame rate, and smooths crouch height and wall-run tilt.
+/// First-person camera, or over the right shoulder in third person (T). Interpolates between fixed
+/// ticks so 66 Hz physics looks smooth at any frame rate, and smooths crouch height and wall-run tilt.
 pub struct CameraPlugin;
 
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_camera)
+            .add_systems(Update, toggle_view.run_if(resource_exists::<ButtonInput<KeyCode>>))
             .add_systems(PostUpdate, follow.before(TransformSystems::Propagate));
+    }
+}
+
+/// The third-person camera's offset from the eyes in view space (+X right, +Z back), pulled in
+/// over the shoulder while aiming.
+pub fn shoulder_offset(distance: f32, shoulder: f32, ads: f32) -> Vec3 {
+    let back = distance * (1.0 - 0.55 * ads);
+    Vec3::new(shoulder * (1.0 - 0.2 * ads), 0.2, back)
+}
+
+/// How close the camera may get to a wall behind it.
+const CAMERA_RADIUS: f32 = 0.2;
+
+/// Whether the camera is behind the player right now: third person on, on foot, in game.
+pub fn third_person(tuning: &Tuning, driving: bool, menu: Option<&crate::menu::Menu>) -> bool {
+    tuning.third_person && !driving && menu.is_none_or(|m| m.playing)
+}
+
+/// T flips between first and third person, and the settings remember it.
+fn toggle_view(keys: Res<ButtonInput<KeyCode>>, menu: Option<Res<crate::menu::Menu>>, mut tuning: ResMut<Tuning>, settings: Option<ResMut<crate::menu::Settings>>) {
+    if !keys.just_pressed(KeyCode::KeyT) || menu.is_some_and(|m| !m.playing) {
+        return;
+    }
+    tuning.third_person = !tuning.third_person;
+    if let Some(mut s) = settings {
+        s.third_person = tuning.third_person;
+        s.save();
     }
 }
 
@@ -26,6 +55,8 @@ pub struct Widen;
 pub struct PlayerCamera {
     eye_correction: f32,
     roll: f32,
+    /// Distance from the eyes to the third-person camera: snaps in against walls, eases back out.
+    boom: f32,
 }
 
 fn spawn_camera(mut commands: Commands, tuning: Res<Tuning>) {
@@ -50,7 +81,7 @@ fn follow(
     fixed: Res<Time<Fixed>>,
     view: Res<ViewAngles>,
     tuning: Res<Tuning>,
-    mut player: Single<(&mut Player, &Transform, Option<&Driving>)>,
+    mut player: Single<(Entity, &mut Player, &Transform, Option<&Driving>)>,
     camera: Single<(&mut Transform, &mut PlayerCamera, &mut Projection), (Without<Player>, Without<Vehicle>)>,
     aim: Option<Res<crate::weapon::Aim>>,
     scoped: Option<Res<crate::scope::Scoped>>,
@@ -58,8 +89,9 @@ fn follow(
     heightmap: Option<Res<Heightmap>>,
     menu: Option<Res<crate::menu::Menu>>,
     real: Res<Time<Real>>,
+    spatial: Option<SpatialQuery>,
 ) {
-    let (p, player_tf, driving) = &mut *player;
+    let (player_entity, p, player_tf, driving) = &mut *player;
     let (mut tf, mut cam, mut projection) = camera.into_inner();
     let dt = time.delta_secs();
 
@@ -77,6 +109,27 @@ fn follow(
     let body = p.prev_pos.lerp(player_tf.translation, fixed.overstep_fraction());
     tf.translation = body + p.up() * (p.eye_offset(&tuning) + cam.eye_correction);
     tf.rotation = p.frame * Quat::from_euler(EulerRot::YXZ, view.yaw, view.pitch, cam.roll);
+
+    // Third person: back over the right shoulder, pulled in front of anything behind.
+    let third = third_person(&tuning, driving.is_some(), menu.as_deref());
+    if third {
+        let ads = aim.as_ref().map_or(0.0, |a| a.level);
+        let want = tf.rotation * shoulder_offset(tuning.third_person_distance, tuning.third_person_shoulder, ads);
+        let (dir, max) = (want.normalize_or_zero(), want.length());
+        let reach = spatial
+            .as_ref()
+            .zip(Dir3::new(dir).ok())
+            .and_then(|(spatial, dir)| {
+                let config = ShapeCastConfig { max_distance: max, ignore_origin_penetration: true, ..ShapeCastConfig::DEFAULT };
+                let filter = SpatialQueryFilter::from_excluded_entities([*player_entity]);
+                spatial.cast_shape(&Collider::sphere(CAMERA_RADIUS), tf.translation, Quat::IDENTITY, dir, &config, &filter)
+            })
+            .map_or(max, |hit| hit.distance);
+        cam.boom = if reach < cam.boom { reach } else { cam.boom + (reach - cam.boom) * (1.0 - (-5.0 * dt).exp()) };
+        tf.translation += dir * cam.boom;
+    } else {
+        cam.boom = 0.0;
+    }
 
     // Driving: orbit behind the vehicle, never below the ground.
     if let Some(Driving(v)) = driving
@@ -107,7 +160,8 @@ fn follow(
 
     if let Projection::Perspective(persp) = &mut *projection {
         let ads = aim.as_ref().map_or(0.0, |a| a.level);
-        let zoom = if scoped.is_some_and(|s| s.0.is_some()) { tuning.ads_fov_scoped } else { tuning.ads_fov };
+        // In third person there is no scope picture to look through: the view itself zooms.
+        let zoom = if !third && scoped.is_some_and(|s| s.0.is_some()) { tuning.ads_fov_scoped } else { tuning.ads_fov };
         persp.fov = if dressing { crate::dressing::FOV } else { crate::scope::main_fov(tuning.fov_degrees.to_radians(), ads, zoom) };
     }
 }

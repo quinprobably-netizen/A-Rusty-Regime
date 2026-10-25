@@ -89,7 +89,7 @@ def main():
             kit.preview(os.path.join(SHOTS, f"{cid}.png"), colors=col)
             kit.preview(os.path.join(SHOTS, f"{cid}-back.png"), cam=(-1.6, 2.8, 1.4))
             kit.preview(os.path.join(SHOTS, f"{cid}-face.png"), cam=(0.35, -0.9, 1.68), look=(0, 0, 1.6), lens=70, gun=False)
-            kit.preview(os.path.join(SHOTS, f"{cid}-run.png"), clip="run", frame=5, cam=(2.6, -1.4, 1.2))
+            kit.preview(os.path.join(SHOTS, f"{cid}-run.png"), clip="carry.run", frame=0, cam=(2.6, -1.4, 1.2))
 
 
 if __name__ == "__main__":

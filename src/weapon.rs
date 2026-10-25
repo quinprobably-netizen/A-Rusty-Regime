@@ -381,7 +381,11 @@ fn fire(
     loadout: Res<crate::gunsmith::Loadout>,
     mut recoil: ResMut<Recoil>,
     aim_level: Res<Aim>,
-    mut player: Single<(Entity, &mut Player, &Transform)>,
+    // The camera, for aiming in third person, rides with the player to stay under Bevy's 16 parameters.
+    (mut player, camera): (
+        Single<(Entity, &mut Player, &Transform, Has<crate::vehicle::Driving>)>,
+        Option<Single<&Transform, (With<crate::camera::PlayerCamera>, Without<Player>)>>,
+    ),
     mut bodies: Query<(&RigidBody, &mut LinearVelocity, &ComputedMass), Without<Player>>,
     writers: (MessageWriter<Damage>, MessageWriter<WeaponFired>, MessageWriter<Rumble>),
     mut seed: Local<u64>,
@@ -429,14 +433,25 @@ fn fire(
         arsenal.spent[slot] += 1;
     }
 
-    let (player_entity, p, tf) = &mut *player;
+    let (player_entity, p, tf, driving) = &mut *player;
     let player_entity = *player_entity;
     let eye = tf.translation + p.up() * p.eye_offset(t);
-    let aim = view.rotation();
+    let filter = SpatialQueryFilter::from_excluded_entities([player_entity]);
+    let mut aim = view.rotation();
+    // Third person: the crosshair is the camera's, behind the shoulder. Shoot from the eyes at
+    // whatever it covers, looking only past the player so nothing behind them is the target.
+    if crate::camera::third_person(t, *driving, None)
+        && let Some(cam) = &camera
+    {
+        let dir = aim * Vec3::NEG_Z;
+        let from = cam.translation + dir * (eye - cam.translation).dot(dir).max(0.0);
+        let reach = spatial.cast_ray(from, Dir3::new(dir).unwrap(), 2000.0, true, &filter).map_or(2000.0, |h| h.distance);
+        let target = from + dir * reach.max(1.0);
+        aim = Transform::from_translation(eye).looking_at(target, p.up()).rotation;
+    }
     let forward = aim * Vec3::NEG_Z;
     // Where tracers start: the viewmodel's muzzle.
     let muzzle = eye + aim * muzzle_at.0;
-    let filter = SpatialQueryFilter::from_excluded_entities([player_entity]);
 
     match kind {
         WeaponKind::RocketLauncher => {

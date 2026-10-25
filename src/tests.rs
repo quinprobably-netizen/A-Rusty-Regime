@@ -433,18 +433,21 @@ fn rocket_damages_targets() {
 fn body_pose_follows_movement() {
     use crate::body::{Pose, playback_rate, pose_for};
     let max = 7.5;
-    assert_eq!(pose_for(MoveState::Ground, false, 0.0, 0.0, max, 0.0, false), Pose::Idle);
-    assert_eq!(pose_for(MoveState::Ground, false, 2.0, 0.0, max, 0.0, false), Pose::Walk);
-    assert_eq!(pose_for(MoveState::Ground, false, 5.0, 0.0, max, 0.0, false), Pose::Run);
-    assert_eq!(pose_for(MoveState::Ground, false, 7.0, 0.0, max, 0.0, false), Pose::Sprint);
-    assert_eq!(pose_for(MoveState::Ground, true, 2.0, 0.0, max, 0.0, false), Pose::Crouch);
-    assert_eq!(pose_for(MoveState::Slide, true, 8.0, 0.0, max, 0.0, false), Pose::Slide);
-    assert_eq!(pose_for(MoveState::Air, false, 5.0, 4.0, max, 0.0, false), Pose::Jump);
-    assert_eq!(pose_for(MoveState::Air, false, 5.0, -4.0, max, 0.0, false), Pose::Fall);
-    assert_eq!(pose_for(MoveState::Air, false, 5.0, -4.0, max, 0.0, true), Pose::Grapple);
-    assert_eq!(pose_for(MoveState::WallRun, false, 8.0, 1.0, max, 1.0, false), Pose::WallRunL);
-    assert_eq!(pose_for(MoveState::WallRun, false, 8.0, 1.0, max, -1.0, false), Pose::WallRunR);
-    assert_eq!(pose_for(MoveState::Mantle, false, 0.0, 0.0, max, 0.0, false), Pose::Mantle);
+    assert_eq!(pose_for(MoveState::Ground, false, 0.0, 0.0, max, 0.0, false, false), Pose::Idle);
+    assert_eq!(pose_for(MoveState::Ground, false, 2.0, 0.0, max, 0.0, false, false), Pose::Walk);
+    assert_eq!(pose_for(MoveState::Ground, false, 5.0, 0.0, max, 0.0, false, false), Pose::Run);
+    assert_eq!(pose_for(MoveState::Ground, false, 7.0, 0.0, max, 0.0, false, false), Pose::Sprint);
+    assert_eq!(pose_for(MoveState::Ground, true, 0.0, 0.0, max, 0.0, false, false), Pose::Crouch);
+    assert_eq!(pose_for(MoveState::Ground, true, 2.0, 0.0, max, 0.0, false, false), Pose::CrouchWalk);
+    assert_eq!(pose_for(MoveState::Air, false, 5.0, 4.0, max, 0.0, false, true), Pose::DoubleJump);
+    assert_eq!(pose_for(MoveState::Air, false, 5.0, -4.0, max, 0.0, true, true), Pose::Grapple);
+    assert_eq!(pose_for(MoveState::Slide, true, 8.0, 0.0, max, 0.0, false, false), Pose::Slide);
+    assert_eq!(pose_for(MoveState::Air, false, 5.0, 4.0, max, 0.0, false, false), Pose::Jump);
+    assert_eq!(pose_for(MoveState::Air, false, 5.0, -4.0, max, 0.0, false, false), Pose::Fall);
+    assert_eq!(pose_for(MoveState::Air, false, 5.0, -4.0, max, 0.0, true, false), Pose::Grapple);
+    assert_eq!(pose_for(MoveState::WallRun, false, 8.0, 1.0, max, 1.0, false, false), Pose::WallRunL);
+    assert_eq!(pose_for(MoveState::WallRun, false, 8.0, 1.0, max, -1.0, false, false), Pose::WallRunR);
+    assert_eq!(pose_for(MoveState::Mantle, false, 0.0, 0.0, max, 0.0, false, false), Pose::Mantle);
     // Feet speed up with the run and never stall.
     assert!(playback_rate(Pose::Sprint, 7.5, max) > playback_rate(Pose::Sprint, 5.5, max));
     assert!(playback_rate(Pose::Walk, 0.3, max) >= 0.7);
@@ -2216,4 +2219,61 @@ fn weapon_models_carry_their_rigs() {
             assert!(has("optic"), "{path} has no optic socket for aiming");
         }
     }
+}
+
+fn camera_and_eye(app: &mut App) -> (Vec3, Vec3) {
+    let tuning = app.world().resource::<Tuning>().clone();
+    let mut q = app.world_mut().query::<(&Player, &Transform)>();
+    let (p, tf) = q.single(app.world()).unwrap();
+    let eye = tf.translation + Vec3::Y * p.eye_offset(&tuning);
+    let mut q = app.world_mut().query_filtered::<&Transform, With<crate::camera::PlayerCamera>>();
+    (q.single(app.world()).unwrap().translation, eye)
+}
+
+#[test]
+fn third_person_camera_sits_over_the_shoulder_and_stops_at_walls() {
+    let mut tuning = Tuning::default();
+    tuning.third_person = true;
+    let mut app = build_app(tuning.clone());
+    app.add_plugins(crate::camera::CameraPlugin);
+    app.finish();
+    app.update();
+    set_player(&mut app, Vec3::new(0.0, 1.0, 0.0), Vec3::ZERO);
+    run(&mut app, 1.0);
+    // Yaw 0 looks down -Z: behind is +Z, the right shoulder +X.
+    let (cam, eye) = camera_and_eye(&mut app);
+    let off = cam - eye;
+    assert!((off.z - tuning.third_person_distance).abs() < 0.1, "camera {off} behind the eyes");
+    assert!((off.x - tuning.third_person_shoulder).abs() < 0.1, "camera {off} over the right shoulder");
+
+    // A wall a metre behind: the camera stays in front of it.
+    wall(&mut app, Vec3::new(10.0, 10.0, 0.4), Vec3::new(0.0, 2.0, eye.z + 1.2));
+    run(&mut app, 0.2);
+    let (cam, eye) = camera_and_eye(&mut app);
+    assert!(cam.z < eye.z + 1.0 - 0.15, "camera at {cam} went into the wall behind {eye}");
+
+    // First person again: the camera is in the head.
+    app.world_mut().resource_mut::<Tuning>().third_person = false;
+    run(&mut app, 0.1);
+    let (cam, eye) = camera_and_eye(&mut app);
+    assert!(cam.distance(eye) < 0.2, "first person camera at {cam}, eyes at {eye}");
+}
+
+#[test]
+fn t_switches_to_third_person_in_game() {
+    use crate::menu::{MenuPlugin, Screen};
+    let mut app = build_app(Tuning::default());
+    app.add_plugins((bevy::state::app::StatesPlugin, crate::gunsmith::GunsmithPlugin, MenuPlugin, crate::camera::CameraPlugin))
+        .init_resource::<ButtonInput<KeyCode>>()
+        .init_resource::<ButtonInput<MouseButton>>();
+    app.finish();
+    app.update();
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Playing);
+    run(&mut app, 1.0);
+    tap(&mut app, KeyCode::KeyT);
+    assert!(app.world().resource::<Tuning>().third_person, "T turns third person on");
+    run(&mut app, 1.0);
+    let (cam, eye) = camera_and_eye(&mut app);
+    assert!(cam.distance(eye) > 2.0, "camera {cam} pulled back from the eyes {eye}");
 }

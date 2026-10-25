@@ -1,6 +1,8 @@
 //! Targets: soldier dummies that get knocked over, flying drones that circle
-//! and pop, and soldiers that patrol a route and shoot back. All take
-//! `Damage` and respawn after a while.
+//! and pop, and soldiers that patrol a route, shoot back and die where they
+//! stand. All take `Damage` and respawn after a while.
+
+use std::collections::HashMap;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -21,7 +23,7 @@ impl Plugin for TargetsPlugin {
             .add_message::<PlayerHit>()
             .add_message::<Killed>()
             .add_message::<Shot>()
-            .add_systems(FixedUpdate, (take_damage, respawn, patrol, hear, soldier_ai).chain().in_set(TargetSet).after(ControllerSet));
+            .add_systems(FixedUpdate, (take_damage, respawn, patrol, hear, soldier_ai, animate_soldiers).chain().in_set(TargetSet).after(ControllerSet));
     }
 }
 
@@ -178,7 +180,7 @@ pub fn spawn_drone(commands: &mut Commands, tuning: &Tuning, assets: Option<&Tar
 fn soldier_model(team: Team, pose: Pose) -> impl Bundle {
     (
         Rig::team(team.0),
-        RigPose { pose, rate: 1.0 },
+        RigPose::new(pose, 1.0),
         Transform::from_xyz(0.0, -DUMMY_HEIGHT * 0.5, 0.0).with_scale(Vec3::splat(DUMMY_HEIGHT / crate::character::MODEL_HEIGHT)),
         Visibility::default(),
     )
@@ -209,7 +211,11 @@ fn take_damage(
         target.down = tuning.target_respawn;
         killed.write(Killed { kind: target.kind, team: team.copied().unwrap_or(Team(1)), pos: tf.translation });
         match target.kind {
-            TargetKind::Dummy | TargetKind::Soldier => {
+            TargetKind::Soldier => {
+                // Its rig plays a death (see animate_soldiers); shots pass over the body.
+                commands.entity(hit.entity).insert(ColliderDisabled);
+            }
+            TargetKind::Dummy => {
                 // Let it fall: becomes a dynamic body with the hit's momentum.
                 let spin = Vec3::Y.cross(hit.impulse) * 2.0;
                 commands.entity(hit.entity).insert((
@@ -251,7 +257,7 @@ fn respawn(mut commands: Commands, time: Res<Time>, tuning: Res<Tuning>, mut tar
                 TargetKind::Dummy => RigidBody::Static,
                 TargetKind::Drone { .. } | TargetKind::Soldier => RigidBody::Kinematic,
             };
-            commands.entity(e).insert((
+            commands.entity(e).remove::<ColliderDisabled>().insert((
                 body,
                 Position(target.home),
                 Rotation::default(),
@@ -506,6 +512,42 @@ fn soldier_ai(
             let dir = delta / delta.length();
             tf.translation += dir * step;
             tf.rotation = Quat::from_rotation_y(dir.x.atan2(dir.z));
+        }
+    }
+}
+
+/// The soldiers' clips: idle, walk or run by how fast they go, a death (forward or back) when
+/// killed, and a recoil kick on every shot.
+fn animate_soldiers(
+    time: Res<Time>,
+    tuning: Res<Tuning>,
+    soldiers: Query<(Entity, &Target, &Soldier, &Transform, &Children)>,
+    mut rigs: Query<&mut RigPose>,
+    mut last: Local<HashMap<Entity, (Vec3, f32)>>,
+) {
+    let dt = time.delta_secs().max(1e-4);
+    for (e, target, soldier, tf, children) in &soldiers {
+        let (prev, cd) = last.get(&e).copied().unwrap_or((tf.translation, soldier.fire_cd));
+        last.insert(e, (tf.translation, soldier.fire_cd));
+        let speed = (tf.translation - prev).with_y(0.0).length() / dt;
+        let (pose, rate) = if !target.alive() {
+            (if e.index().index() % 2 == 0 { Pose::Death } else { Pose::DeathBack }, 1.0)
+        } else if speed < 0.3 {
+            (Pose::Idle, 1.0)
+        } else if speed < tuning.soldier.speed * 1.2 {
+            (Pose::Walk, (speed / 1.6).clamp(0.6, 1.8))
+        } else {
+            (Pose::Run, (speed / 2.8).clamp(0.7, 1.8))
+        };
+        // The cooldown jumps back up the moment it fires.
+        let fired = soldier.fire_cd > cd + 1e-3;
+        for child in children {
+            if let Ok(mut rig) = rigs.get_mut(*child) {
+                let want = RigPose { pose, rate, reload: 0.0, shots: rig.shots.wrapping_add(fired as u32) };
+                if *rig != want {
+                    *rig = want;
+                }
+            }
         }
     }
 }

@@ -116,6 +116,10 @@ pub struct Tuning {
     pub stick_look_curve: f32,
     pub invert_y: bool,
     pub fov_degrees: f32,
+    /// Play from behind the right shoulder (T toggles), and how far back and right the camera sits.
+    pub third_person: bool,
+    pub third_person_distance: f32,
+    pub third_person_shoulder: f32,
     /// The gun and arms are drawn as if through this narrower vertical field of view, as shooters
     /// do: a wide view stretches anything a hand's breadth from the eye.
     pub viewmodel_fov_degrees: f32,
@@ -331,6 +335,9 @@ impl Default for Tuning {
             stick_look_curve: 2.0,
             invert_y: false,
             fov_degrees: 75.0,
+            third_person: false,
+            third_person_distance: 2.6,
+            third_person_shoulder: 0.55,
             viewmodel_fov_degrees: 65.0,
             ads_fov: 0.7,
             ads_fov_scoped: 0.85,
