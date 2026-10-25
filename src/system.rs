@@ -1,6 +1,3 @@
-// Nothing outside the tests reads the bodies yet; the round world will.
-#![allow(dead_code)]
-
 use bevy::prelude::*;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -49,6 +46,7 @@ impl Default for Body {
 
 impl Body {
     /// The bare debug moon. It keeps 9.8 gravity so movement tests compare like with like.
+    #[cfg(test)]
     pub fn test_moon() -> Body {
         Body {
             radius: 2000.0,

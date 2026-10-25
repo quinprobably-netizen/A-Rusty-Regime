@@ -11,9 +11,10 @@ use crate::surface::{Origin, QUANTUM};
 use crate::tuning::Tuning;
 
 /// How far the origin moves when the player is at `player_world`: nothing while they are within
-/// `step` of it, else their position rounded per component to a multiple of `quantum`.
+/// `step` of it, else their position rounded per component to a multiple of `quantum`. Never a
+/// zero move: with a `step` under half a `quantum` the rounding can leave the origin where it is.
 pub fn rebase_delta(player_world: Vec3, step: f32, quantum: f32) -> Option<Vec3> {
-    (player_world.length() > step).then(|| (player_world / quantum).round() * quantum)
+    (player_world.length() > step).then(|| (player_world / quantum).round() * quantum).filter(|d| *d != Vec3::ZERO)
 }
 
 /// A root entity `rebase` moves: its transform, and its physics position if it has one.
@@ -86,5 +87,7 @@ mod tests {
         let d = rebase_delta(Vec3::new(2100.0, -50.0, 10.0), 2000.0, 36.0).unwrap();
         for c in d.to_array() { assert_eq!(c.rem_euclid(36.0), 0.0); }
         assert!(d.distance(Vec3::new(2100.0, -50.0, 10.0)) < 36.0);
+        // Past a tiny step but nearest the current origin: nothing to move.
+        assert_eq!(rebase_delta(Vec3::new(10.0, -5.0, 17.0), 1.0, 36.0), None);
     }
 }

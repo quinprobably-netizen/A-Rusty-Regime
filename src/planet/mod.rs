@@ -74,7 +74,7 @@ pub struct Chunks {
 impl Chunks {
     /// The ground under `p_body` on the finest loaded chunk holding its direction, or from the
     /// height function where nothing is loaded.
-    #[allow(dead_code)] // the level reads it next; the tests already do
+    #[allow(dead_code)] // only the tests read it so far
     pub fn ground(&self, sphere: &Sphere, p_body: Vec3) -> Ground {
         let dir = p_body.try_normalize().unwrap_or(Vec3::Y);
         self.loaded

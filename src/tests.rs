@@ -802,6 +802,34 @@ fn rebase_keeps_the_world_together() {
     assert_eq!(app.world().resource::<GrappleState>().hook.map(|h| h.anchor), Some(anchor), "body-coordinate anchor untouched");
     let p = app.world_mut().query::<(&Player, &Transform)>().single(app.world()).unwrap();
     assert!(p.0.prev_pos.distance(p.1.translation) < 2.0, "no camera jump");
+
+    // Mid-swing: no more teleports, the same hook, the player moving at 6 m/s along the ground,
+    // and a rebase forced on the first of three ticks (any step under their distance from the
+    // origin will do; the next ticks go back to the default).
+    let pos = player(&mut app).0;
+    assert!(pos.abs().max_element() > 36.0, "far enough from the origin for the forced rebase to move it");
+    let frame = app.world_mut().query::<&Player>().single(app.world()).unwrap().frame;
+    app.world_mut().query::<&mut Player>().single_mut(app.world_mut()).unwrap().velocity = frame * Vec3::NEG_Z * 6.0;
+    let default_step = app.world().resource::<Tuning>().terrain.origin_step;
+    app.world_mut().resource_mut::<Tuning>().terrain.origin_step = 1.0;
+    let mut moved = 0.0;
+    for i in 0..3 {
+        let (before, o_before) = (player(&mut app), *app.world().resource::<Origin>());
+        app.update();
+        app.world_mut().resource_mut::<Tuning>().terrain.origin_step = default_step;
+        let o_after = *app.world().resource::<Origin>();
+        assert_eq!(o_after.offset != o_before.offset, i == 0, "tick {i}: the rebase lands on the first tick only");
+        let after = player(&mut app);
+        assert_eq!(app.world().resource::<GrappleState>().hook.map(|h| h.anchor), Some(anchor), "tick {i}: hook held, body-coordinate anchor untouched");
+        // Continuous in body coordinates: no further than the faster of the two speeds carries it.
+        let step = o_before.body(before.0).distance(o_after.body(after.0));
+        let reach = before.1.length().max(after.1.length()) * DT + 0.01;
+        assert!(step <= reach, "tick {i}: moved {step} m, at most {reach} m expected");
+        let p = app.world_mut().query::<(&Player, &Transform)>().single(app.world()).unwrap();
+        assert!(p.0.prev_pos.distance(p.1.translation) <= reach, "tick {i}: no camera jump");
+        moved += step;
+    }
+    assert!(moved > 0.1, "the swing went on: {moved} m");
 }
 
 /// Puts the player about 1 km from the world origin on settled streamed ground, then walks them
@@ -859,7 +887,6 @@ fn an_idle_player_far_from_the_origin_stays_put() {
         assert_eq!(state, MoveState::Ground);
         worst = worst.max(pos.distance(start));
     }
-    eprintln!("idle creep {worst} m in 10 s at {} m from the origin", start.length());
     assert!(worst < 1e-3, "an idle player crept {worst} m in 10 s");
 }
 

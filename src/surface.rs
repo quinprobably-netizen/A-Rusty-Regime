@@ -3,9 +3,6 @@
 //! the sliding origin: body-space positions minus a quantized offset give world positions near
 //! the player, where f32 stays precise.
 
-// Nothing outside the tests reads the surface yet; the round world will.
-#![allow(dead_code)]
-
 use bevy::prelude::*;
 use fastnoise_lite::{FastNoiseLite, FractalType, NoiseType};
 use std::sync::Arc;
@@ -53,10 +50,6 @@ impl Sphere {
         rubble.set_fractal_octaves(Some(2));
         rubble.set_frequency(Some(1.0 / 1.6));
         Sphere { body, relief, rubble }
-    }
-
-    pub fn radius(&self) -> f32 {
-        self.body.radius
     }
 
     /// Radius of the sea surface, altitude 0.
@@ -149,6 +142,7 @@ impl Surface {
     }
 
     /// The tangent direction toward the north pole, `None` within `POLE` meters of the axis.
+    #[allow(dead_code)] // only the tests read it so far
     pub fn north(&self, p: Vec3) -> Option<Vec3> {
         match self {
             Surface::Flat => Some(Vec3::NEG_Z),
@@ -158,6 +152,7 @@ impl Surface {
     }
 
     /// The terrain directly below (or above) `p`, from the height function.
+    #[allow(dead_code)] // only the tests read it so far
     pub fn ground(&self, p: Vec3) -> Ground {
         match self {
             Surface::Flat => Ground { point: Vec3::new(p.x, 0.0, p.z), normal: Vec3::Y },
