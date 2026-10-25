@@ -789,6 +789,9 @@ fn rebase_keeps_the_world_together() {
         app.world_mut().resource_mut::<GrappleState>().hook = Some(Hook { anchor, rope: 12.0 });
         app.update();
         assert_eq!(app.world().resource::<GrappleState>().hook.map(|h| h.anchor), Some(anchor), "hop {i}: hook held, body-coordinate anchor untouched");
+        // The rebase lands after the controller has set `prev_pos`, so `Player::shift` must move it too.
+        let p = app.world_mut().query::<(&Player, &Transform)>().single(app.world()).unwrap();
+        assert!(p.0.prev_pos.distance(p.1.translation) < 2.0, "hop {i}: no camera jump");
     }
     let o = *app.world().resource::<Origin>();
     assert_ne!(o.offset, origin0.offset, "a rebase happened");
@@ -799,6 +802,75 @@ fn rebase_keeps_the_world_together() {
     assert_eq!(app.world().resource::<GrappleState>().hook.map(|h| h.anchor), Some(anchor), "body-coordinate anchor untouched");
     let p = app.world_mut().query::<(&Player, &Transform)>().single(app.world()).unwrap();
     assert!(p.0.prev_pos.distance(p.1.translation) < 2.0, "no camera jump");
+}
+
+/// Puts the player about 1 km from the world origin on settled streamed ground, then walks them
+/// straight away from the origin for 2 s with `terrain.origin_step` set to rebase (or not) about
+/// 5 m into the walk. Returns each tick's body position and state, and the ticks that rebased.
+fn walk_on_streamed_ground(rebase: bool) -> (Vec<(Vec3, MoveState)>, Vec<usize>) {
+    let (mut app, sphere, _) = streaming_app(4);
+    app.world_mut().resource_mut::<Tuning>().terrain.origin_step = f32::INFINITY;
+    settle(&mut app);
+    let dir = Quat::from_rotation_y(-0.5) * Vec3::X;
+    let o = *app.world().resource::<Origin>();
+    set_player(&mut app, o.world(sphere.surface_point(dir) + dir), Vec3::ZERO);
+    settle(&mut app);
+    run(&mut app, 1.0);
+    let (pos, _, state) = player(&mut app);
+    assert_eq!(state, MoveState::Ground, "landed before the walk");
+    // Face straight away from the world origin, in the player's frame.
+    let frame = app.world_mut().query::<&Player>().single(app.world()).unwrap().frame;
+    let away = frame.inverse() * pos.normalize();
+    app.world_mut().resource_mut::<ViewAngles>().yaw = (-away.x).atan2(-away.z);
+    app.world_mut().resource_mut::<Tuning>().terrain.origin_step = if rebase { pos.length() + 5.0 } else { f32::INFINITY };
+    input(&mut app).movement = Vec2::Y;
+    let (mut ticks, mut rebases) = (Vec::new(), Vec::new());
+    for i in 0..(2.0 / DT).round() as usize {
+        let before = app.world().resource::<Origin>().offset;
+        app.update();
+        let o = *app.world().resource::<Origin>();
+        if o.offset != before { rebases.push(i); }
+        let (pos, _, state) = player(&mut app);
+        ticks.push((o.body(pos), state));
+    }
+    (ticks, rebases)
+}
+
+#[test]
+fn walking_across_a_rebase_stays_grounded() {
+    // A ~1 km rebase mid-walk: stale collider trees would miss the ground entirely for a tick.
+    let (with, rebases) = walk_on_streamed_ground(true);
+    let (without, none) = walk_on_streamed_ground(false);
+    assert!(rebases.len() == 1 && none.is_empty(), "rebased on ticks {rebases:?}, and {none:?} in the other walk");
+    for (i, (_, state)) in with.iter().enumerate() {
+        assert_eq!(*state, MoveState::Ground, "tick {i} of the walk");
+    }
+    // The distance covered over the 21 ticks centred on the rebase. Compared over a window, not
+    // the whole walk: after the rebase the other walk stays at 1 km coordinates, where f32
+    // rounding alone drifts it about 0.1 mm a tick. A lost tick of motion is 11 cm.
+    let r = rebases[0];
+    assert!(r > 10 && r + 10 < with.len(), "rebase on tick {r}, mid-walk");
+    let covered = |t: &[(Vec3, MoveState)]| t[r - 11].0.distance(t[r + 10].0);
+    let (d, d_ref) = (covered(&with), covered(&without));
+    assert!(d > 2.0, "walked {d} m around the rebase");
+    assert!((d - d_ref).abs() < 0.01, "walked {d} m across the rebase, {d_ref} m without one");
+}
+
+#[test]
+fn a_teleport_on_the_rebase_tick_survives() {
+    let (mut app, sphere, _) = streaming_app(4);
+    app.world_mut().resource_mut::<Tuning>().terrain.origin_step = 40.0;
+    settle(&mut app);
+    // A 100 m hop written to the Transform before the frame, past the step: the same frame rebases.
+    let dir = Quat::from_rotation_y(-100.0 / 2000.0) * Vec3::X;
+    let target = sphere.surface_point(dir) + dir;
+    let o = *app.world().resource::<Origin>();
+    set_player(&mut app, o.world(target), Vec3::ZERO);
+    app.update();
+    let o2 = *app.world().resource::<Origin>();
+    assert_ne!(o2.offset, o.offset, "the teleport frame rebased");
+    let (pos, _, _) = player(&mut app);
+    assert!(o2.body(pos).distance(target) < 0.5, "teleport survived the rebase, {} m off", o2.body(pos).distance(target));
 }
 
 #[test]

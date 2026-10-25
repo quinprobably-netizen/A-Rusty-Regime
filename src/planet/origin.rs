@@ -6,14 +6,9 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-use crate::controller::{ControllerSet, Player};
+use crate::controller::Player;
 use crate::surface::{Origin, QUANTUM};
-use crate::targets::TargetSet;
 use crate::tuning::Tuning;
-use crate::vehicle::VehicleSet;
-
-use super::bubble;
-use super::gravity::gravitate;
 
 /// How far the origin moves when the player is at `player_world`: nothing while they are within
 /// `step` of it, else their position rounded per component to a multiple of `quantum`.
@@ -21,39 +16,64 @@ pub fn rebase_delta(player_world: Vec3, step: f32, quantum: f32) -> Option<Vec3>
     (player_world.length() > step).then(|| (player_world / quantum).round() * quantum)
 }
 
+/// A root entity `rebase` moves: its transform, and its physics position if it has one.
+type Root<'a> = (&'a mut Transform, Option<&'a mut Position>);
+
 /// Re-centres the world on the player once they pass `terrain.origin_step`: the origin offset
 /// grows by the delta, and every root `Transform`, every Avian `Position` and the player's
-/// carried positions shrink by it. Entities with `TransformInterpolation` (vehicles; none on the
-/// moon) keep easing from their old place for a frame; their easing state is shifted in the next
-/// plan, which adds `bevy_transform_interpolation` as a direct dependency for the purpose.
+/// carried positions shrink by it.
+///
+/// `Transform` is the source of truth for root bodies: their `Position` is set from the shifted
+/// transform rather than shifted itself. Writing `Position` marks it changed, and Avian then keeps
+/// it over the transform when the step syncs the two, so a shifted stale `Position` would undo a
+/// transform written since the last step (a teleport, or the controller's move this tick).
+/// `Rotation` is left alone: the shift turns nothing, and Avian syncs an unmarked `Rotation` from
+/// the transform as usual. Non-root colliders shift their `Position`; Avian re-derives it from
+/// their body in the step anyway.
+///
+/// Entities with `TransformInterpolation` (vehicles; none on the moon) keep easing from their old
+/// place for a frame; their easing state is shifted in the next plan, which adds
+/// `bevy_transform_interpolation` as a direct dependency for the purpose.
 pub fn rebase(
     tuning: Res<Tuning>,
     mut origin: ResMut<Origin>,
-    mut players: Query<(&mut Transform, &mut Player), Without<ChildOf>>,
-    mut roots: Query<&mut Transform, (Without<ChildOf>, Without<Player>)>,
-    mut positions: Query<&mut Position>,
+    mut players: Query<(Root, &mut Player), Without<ChildOf>>,
+    mut roots: Query<Root, (Without<ChildOf>, Without<Player>)>,
+    mut nested: Query<&mut Position, With<ChildOf>>,
 ) {
-    let Ok((player_tf, _)) = players.single() else { return };
+    let Ok(((player_tf, _), _)) = players.single() else { return };
     let Some(delta) = rebase_delta(player_tf.translation, tuning.terrain.origin_step, QUANTUM) else { return };
     origin.offset += delta;
-    for mut tf in &mut roots {
+    let shift = |(mut tf, position): (Mut<Transform>, Option<Mut<Position>>)| {
         tf.translation -= delta;
-    }
-    for mut position in &mut positions {
-        position.0 -= delta;
-    }
-    for (mut tf, mut player) in &mut players {
-        tf.translation -= delta;
+        if let Some(mut position) = position {
+            position.0 = tf.translation;
+        }
+    };
+    roots.iter_mut().for_each(shift);
+    for (root, mut player) in &mut players {
+        shift(root);
         player.shift(delta);
+    }
+    for mut position in &mut nested {
+        position.0 -= delta;
     }
 }
 
-/// Runs `rebase` first in the fixed step, before anything reads or writes a position.
+/// Runs `rebase` at the end of each fixed step, after every gameplay system and right before the
+/// physics step, so every system in a fixed tick (`ControllerSet`, `VehicleSet`, `TargetSet`,
+/// `freeze`, `hold_player`, `gravitate`, the grapple) sees one consistent world, and the next tick
+/// starts re-centred.
+///
+/// Spatial queries cull with Avian's `ColliderTrees`, which keep their own copies of the collider
+/// AABBs and refresh them only inside the physics step (`update_moved_collider_aabbs`, in
+/// `ColliderTreeSystems::UpdateAabbs`, re-reads every collider whose `Position` changed since the
+/// last step). Run first in `FixedUpdate`, the shift left the trees on the old coordinates for
+/// the rest of the tick. Here the step refreshes them before anything queries again. It also
+/// means the controller's move this tick is already in the transform when `Position` is set
+/// from it; run earlier, the marked `Position` made Avian drop that move (11 cm lost per rebase).
 pub fn add_rebase(app: &mut App) {
-    app.add_systems(
-        FixedUpdate,
-        rebase.before(ControllerSet).before(VehicleSet).before(TargetSet).before(bubble::freeze).before(bubble::hold_player).before(gravitate),
-    );
+    app.add_systems(FixedPostUpdate, rebase.before(PhysicsSystems::First));
 }
 
 #[cfg(test)]
