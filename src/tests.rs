@@ -2277,3 +2277,158 @@ fn t_switches_to_third_person_in_game() {
     let (cam, eye) = camera_and_eye(&mut app);
     assert!(cam.distance(eye) > 2.0, "camera {cam} pulled back from the eyes {eye}");
 }
+
+// --- The solar system ---
+
+use crate::solar::{self, orbit::STAR, ship::{Ship, ShipControls}, Solar};
+
+fn system_app() -> App {
+    let mut app = build_app(Tuning::default());
+    drop_flat_floor(&mut app);
+    app.add_plugins(solar::SolarPlugin);
+    app.finish();
+    app.update();
+    app
+}
+
+fn ship_entity(app: &mut App) -> Entity {
+    app.world_mut().query_filtered::<Entity, With<Ship>>().single(app.world()).unwrap()
+}
+
+/// Boards the ship, which must be in reach.
+fn board(app: &mut App) {
+    input(app).interact_pressed = true;
+    run(app, 0.1);
+    let ship = ship_entity(app);
+    let id = app.world_mut().query_filtered::<Entity, With<Player>>().single(app.world()).unwrap();
+    assert_eq!(app.world().get::<Driving>(id).map(|d| d.0), Some(ship), "flying the ship");
+}
+
+/// The ship's body coordinates on the anchor, and its velocity there.
+fn ship_state(app: &mut App) -> (Vec3, Vec3) {
+    let ship = ship_entity(app);
+    let origin = *app.world().resource::<Origin>();
+    let (tf, v) = (app.world().get::<Transform>(ship).unwrap(), app.world().get::<LinearVelocity>(ship).unwrap());
+    (origin.body(tf.translation), v.0)
+}
+
+/// Puts the ship at body coordinates `p` on the anchor, moving at `v`, with the pilot aboard.
+fn put_ship(app: &mut App, p: Vec3, v: Vec3) {
+    let ship = ship_entity(app);
+    let at = app.world().resource::<Origin>().world(p);
+    // Nose along the velocity, so flight assist has no drift to bleed off.
+    let rotation = match v.try_normalize() {
+        Some(dir) => Transform::default().looking_to(dir, p.normalize().any_orthonormal_vector()).rotation,
+        None => app.world().get::<Transform>(ship).unwrap().rotation,
+    };
+    app.world_mut().entity_mut(ship).insert((Transform::from_translation(at).with_rotation(rotation), Position(at), Rotation(rotation), LinearVelocity(v)));
+}
+
+fn inertial(app: &App, p: Vec3, v: Vec3) -> (bevy::math::DVec3, bevy::math::DVec3) {
+    let solar = app.world().resource::<Solar>();
+    solar.bodies.pose(&solar.anchor, solar.epoch).to_inertial(p.as_dvec3(), v.as_dvec3())
+}
+
+#[test]
+fn the_system_starts_on_havens_pad_beside_the_ship() {
+    let mut app = system_app();
+    run(&mut app, 1.5);
+    assert_eq!(app.world().resource::<Solar>().anchor, "home");
+    let (pos, _, state) = player(&mut app);
+    assert_eq!(state, MoveState::Ground, "standing on the pad");
+    let ship = ship_entity(&mut app);
+    let ship_at = app.world().get::<Transform>(ship).unwrap().translation;
+    assert!(pos.distance(ship_at) < solar::ship::BOARD_RADIUS, "in reach of the ship, {} m", pos.distance(ship_at));
+    let (p, v) = ship_state(&mut app);
+    let sphere = app.world().resource::<Solar>().spheres["home"].clone();
+    let surface = Surface::Sphere(sphere.clone());
+    assert!(v.length() < 0.2, "the ship rests on the pad, moving {v}");
+    assert!(surface.altitude(p) > sphere.height(p.normalize()), "above the ground");
+}
+
+#[test]
+fn the_ship_lifts_off_hovers_and_lands() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    board(&mut app);
+    let surface = app.world().resource::<Surface>().clone();
+    let start = surface.altitude(ship_state(&mut app).0);
+    app.world_mut().resource_mut::<ShipControls>().lift = 1.0;
+    run(&mut app, 2.0);
+    let lifted = surface.altitude(ship_state(&mut app).0);
+    assert!(lifted - start > 15.0, "lifted {} m in 2 s", lifted - start);
+    app.world_mut().resource_mut::<ShipControls>().lift = 0.0;
+    run(&mut app, 2.0);
+    let settled = surface.altitude(ship_state(&mut app).0);
+    run(&mut app, 2.0);
+    let held = surface.altitude(ship_state(&mut app).0);
+    assert!((held - settled).abs() < 0.5, "hovers in place with no lift: {settled} then {held}");
+    // Sinking brings it back down onto the pad, where it stays once the pilot leaves.
+    app.world_mut().resource_mut::<ShipControls>().lift = -1.0;
+    run(&mut app, 6.0);
+    app.world_mut().resource_mut::<ShipControls>().lift = 0.0;
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 2.0);
+    let (p, v) = ship_state(&mut app);
+    assert!((surface.altitude(p) - start).abs() < 0.3 && v.length() < 0.3, "back on the pad: {} m off, {v}", surface.altitude(p) - start);
+    let id = app.world_mut().query_filtered::<Entity, With<Player>>().single(app.world()).unwrap();
+    assert!(app.world().get::<Driving>(id).is_none(), "left the ship");
+    assert_eq!(player(&mut app).2, MoveState::Ground, "standing beside it");
+}
+
+#[test]
+fn leaving_havens_sphere_of_influence_hands_off_to_the_star_on_the_same_path() {
+    let mut app = system_app();
+    run(&mut app, 0.5);
+    board(&mut app);
+    let soi = app.world().resource::<Solar>().bodies.get("home").soi;
+    let (p, v) = (Vec3::new(0.3, 0.8, 0.5).normalize() * (soi - 300.0), Vec3::new(0.3, 0.8, 0.5).normalize() * 600.0);
+    put_ship(&mut app, p, v);
+    let (before, epoch) = (inertial(&app, p, v), app.world().resource::<Solar>().epoch);
+    run(&mut app, 1.0);
+    assert_eq!(app.world().resource::<Solar>().anchor, STAR, "out in deep space");
+    let (q, w) = ship_state(&mut app);
+    let (after, now) = (inertial(&app, q, w), app.world().resource::<Solar>().epoch);
+    let expected = before.0 + before.1 * (now - epoch);
+    assert!(after.0.distance(expected) < 3.0, "kept to its path: {} m off", after.0.distance(expected));
+    assert!(after.1.distance(before.1) < 2.0, "kept its speed: {} m/s off", after.1.distance(before.1));
+    assert!(app.world().resource::<planet::Chunks>().built.is_empty(), "no ground streams around the star");
+    // The pilot came along, in the seat.
+    let (pos, _, _) = player(&mut app);
+    let ship = ship_entity(&mut app);
+    assert!(pos.distance(app.world().get::<Transform>(ship).unwrap().translation) < 3.0);
+}
+
+#[test]
+fn flying_down_to_ash_hands_off_to_the_moon_and_streams_its_ground() {
+    let mut app = system_app();
+    run(&mut app, 0.5);
+    board(&mut app);
+    // Five kilometres from Ash's centre, at rest over its ground.
+    let (radius, over) = (app.world().resource::<Solar>().bodies.get("ash").radius, Vec3::Y * 5000.0);
+    let (p, v) = {
+        let solar = app.world().resource::<Solar>();
+        let (p, v) = solar.bodies.convert("ash", "home", solar.epoch, over.as_dvec3(), bevy::math::DVec3::ZERO);
+        (p.as_vec3(), v.as_vec3())
+    };
+    put_ship(&mut app, p, v);
+    run(&mut app, 0.2);
+    assert_eq!(app.world().resource::<Solar>().anchor, "ash");
+    let (q, w) = ship_state(&mut app);
+    assert!(q.distance(over) < 2.0 && w.length() < 2.0, "still over the same spot, {} m off, moving {w}", q.distance(over));
+    run(&mut app, 3.0);
+    let chunks = app.world().resource::<planet::Chunks>();
+    assert!(!chunks.built.is_empty(), "Ash's ground streams in");
+    assert_eq!(app.world().resource::<planet::Planet>().sphere.body.radius, radius);
+    let g = app.world().resource::<Surface>().gravity(q, 9.8).length();
+    assert!((g - 0.475).abs() < 0.01, "Ash's 1.9 m/s² a quarter as strong at twice its radius: {g}");
+}
+
+#[test]
+fn boosting_is_capped_by_height_over_the_ground() {
+    use solar::ship::speed_cap;
+    assert_eq!(speed_cap(50.0, false), speed_cap(2000.0, false), "cruising speed near the ground");
+    assert!(speed_cap(100_000.0, false).is_infinite(), "coasting in space");
+    assert!(speed_cap(100.0, true) < speed_cap(1000.0, true) && speed_cap(1000.0, true) < speed_cap(1.0e6, true));
+    assert_eq!(speed_cap(1.0e9, true), 6000.0);
+}

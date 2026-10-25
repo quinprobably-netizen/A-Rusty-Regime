@@ -14,6 +14,11 @@ use crate::tuning::Tuning;
 #[derive(Component)]
 pub struct Frozen;
 
+/// A dynamic body the bubble never freezes, such as a ship being flown: it goes where the player
+/// goes, so it is always inside the bubble, and in flight there is rarely ground under it.
+#[derive(Component)]
+pub struct KeepAwake;
+
 /// How far inside the bubble a frozen body must come before it wakes, so a body at the edge
 /// does not flicker between the two.
 const WAKE_MARGIN: f32 = 50.0;
@@ -46,7 +51,7 @@ pub fn solidify(
 }
 
 /// A body `freeze` looks at: its kind, where it is, whether it is frozen and its colliders.
-type BodyItem<'a> = (Entity, &'a RigidBody, &'a Transform, Has<Frozen>, Option<&'a RigidBodyColliders>);
+type BodyItem<'a> = (Entity, &'a RigidBody, &'a Transform, Has<Frozen>, Has<KeepAwake>, Option<&'a RigidBodyColliders>);
 
 /// Disables the dynamic bodies, the player aside, that are outside the bubble or over ground
 /// with no collider, and wakes them once they are well inside it over solid ground.
@@ -61,16 +66,16 @@ pub fn freeze(
 ) {
     let Ok(player) = players.single() else { return };
     let bubble = tuning.terrain.bubble;
-    for (entity, body, tf, frozen, colliders) in &bodies {
+    for (entity, body, tf, frozen, awake, colliders) in &bodies {
         if *body != RigidBody::Dynamic {
             continue;
         }
         let distance = tf.translation.distance(player.translation);
         // Only asked inside the bubble, where the answer matters.
         let solid = || chunks.is_solid(origin.body(tf.translation), planet.max_depth);
-        if !frozen && (distance > bubble || !solid()) {
+        if !frozen && !awake && (distance > bubble || !solid()) {
             commands.entity(entity).insert((RigidBodyDisabled, Frozen));
-        } else if frozen && distance < bubble - WAKE_MARGIN && solid() {
+        } else if frozen && (awake || (distance < bubble - WAKE_MARGIN && solid())) {
             commands.entity(entity).remove::<(RigidBodyDisabled, Frozen)>();
             // Works around Avian 0.7 panicking with `islands/mod.rs:518 assertion failed:
             // contact.island.is_none()` when a woken body lands; drop on the next Avian upgrade.

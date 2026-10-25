@@ -19,6 +19,18 @@ impl Plugin for CameraPlugin {
     }
 }
 
+/// A craft flown in all six degrees of freedom: the camera rides behind and above it, turning
+/// with it, `dist` back and `height` up. `step` and `turn` are how far it moved and turned over
+/// the last fixed tick, so the camera can ease between ticks without its own copy of where it was
+/// (which a rebase of the origin would leave behind).
+#[derive(Component, Default)]
+pub struct ChaseCam {
+    pub dist: f32,
+    pub height: f32,
+    pub step: Vec3,
+    pub turn: Quat,
+}
+
 /// The third-person camera's offset from the eyes in view space (+X right, +Z back), pulled in
 /// over the shoulder while aiming.
 pub fn shoulder_offset(distance: f32, shoulder: f32, ads: f32) -> Vec3 {
@@ -76,16 +88,20 @@ fn spawn_camera(mut commands: Commands, tuning: Res<Tuning>) {
     ));
 }
 
+type CameraItem<'a> = (&'a mut Transform, &'a mut PlayerCamera, &'a mut Projection);
+type CameraFilter = (Without<Player>, Without<Vehicle>, Without<ChaseCam>);
+
 fn follow(
     time: Res<Time>,
     fixed: Res<Time<Fixed>>,
     view: Res<ViewAngles>,
     tuning: Res<Tuning>,
     mut player: Single<(Entity, &mut Player, &Transform, Option<&Driving>)>,
-    camera: Single<(&mut Transform, &mut PlayerCamera, &mut Projection), (Without<Player>, Without<Vehicle>)>,
+    camera: Single<CameraItem, CameraFilter>,
     aim: Option<Res<crate::weapon::Aim>>,
     scoped: Option<Res<crate::scope::Scoped>>,
     vehicles: Query<(&Transform, &Vehicle), Without<Player>>,
+    chased: Query<(&Transform, &ChaseCam), Without<Player>>,
     heightmap: Option<Res<Heightmap>>,
     menu: Option<Res<crate::menu::Menu>>,
     real: Res<Time<Real>>,
@@ -144,6 +160,18 @@ fn follow(
         }
         tf.translation = eye;
         tf.rotation = Transform::from_translation(eye).looking_at(target, Vec3::Y).rotation;
+        cam.roll = 0.0;
+    }
+
+    // Flying: behind and above the craft, rolling with it.
+    if let Some(Driving(v)) = driving
+        && let Ok((ctf, chase)) = chased.get(*v)
+    {
+        let behind = 1.0 - fixed.overstep_fraction();
+        let rot = (chase.turn.inverse().slerp(Quat::IDENTITY, 1.0 - behind) * ctf.rotation).normalize();
+        let at = ctf.translation - chase.step * behind;
+        tf.translation = at + rot * Vec3::new(0.0, chase.height, chase.dist);
+        tf.rotation = rot * Quat::from_rotation_x(-(chase.height / (chase.dist + 30.0)).atan());
         cam.roll = 0.0;
     }
 

@@ -9,6 +9,7 @@ use bevy::prelude::*;
 
 use super::quadtree::{dir_face, face_dir, NodeId, CHUNK};
 use crate::surface::{Ground, Sphere};
+use crate::system::Palette;
 #[cfg(test)]
 use crate::surface::Origin;
 #[cfg(test)]
@@ -47,6 +48,23 @@ pub struct ChunkMesh {
     #[allow(dead_code)] // splat weights for the terrain shader, not drawn yet
     pub weights: Vec<[f32; 4]>,
     pub indices: Vec<[u32; 3]>,
+}
+
+/// The linear vertex colour of the ground at body point `p` with outward normal `n`.
+pub fn paint(sphere: &Sphere, palette: &Palette, p: Vec3, n: Vec3) -> [f32; 4] {
+    let srgb = |c: [f32; 3]| Vec3::from(Color::srgb(c[0], c[1], c[2]).to_linear().to_f32_array_no_alpha());
+    let up = p.normalize_or_zero();
+    let altitude = p.length() - sphere.sea_radius();
+    let height = sphere.body.height.max(1.0);
+    let t = (altitude / height).clamp(0.0, 1.0);
+    let ground = srgb(palette.low).lerp(srgb(palette.high), t * t * (3.0 - 2.0 * t));
+    // Steep ground shows bare rock; below the sea it fades to a pale seabed.
+    let steep = ((0.92 - n.dot(up)) / 0.2).clamp(0.0, 1.0);
+    let mut c = ground.lerp(srgb(palette.rock), steep);
+    if altitude < 1.5 && sphere.body.land < 1.0 {
+        c = c.lerp(Vec3::new(0.45, 0.4, 0.28), ((1.5 - altitude) / 4.0).clamp(0.0, 1.0));
+    }
+    [c.x, c.y, c.z, 1.0]
 }
 
 /// Samples the surface over `node` and builds its chunk.
@@ -112,6 +130,13 @@ impl ChunkMesh {
             .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.positions.clone())
             .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, self.normals.clone())
             .with_inserted_indices(Indices::U32(self.indices.iter().flatten().copied().collect()))
+    }
+
+    /// The mesh with vertex colours from `palette`: lowland to highland with height, rock on the
+    /// steep slopes, a sandy seabed under the sea.
+    pub fn painted_mesh(&self, sphere: &Sphere, palette: &Palette) -> Mesh {
+        let colors: Vec<[f32; 4]> = self.positions.iter().zip(&self.normals).map(|(p, n)| paint(sphere, palette, self.center + *p, *n)).collect();
+        self.mesh().with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
     }
 
     pub fn collider(&self) -> Collider {
