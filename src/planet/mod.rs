@@ -25,7 +25,7 @@ pub const COURSE_DECK: f32 = 3.0;
 /// A small parkour course (a step, a wall to run, a ledge to mantle and a roof to slide under)
 /// on a flat deck floating over the ground at `at`, a body-coordinate surface point, built in
 /// the surface frame there. Grey boxes when the renderer is present, colliders always.
-pub fn spawn_course(world: &mut World, surface: &Surface, origin: &Origin, at: Vec3) {
+pub fn spawn_course(world: &mut World, surface: &Surface, origin: &Origin, at: Vec3) -> Vec<Entity> {
     let frame = surface.frame(at);
     let deck = Vec3::Y * COURSE_DECK;
     // (size, centre) in the frame; everything but the deck stands on the deck top.
@@ -37,6 +37,7 @@ pub fn spawn_course(world: &mut World, surface: &Surface, origin: &Origin, at: V
         (Vec3::new(6.0, 0.5, 10.0), deck + Vec3::new(16.0, 1.75, -10.0)),
     ];
     let material = world.get_resource_mut::<Assets<StandardMaterial>>().map(|mut m| m.add(Color::srgb(0.5, 0.5, 0.52)));
+    let mut spawned = Vec::new();
     for (size, centre) in boxes {
         let transform = Transform::from_translation(origin.world(at + frame * centre)).with_rotation(frame);
         let mesh = world.get_resource_mut::<Assets<Mesh>>().map(|mut m| m.add(Cuboid::from_size(size)));
@@ -44,17 +45,33 @@ pub fn spawn_course(world: &mut World, surface: &Surface, origin: &Origin, at: V
         if let (Some(mesh), Some(material)) = (mesh, material.clone()) {
             e.insert((Mesh3d(mesh), MeshMaterial3d(material)));
         }
+        spawned.push(e.id());
     }
+    spawned
 }
 
 /// Finished chunks spawned per frame at most, so a burst of builds does not stall a frame.
 const APPLIED_PER_FRAME: usize = 2;
 
 /// The streamed body: its shape, shared with the workers, and the depth of its finest chunks.
+/// `streamed` is false while the anchor is the star, which has no ground to stream.
 #[derive(Resource)]
 pub struct Planet {
     pub sphere: Arc<Sphere>,
     pub max_depth: u8,
+    pub streamed: bool,
+}
+
+impl Planet {
+    pub fn new(sphere: Arc<Sphere>, cell: f32, streamed: bool) -> Planet {
+        let max_depth = finest_depth(sphere.sea_radius(), cell);
+        Planet { sphere, max_depth, streamed }
+    }
+}
+
+/// Whether there is ground to stream.
+pub fn streaming(planet: Res<Planet>) -> bool {
+    planet.streamed
 }
 
 /// The streaming state. `wanted` is the tiling the player should see; `built` what is spawned,
@@ -157,15 +174,15 @@ impl Plugin for PlanetPlugin {
 
 /// Where `seed_ground` builds: the surface point under the course, in body coordinates.
 #[derive(Resource)]
-struct Seed {
-    at: Vec3,
+pub struct Seed {
+    pub at: Vec3,
 }
 
 /// Builds the finest leaf under the seed point and every finest leaf within two of its sides on
 /// the spot, and spawns them as `apply` would, so the player and the course have solid ground on
 /// the first tick instead of hovering while the workers catch up.
 #[allow(clippy::too_many_arguments)]
-fn seed_ground(
+pub fn seed_ground(
     mut commands: Commands,
     mut chunks: ResMut<Chunks>,
     planet: Res<Planet>,
@@ -191,13 +208,13 @@ fn seed_ground(
 /// does nothing.
 pub fn add_streaming(app: &mut App) {
     let Some(Surface::Sphere(sphere)) = app.world().get_resource::<Surface>().cloned() else { return };
-    let max_depth = finest_depth(sphere.sea_radius(), app.world().resource::<Tuning>().terrain.cell);
+    let planet = Planet::new(sphere, app.world().resource::<Tuning>().terrain.cell, true);
     origin::add_rebase(app);
-    app.insert_resource(Planet { sphere, max_depth })
+    app.insert_resource(planet)
         .init_resource::<Chunks>()
         .init_resource::<ChunkLook>()
-        .add_systems(Update, (plan, apply, bubble::solidify).chain())
-        .add_systems(FixedUpdate, (bubble::freeze.before(gravitate), bubble::hold_player).before(ControllerSet));
+        .add_systems(Update, (plan, apply, bubble::solidify).chain().run_if(streaming))
+        .add_systems(FixedUpdate, (bubble::freeze.before(gravitate), bubble::hold_player).before(ControllerSet).run_if(streaming));
 }
 
 /// Nearest the focus first; ties in a fixed order, so the same state always plans the same way.
@@ -264,14 +281,22 @@ fn plan(mut commands: Commands, planet: Res<Planet>, mut chunks: ResMut<Chunks>,
     }
 }
 
-/// The grey every chunk is drawn in, when there is a renderer.
+/// The material every chunk is drawn in, when there is a renderer: plain grey, or white under
+/// vertex colours on a body with a palette.
 #[derive(Resource)]
-pub struct ChunkLook(Option<Handle<StandardMaterial>>);
+pub struct ChunkLook(pub Option<Handle<StandardMaterial>>);
+
+impl ChunkLook {
+    pub fn for_body(sphere: &Sphere, materials: Option<Mut<Assets<StandardMaterial>>>) -> ChunkLook {
+        let base_color = if sphere.body.palette.is_some() { Color::WHITE } else { Color::srgb(0.5, 0.5, 0.52) };
+        ChunkLook(materials.map(|mut m| m.add(StandardMaterial { base_color, perceptual_roughness: 1.0, ..default() })))
+    }
+}
 
 impl FromWorld for ChunkLook {
     fn from_world(world: &mut World) -> Self {
-        let grey = StandardMaterial { base_color: Color::srgb(0.5, 0.5, 0.52), perceptual_roughness: 1.0, ..default() };
-        ChunkLook(world.get_resource_mut::<Assets<StandardMaterial>>().map(|mut m| m.add(grey)))
+        let sphere = world.resource::<Planet>().sphere.clone();
+        ChunkLook::for_body(&sphere, world.get_resource_mut::<Assets<StandardMaterial>>())
     }
 }
 
@@ -294,7 +319,11 @@ fn spawn_chunk(
     let built = Arc::new(built);
     let mut e = commands.spawn((Name::new("Chunk"), Chunk { node }, Transform::from_translation(origin.world(built.center)), RigidBody::Static));
     if let (Some(meshes), Some(grey)) = (meshes, look.0.as_ref()) {
-        e.insert((Mesh3d(meshes.add(built.mesh())), MeshMaterial3d(grey.clone())));
+        let mesh = match &planet.sphere.body.palette {
+            Some(palette) => built.painted_mesh(&planet.sphere, palette),
+            None => built.mesh(),
+        };
+        e.insert((Mesh3d(meshes.add(mesh)), MeshMaterial3d(grey.clone())));
     }
     if player_body.is_some_and(|p| node_distance(node, planet.sphere.sea_radius(), p) <= tuning.terrain.bubble) {
         e.insert(built.collider());

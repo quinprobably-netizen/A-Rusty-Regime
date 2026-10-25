@@ -176,8 +176,10 @@ mod tests {
         let n = NodeId { face: 2, depth: 3, x: 5, y: 1 };
         let kids = n.children();
         assert!(kids.iter().all(|k| k.parent() == Some(n) && (k.uv_size() - n.uv_size() / 2.0).abs() < 1e-9));
+        // Cell centres, never the parent's own edge: a point on it round-trips through tan and atan
+        // to either side depending on the platform's libm.
         for i in 0..200 {
-            let uv = n.uv_min() + Vec2::new(((i * 7) % 23) as f32 / 23.0, ((i * 11) % 19) as f32 / 19.0) * n.uv_size();
+            let uv = n.uv_min() + Vec2::new(((i * 7) % 23) as f32 + 0.5, ((i * 11) % 19) as f32 + 0.5) / Vec2::new(23.0, 19.0) * n.uv_size();
             assert_eq!(kids.iter().filter(|k| k.contains(face_dir(2, uv))).count(), 1);
         }
     }

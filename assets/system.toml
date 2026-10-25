@@ -1,5 +1,13 @@
 # The celestial bodies: each `[body.<id>]` is one round world. Missing keys take the home world's
-# values.
+# values. Bodies with an `orbit` make up the solar system level (RUST_REGIME_LEVEL=system); the
+# debug moon has none.
+
+# The star sits at the centre of the inertial frame. Everything else circles it or another body.
+[star]
+radius = 8000        # m
+gravity = 0.5        # m/s² at its surface: deep space drifts, it does not fall
+color = [1.0, 0.9, 0.75]
+soi = 5000000        # m, the whole system
 
 [body.home]
 radius = 17500       # m
@@ -14,6 +22,73 @@ land = 0.3           # fraction of the surface above water
 # The home continent: about 35 km across, with the 4 km island region at its heart where the
 # six sites go. Latitude and longitude in degrees.
 home = { lat = 12, lon = 40, core = 4000, continent = 35000 }
+name = "Haven"
+soi = 110000         # m from the centre: inside it, Haven is what physics runs on
+orbit = { parent = "star", distance = 320000, minutes = 360, phase = 0, incline = 0 }
+palette = { low = [0.22, 0.34, 0.14], high = [0.42, 0.4, 0.3], rock = [0.36, 0.33, 0.3], sea = [0.06, 0.24, 0.4] }
+air = { height = 12000, density = 1.0, tint = [1.0, 1.0, 1.0] }
+
+# Haven's moon: low gravity, so every jump goes a long way.
+[body.ash]
+name = "Ash"
+radius = 2500
+gravity = 1.9
+day_minutes = 30     # tidally locked: one turn per orbit
+tilt = 0
+seed = 23
+height = 160
+wavelength = 900
+land = 1.0
+soi = 15000
+orbit = { parent = "home", distance = 60000, minutes = 30, phase = 140, incline = 8 }
+palette = { low = [0.46, 0.45, 0.44], high = [0.62, 0.61, 0.6], rock = [0.3, 0.3, 0.31] }
+
+# The Regime's world: heavy, cold and slate grey under a thin pale sky.
+[body.bastion]
+name = "Bastion"
+radius = 5000
+gravity = 12.5
+day_minutes = 60
+tilt = 20
+seed = 31
+height = 420
+wavelength = 1400
+land = 1.0
+soi = 30000
+orbit = { parent = "star", distance = 220000, minutes = 200, phase = 25, incline = 3 }
+palette = { low = [0.3, 0.33, 0.36], high = [0.82, 0.84, 0.88], rock = [0.22, 0.23, 0.25] }
+air = { height = 6000, density = 0.6, tint = [1.6, 1.25, 1.0] }
+
+# The Scrappers' world: rust desert under a dusty orange sky.
+[body.cinder]
+name = "Cinder"
+radius = 3000
+gravity = 6.0
+day_minutes = 36
+tilt = 5
+seed = 47
+height = 260
+wavelength = 1100
+land = 1.0
+soi = 20000
+orbit = { parent = "star", distance = 420000, minutes = 520, phase = -15, incline = -4 }
+palette = { low = [0.55, 0.27, 0.12], high = [0.72, 0.48, 0.3], rock = [0.35, 0.18, 0.1] }
+air = { height = 8000, density = 0.8, tint = [5.0, 2.2, 0.8] }
+
+# The PMC's world: an airless ice ball sharing Haven's orbit, a sixth of a turn ahead.
+[body.frost]
+name = "Frost"
+radius = 4000
+gravity = 8.0
+day_minutes = 90
+tilt = 30
+seed = 59
+height = 300
+wavelength = 1600
+land = 1.0
+soi = 25000
+orbit = { parent = "star", distance = 320000, minutes = 360, phase = 30, incline = 0 }
+palette = { low = [0.78, 0.84, 0.9], high = [0.95, 0.97, 1.0], rock = [0.4, 0.46, 0.55] }
 
 # debug sphere for RUST_REGIME_LEVEL=moon
 [body.moon]
