@@ -76,6 +76,10 @@ fn main() {
         .add_plugins(level_plugin())
         .add_systems(Update, dev_screenshot.run_if(|| std::env::var_os("RUST_REGIME_SCREENSHOT").is_some()))
         .run();
+    // Picking another map started a fresh run of the game; stay until it ends.
+    if let Some(code) = menu::wait_for_relaunch() {
+        std::process::exit(code);
+    }
 }
 
 /// `RUST_REGIME_LEVEL=arena` runs the old walled arena, `RUST_REGIME_LEVEL=moon` the debug moon,

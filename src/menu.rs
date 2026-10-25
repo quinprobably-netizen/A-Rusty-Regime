@@ -340,7 +340,19 @@ fn launch(map: &MapDef) -> std::io::Result<()> {
     } else {
         cmd.env("RUST_REGIME_MODE", map.mode);
     }
-    cmd.spawn().map(drop)
+    *RELAUNCHED.lock().unwrap_or_else(|e| e.into_inner()) = Some(cmd.spawn()?);
+    Ok(())
+}
+
+/// The run [`launch`] started, which this process waits on once its own window has closed.
+static RELAUNCHED: std::sync::Mutex<Option<std::process::Child>> = std::sync::Mutex::new(None);
+
+/// Waits for the map started from the menu, if there is one, and returns its exit code. The old
+/// run must outlive it: once it exits, `cargo run` and the play script finish and the terminal
+/// closes, and that hangs up on the new run and kills it without a word.
+pub fn wait_for_relaunch() -> Option<i32> {
+    let mut child = RELAUNCHED.lock().unwrap_or_else(|e| e.into_inner()).take()?;
+    Some(child.wait().ok()?.code().unwrap_or(1))
 }
 
 /// `tuned[slot]` says whether that gunsmith slot has a part to tune.
