@@ -216,7 +216,7 @@ on average (0.79 ms at most over the first 200) and 21.0 chunks a second are app
 at `terrain.cell = 1` 0.48 ms (0.71 ms max) and 10.1 a second.
 
 ### Solar system
-`RUST_REGIME_LEVEL=system ./play.sh` starts you on a landing pad on
+`./play.sh system` (`play.bat system` on Windows) starts you on a landing pad on
 Haven, a 17.5 km world with seas, beside your ship. Press E to board. The mouse pitches
 and yaws, A and D roll, W and S thrust, Space and Ctrl lift and sink, Shift boosts, E
 again steps out, anywhere, even in mid-air. Flight assist holds you up and levels you
