@@ -1,9 +1,6 @@
 //! Gravity toward the body's centre. On a round world Avian's global `Gravity` is zero and
 //! each dynamic body gets its own pull, straight down at its position, through the force API.
 
-// Nothing in the game uses the planet yet; the planet level installs this.
-#![allow(dead_code)]
-
 use avian3d::prelude::*;
 use bevy::prelude::*;
 

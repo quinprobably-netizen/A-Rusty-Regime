@@ -935,6 +935,24 @@ fn the_player_hovers_until_the_ground_under_them_is_built() {
     assert!((body.length() - ground.length() - 0.9).abs() < 0.05, "standing on the built ground");
 }
 
+#[test]
+fn the_moon_level_starts_the_player_on_the_course() {
+    let mut app = build_app(Tuning::default());
+    drop_flat_floor(&mut app);
+    app.add_plugins(planet::PlanetPlugin { body: "moon".into() });
+    app.finish();
+    app.update();
+    let spawn = app.world().resource::<controller::WorldBounds>().spawn;
+    assert!(app.world().resource::<planet::Chunks>().is_solid(spawn), "seeded ground under the spawn after startup");
+    run(&mut app, 1.0);
+    let id = app.world_mut().query_filtered::<Entity, With<Player>>().single(app.world()).unwrap();
+    assert!(app.world().get::<planet::bubble::Held>(id).is_none(), "not held");
+    let (pos, _, state) = player(&mut app);
+    let body = app.world().resource::<Origin>().body(pos);
+    assert_eq!(state, MoveState::Ground);
+    assert!(body.distance(spawn) < 0.1, "standing on the deck at the spawn, {} m off", body.distance(spawn));
+}
+
 // --- Health and soldiers ---
 
 fn hit_player(app: &mut App, amount: f32) {

@@ -9,11 +9,13 @@ use bevy::prelude::*;
 use bevy::tasks::{block_on, poll_once, AsyncComputeTaskPool, Task};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use crate::controller::{ControllerSet, Player};
-use crate::surface::{Ground, Origin, Sphere, Surface};
+use crate::controller::{ControllerSet, Player, WorldBounds};
+use crate::surface::{Ground, Origin, Sphere, Surface, QUANTUM};
+use crate::system::System;
 use crate::tuning::Tuning;
-use chunk::{build_chunk, ChunkMesh};
+use chunk::{build_chunk, leaves_near, ChunkMesh};
 use gravity::gravitate;
 use quadtree::{finest_depth, node_distance, select_leaves, NodeId};
 
@@ -23,8 +25,6 @@ pub const COURSE_DECK: f32 = 3.0;
 /// A small parkour course (a step, a wall to run, a ledge to mantle and a roof to slide under)
 /// on a flat deck floating over the ground at `at`, a body-coordinate surface point, built in
 /// the surface frame there. Grey boxes when the renderer is present, colliders always.
-// Only the tests build it until the planet level does.
-#[allow(dead_code)]
 pub fn spawn_course(world: &mut World, surface: &Surface, origin: &Origin, at: Vec3) {
     let frame = surface.frame(at);
     let deck = Vec3::Y * COURSE_DECK;
@@ -65,7 +65,8 @@ pub struct Planet {
 pub struct Chunks {
     pub wanted: HashSet<NodeId>,
     pub built: HashMap<NodeId, Entity>,
-    pub pending: HashMap<NodeId, Task<ChunkMesh>>,
+    /// Each build yields its chunk and how long the worker took over it.
+    pub pending: HashMap<NodeId, Task<(ChunkMesh, Duration)>>,
     pub loaded: HashMap<NodeId, Arc<ChunkMesh>>,
     pub solid: HashSet<NodeId>,
 }
@@ -103,28 +104,97 @@ pub fn focus(player_world: Vec3, velocity: Vec3, origin: &Origin) -> Vec3 {
     origin.body(player_world + velocity)
 }
 
-/// A round body to stand on, streamed around the player.
-// The moon level builds it; until then only the tests stream.
-#[allow(dead_code)]
+/// A round body to stand on, streamed around the player: the debug level. The player starts on
+/// a parkour course at latitude 20°, longitude 0°.
 pub struct PlanetPlugin {
+    /// The `[body.<id>]` in `assets/system.toml`.
     pub body: String,
+}
+
+/// The unit direction at `lat`, `lon` degrees: +Y is north, longitude 0 is +X and grows east,
+/// which is -Z there.
+fn lat_lon_dir(lat: f32, lon: f32) -> Vec3 {
+    let (lat, lon) = (lat.to_radians(), lon.to_radians());
+    Vec3::new(lat.cos() * lon.cos(), lat.sin(), -lat.cos() * lon.sin())
 }
 
 impl Plugin for PlanetPlugin {
     fn build(&self, app: &mut App) {
+        let body = System::load().body(&self.body).cloned().unwrap_or_else(|| panic!("no [body.{}] in assets/system.toml", self.body));
+        let sphere = Arc::new(Sphere::new(body));
+        let surface = Surface::Sphere(sphere.clone());
+        let dir = lat_lon_dir(20.0, 0.0);
+        let at = sphere.surface_point(dir);
+        let spawn = at + surface.frame(at) * Vec3::new(0.0, COURSE_DECK + 0.95, 2.0);
+        let origin = Origin::at(spawn, QUANTUM);
+        app.insert_resource(surface.clone())
+            .insert_resource(Gravity(Vec3::ZERO))
+            .insert_resource(ClearColor(Color::srgb(0.02, 0.02, 0.05)))
+            .insert_resource(bevy::light::GlobalAmbientLight { brightness: 300.0, ..default() })
+            .insert_resource(origin)
+            .insert_resource(Seed { at })
+            // No sea on the moon and ±10 m of relief: anything 50 m under the datum has fallen through.
+            .insert_resource(WorldBounds { spawn, kill_altitude: -50.0 });
         add_streaming(app);
+        app.add_systems(FixedUpdate, gravitate.before(ControllerSet)).add_systems(
+            Startup,
+            (seed_ground, move |world: &mut World| {
+                world.spawn((
+                    Name::new("Sun"),
+                    DirectionalLight { illuminance: 10_000.0, shadow_maps_enabled: true, ..default() },
+                    bevy::light::CascadeShadowConfigBuilder { maximum_distance: 500.0, ..default() }.build(),
+                    // Also sees the shadow-only layer, so the player's hidden head still casts a shadow.
+                    bevy::camera::visibility::RenderLayers::from_layers(&[0, crate::body::SHADOW_ONLY_LAYER]),
+                    Transform::default().looking_to(-(dir + Vec3::X).normalize(), Vec3::Y),
+                ));
+                spawn_course(world, &surface, &origin, at);
+            })
+                .chain(),
+        );
+    }
+}
+
+/// Where `seed_ground` builds: the surface point under the course, in body coordinates.
+#[derive(Resource)]
+struct Seed {
+    at: Vec3,
+}
+
+/// Builds the finest leaf under the seed point and every finest leaf within two of its sides on
+/// the spot, and spawns them as `apply` would, so the player and the course have solid ground on
+/// the first tick instead of hovering while the workers catch up.
+#[allow(clippy::too_many_arguments)]
+fn seed_ground(
+    mut commands: Commands,
+    mut chunks: ResMut<Chunks>,
+    planet: Res<Planet>,
+    tuning: Res<Tuning>,
+    origin: Res<Origin>,
+    bounds: Res<WorldBounds>,
+    seed: Res<Seed>,
+    look: Res<ChunkLook>,
+    mut meshes: Option<ResMut<Assets<Mesh>>>,
+) {
+    let under = NodeId::leaf_at(seed.at.normalize(), planet.max_depth);
+    let mut nodes = leaves_near(&planet.sphere, planet.max_depth, seed.at, 2.0 * under.arc(planet.sphere.sea_radius()));
+    if !nodes.contains(&under) {
+        nodes.push(under);
+    }
+    // The player is not spawned yet; the bubble is measured from where they will be.
+    for node in nodes {
+        spawn_chunk(&mut commands, &mut chunks, &planet, &tuning, &origin, Some(bounds.spawn), meshes.as_deref_mut(), &look, build_chunk(&planet.sphere, node));
     }
 }
 
 /// Streams terrain chunks over the `Surface::Sphere` already in the app; on a flat surface it
 /// does nothing.
-#[allow(dead_code)] // called by `PlanetPlugin` and the tests
 pub fn add_streaming(app: &mut App) {
     let Some(Surface::Sphere(sphere)) = app.world().get_resource::<Surface>().cloned() else { return };
     let max_depth = finest_depth(sphere.sea_radius(), app.world().resource::<Tuning>().terrain.cell);
     origin::add_rebase(app);
     app.insert_resource(Planet { sphere, max_depth })
         .init_resource::<Chunks>()
+        .init_resource::<ChunkLook>()
         .add_systems(Update, (plan, apply, bubble::solidify).chain())
         .add_systems(FixedUpdate, (bubble::freeze.before(gravitate), bubble::hold_player).before(ControllerSet));
 }
@@ -182,12 +252,73 @@ fn plan(mut commands: Commands, planet: Res<Planet>, mut chunks: ResMut<Chunks>,
     by_nearness(&mut missing, radius, focus);
     for node in missing.into_iter().take(cap - chunks.pending.len()) {
         let sphere = planet.sphere.clone();
-        chunks.pending.insert(node, AsyncComputeTaskPool::get().spawn(async move { build_chunk(&sphere, node) }));
+        chunks.pending.insert(
+            node,
+            AsyncComputeTaskPool::get().spawn(async move {
+                let start = Instant::now();
+                let built = build_chunk(&sphere, node);
+                (built, start.elapsed())
+            }),
+        );
     }
 }
 
+/// The grey every chunk is drawn in, when there is a renderer.
+#[derive(Resource)]
+pub struct ChunkLook(Option<Handle<StandardMaterial>>);
+
+impl FromWorld for ChunkLook {
+    fn from_world(world: &mut World) -> Self {
+        let grey = StandardMaterial { base_color: Color::srgb(0.5, 0.5, 0.52), perceptual_roughness: 1.0, ..default() };
+        ChunkLook(world.get_resource_mut::<Assets<StandardMaterial>>().map(|mut m| m.add(grey)))
+    }
+}
+
+/// Spawns a built chunk and records it in `chunks`: a grey mesh when there is a renderer, and a
+/// collider if it is inside the physics bubble around `player_body`. `apply` and `seed_ground`
+/// both spawn through here, so a seeded chunk is indistinguishable from a streamed one.
+#[allow(clippy::too_many_arguments)]
+fn spawn_chunk(
+    commands: &mut Commands,
+    chunks: &mut Chunks,
+    planet: &Planet,
+    tuning: &Tuning,
+    origin: &Origin,
+    player_body: Option<Vec3>,
+    meshes: Option<&mut Assets<Mesh>>,
+    look: &ChunkLook,
+    built: ChunkMesh,
+) {
+    let node = built.node;
+    let built = Arc::new(built);
+    let mut e = commands.spawn((Name::new("Chunk"), Chunk { node }, Transform::from_translation(origin.world(built.center)), RigidBody::Static));
+    if let (Some(meshes), Some(grey)) = (meshes, look.0.as_ref()) {
+        e.insert((Mesh3d(meshes.add(built.mesh())), MeshMaterial3d(grey.clone())));
+    }
+    if player_body.is_some_and(|p| node_distance(node, planet.sphere.sea_radius(), p) <= tuning.terrain.bubble) {
+        e.insert(built.collider());
+        chunks.solid.insert(node);
+    }
+    chunks.built.insert(node, e.id());
+    chunks.loaded.insert(node, built);
+}
+
+/// Build times of the first `TIMED` streamed chunks, then the rate they are applied at.
+#[derive(Default)]
+struct ApplyStats {
+    times: Vec<Duration>,
+    window_start: Option<f32>,
+    window_count: u32,
+}
+
+const TIMED: usize = 200;
+/// Seconds over which the applied rate is averaged and logged.
+const RATE_WINDOW: f32 = 10.0;
+
 /// Spawns up to `APPLIED_PER_FRAME` finished builds: grey meshes when there is a renderer, with
-/// colliders inside the physics bubble.
+/// colliders inside the physics bubble. Logs the mean and longest build time of the first
+/// `TIMED` chunks once, then the chunks applied per second every `RATE_WINDOW` seconds while
+/// any are.
 #[allow(clippy::too_many_arguments)]
 fn apply(
     mut commands: Commands,
@@ -195,15 +326,13 @@ fn apply(
     planet: Res<Planet>,
     tuning: Res<Tuning>,
     origin: Res<Origin>,
+    time: Res<Time<Real>>,
     players: Query<&Transform, With<Player>>,
     mut meshes: Option<ResMut<Assets<Mesh>>>,
-    materials: Option<ResMut<Assets<StandardMaterial>>>,
-    mut grey: Local<Option<Handle<StandardMaterial>>>,
+    look: Res<ChunkLook>,
+    mut stats: Local<ApplyStats>,
 ) {
     let player_body = players.single().ok().map(|tf| origin.body(tf.translation));
-    if grey.is_none() {
-        *grey = materials.map(|mut m| m.add(StandardMaterial { base_color: Color::srgb(0.5, 0.5, 0.52), perceptual_roughness: 1.0, ..default() }));
-    }
     let mut ready: Vec<NodeId> = chunks.pending.keys().copied().collect();
     ready.sort_by_key(|n| (n.face, n.depth, n.x, n.y));
     let mut applied = 0;
@@ -213,19 +342,27 @@ fn apply(
         }
         // A finished task must not be polled again, so it leaves `pending` as soon as it yields.
         let Some(task) = chunks.pending.get_mut(&node) else { continue };
-        let Some(built) = block_on(poll_once(task)) else { continue };
+        let Some((built, took)) = block_on(poll_once(task)) else { continue };
         chunks.pending.remove(&node);
-        let built = Arc::new(built);
-        let mut e = commands.spawn((Name::new("Chunk"), Chunk { node }, Transform::from_translation(origin.world(built.center)), RigidBody::Static));
-        if let (Some(meshes), Some(grey)) = (meshes.as_mut(), grey.as_ref()) {
-            e.insert((Mesh3d(meshes.add(built.mesh())), MeshMaterial3d(grey.clone())));
-        }
-        if player_body.is_some_and(|p| node_distance(node, planet.sphere.sea_radius(), p) <= tuning.terrain.bubble) {
-            e.insert(built.collider());
-            chunks.solid.insert(node);
-        }
-        chunks.built.insert(node, e.id());
-        chunks.loaded.insert(node, built);
+        spawn_chunk(&mut commands, &mut chunks, &planet, &tuning, &origin, player_body, meshes.as_deref_mut(), &look, built);
         applied += 1;
+        if stats.times.len() < TIMED {
+            stats.times.push(took);
+            if stats.times.len() == TIMED {
+                let mean = stats.times.iter().sum::<Duration>() / TIMED as u32;
+                let max = stats.times.iter().max().copied().unwrap_or_default();
+                info!("chunk build at cell {} m: mean {:.2} ms, max {:.2} ms over the first {TIMED}", tuning.terrain.cell, mean.as_secs_f64() * 1e3, max.as_secs_f64() * 1e3);
+            }
+        }
+    }
+    let now = time.elapsed_secs();
+    let start = *stats.window_start.get_or_insert(now);
+    stats.window_count += applied as u32;
+    if now - start >= RATE_WINDOW {
+        if stats.window_count > 0 {
+            info!("chunks applied at cell {} m: {:.1}/s over {:.0} s", tuning.terrain.cell, stats.window_count as f32 / (now - start), now - start);
+        }
+        stats.window_start = Some(now);
+        stats.window_count = 0;
     }
 }

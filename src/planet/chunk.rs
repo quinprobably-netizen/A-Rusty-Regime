@@ -164,18 +164,15 @@ impl ChunkMesh {
     }
 }
 
-/// Static colliders for every finest-depth leaf (cells no bigger than `cell`) whose centre is
-/// within `radius` plus a chunk side of `around` (body coordinates), for headless tests.
-#[cfg(test)]
-pub fn spawn_ground(world: &mut World, sphere: &Sphere, origin: &Origin, cell: f32, around: Vec3, radius: f32) -> Vec<Arc<ChunkMesh>> {
+/// The leaves at `depth` whose centre on the ground is within `reach` of `around` (body
+/// coordinates), found by descending only into nodes that could hold one.
+pub fn leaves_near(sphere: &Sphere, depth: u8, around: Vec3, reach: f32) -> Vec<NodeId> {
     use std::f32::consts::FRAC_PI_4;
-    let depth = super::quadtree::finest_depth(sphere.sea_radius(), cell);
-    let reach = radius + NodeId::leaf_at(around, depth).arc(sphere.sea_radius());
     // A leaf can only qualify if its centre direction is within this angle of `around`'s.
     let lowest = (sphere.sea_radius() - sphere.body.height.abs()).max(1.0);
     let spread = 2.0 * (reach / (2.0 * lowest)).min(1.0).asin();
     let toward = around.normalize();
-    let mut meshes = Vec::new();
+    let mut leaves = Vec::new();
     let mut stack = NodeId::roots().to_vec();
     while let Some(node) = stack.pop() {
         if node.depth < depth {
@@ -185,10 +182,23 @@ pub fn spawn_ground(world: &mut World, sphere: &Sphere, origin: &Origin, cell: f
                 stack.extend(node.children());
             }
         } else if sphere.surface_point(node.center_dir()).distance(around) <= reach {
-            let chunk = Arc::new(build_chunk(sphere, node));
-            world.spawn((RigidBody::Static, chunk.collider(), Transform::from_translation(origin.world(chunk.center))));
-            meshes.push(chunk);
+            leaves.push(node);
         }
+    }
+    leaves
+}
+
+/// Static colliders for every finest-depth leaf (cells no bigger than `cell`) whose centre is
+/// within `radius` plus a chunk side of `around` (body coordinates), for headless tests.
+#[cfg(test)]
+pub fn spawn_ground(world: &mut World, sphere: &Sphere, origin: &Origin, cell: f32, around: Vec3, radius: f32) -> Vec<Arc<ChunkMesh>> {
+    let depth = super::quadtree::finest_depth(sphere.sea_radius(), cell);
+    let reach = radius + NodeId::leaf_at(around, depth).arc(sphere.sea_radius());
+    let mut meshes = Vec::new();
+    for node in leaves_near(sphere, depth, around, reach) {
+        let chunk = Arc::new(build_chunk(sphere, node));
+        world.spawn((RigidBody::Static, chunk.collider(), Transform::from_translation(origin.world(chunk.center))));
+        meshes.push(chunk);
     }
     meshes
 }
