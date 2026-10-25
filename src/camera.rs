@@ -68,6 +68,7 @@ fn spawn_camera(mut commands: Commands, tuning: Res<Tuning>) {
             // At ADS the rifle's stock sits a few cm from the eye; the default 0.1 m sliced it into a
             // dark ring. Bevy's reverse-Z depth keeps a small near plane precise.
             near: 0.02,
+            far: 10_000.0,
             ..default()
         }),
         Transform::default(),
@@ -106,8 +107,8 @@ fn follow(
     cam.roll += (target_roll - cam.roll) * (1.0 - (-10.0 * dt).exp());
 
     let body = p.prev_pos.lerp(player_tf.translation, fixed.overstep_fraction());
-    tf.translation = body + Vec3::Y * (p.eye_offset(&tuning) + cam.eye_correction);
-    tf.rotation = Quat::from_euler(EulerRot::YXZ, view.yaw, view.pitch, cam.roll);
+    tf.translation = body + p.up() * (p.eye_offset(&tuning) + cam.eye_correction);
+    tf.rotation = p.frame * Quat::from_euler(EulerRot::YXZ, view.yaw, view.pitch, cam.roll);
 
     // Third person: back over the right shoulder, pulled in front of anything behind.
     let third = third_person(&tuning, driving.is_some(), menu.as_deref());

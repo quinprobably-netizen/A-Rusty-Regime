@@ -134,7 +134,8 @@ fn show(
     }
 }
 
-/// Stand at the interpolated feet position, facing the view yaw; in a vehicle, sit in its seat.
+/// Stand at the interpolated feet position, upright in the player's frame, facing the view yaw; in a
+/// vehicle, sit in its seat.
 fn follow(
     fixed: Res<Time<Fixed>>,
     view: Res<ViewAngles>,
@@ -155,9 +156,9 @@ fn follow(
     }
     let center = p.prev_pos.lerp(player_tf.translation, fixed.overstep_fraction());
     let (forward, _) = view.flat_basis();
-    body.translation = center - Vec3::Y * p.half_height(&tuning) - forward * BACK;
+    body.translation = center - p.up() * p.half_height(&tuning) - forward * BACK;
     // The model faces +Z; the camera looks down -Z at yaw 0.
-    body.rotation = Quat::from_rotation_y(view.yaw + PI);
+    body.rotation = p.frame * Quat::from_rotation_y(view.yaw + PI);
 }
 
 /// Air jumps left and the double-jump clip's time left, between frames.
@@ -192,7 +193,7 @@ fn animate(
     }
     jumps.left = player.air_jumps_left;
     jumps.showing = (jumps.showing - time.delta_secs()).max(0.0);
-    let mut pose = pose_for(player.state, player.crouched, speed, player.velocity.y, tuning.max_speed, wall_side, hooked, jumps.showing > 0.0);
+    let mut pose = pose_for(player.state, player.crouched, speed, player.vertical(), tuning.max_speed, wall_side, hooked, jumps.showing > 0.0);
     if let Some(v) = driving.and_then(|d| vehicles.get(d.0).ok()) {
         pose = if v.spec.kind == Kind::DirtBike { Pose::Ride } else { Pose::Drive };
     }

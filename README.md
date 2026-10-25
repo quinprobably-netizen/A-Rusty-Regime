@@ -202,6 +202,19 @@ scrub and boulders are generated meshes placed by noise (about 5500 trees), and 
 blades are built in cells around you. `[graphics]` in `tuning.toml` turns each effect
 off, scales the textures and the vegetation, and sets the exposure.
 
+### Debug moon
+`RUST_REGIME_LEVEL=moon` drops you on the moon from `assets/system.toml`: a bare 2 km
+sphere with ±10 m of grey rolling ground, a black sky and a visibly curved horizon. You
+start on a small parkour course (a step, a wall to run, a ledge to mantle, a roof to
+slide under) on a deck at latitude 20°. Gravity points at the centre wherever you walk,
+terrain chunks stream in around you on worker threads, only the ground within
+`terrain.bubble` is solid, and the world re-centres on you every 2 km. There is nothing
+to fight yet; it is the test bed for the round home world. Measured on a Ryzen 5 8500G
+(release, headless, 4 workers, 66 updates a second, running east at 7.5 m/s for 30 s
+once the first tiling had loaded): at `terrain.cell = 0.5` a chunk builds in 0.49 ms
+on average (0.79 ms at most over the first 200) and 21.0 chunks a second are applied;
+at `terrain.cell = 1` 0.48 ms (0.71 ms max) and 10.1 a second.
+
 ## Arena
 - Spawn area: dominoes, crate pyramid, barrels, balls, heavy crates
 - Ramps at 15, 30 and 45 degrees, a long wall for wall running, box steps

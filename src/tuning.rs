@@ -106,6 +106,7 @@ pub struct Tuning {
     pub graphics: Graphics,
     pub sound: Sound,
     pub world: WorldTuning,
+    pub terrain: TerrainTuning,
 
     // Look
     pub mouse_sensitivity: f32,
@@ -135,7 +136,7 @@ pub struct Tuning {
 impl Default for Tuning {
     fn default() -> Self {
         Self {
-            gravity: 17.6,
+            gravity: 9.8,
             max_speed: 7.5,
             crouch_speed_mult: 0.33,
             accelerate: 10.0,
@@ -143,7 +144,7 @@ impl Default for Tuning {
             air_speed_cap: 0.66,
             friction: 4.0,
             stop_speed: 2.2,
-            jump_speed: 6.35,
+            jump_speed: 4.74,
             jump_buffer: 0.08,
             auto_bhop: false,
             bhop_speed_cap: 0.0,
@@ -169,10 +170,10 @@ impl Default for Tuning {
             wallrun_max_time: 1.6,
             wallrun_gravity_scale: 0.25,
             wall_jump_out: 6.0,
-            wall_jump_up: 6.5,
+            wall_jump_up: 4.85,
             wall_reach: 0.3,
             air_jumps: 1,
-            air_jump_speed: 6.35,
+            air_jump_speed: 4.74,
             air_jump_redirect: 0.6,
 
             mantle_min_height: 0.45,
@@ -183,7 +184,7 @@ impl Default for Tuning {
             rocket_speed: 24.0,
             rocket_cooldown: 0.8,
             blast_radius: 3.2,
-            self_knockback: 13.0,
+            self_knockback: 9.7,
             prop_knockback: 14.0,
             prop_ref_mass: 40.0,
             push_strength: 0.6,
@@ -317,6 +318,7 @@ impl Default for Tuning {
 
             island: Island::default(),
             soldier: Soldier::default(),
+            terrain: TerrainTuning::default(),
             player: PlayerTuning::default(),
             vehicle: VehicleTuning::default(),
             loot: LootTuning::default(),
@@ -397,7 +399,7 @@ pub struct GrenadeTuning {
 
 impl Default for GrenadeTuning {
     fn default() -> Self {
-        Self { damage: 100.0, radius: 3.5, speed: 22.0, lift: 2.5, gravity: 12.0, bounce: 0.45, fuse: 2.2, self_knockback: 11.0, cooldown: 0.6, mag: 1, reload: 1.8 }
+        Self { damage: 100.0, radius: 3.5, speed: 22.0, lift: 2.5, gravity: 12.0, bounce: 0.45, fuse: 2.2, self_knockback: 8.2, cooldown: 0.6, mag: 1, reload: 1.8 }
     }
 }
 
@@ -496,6 +498,37 @@ pub struct Soldier {
 impl Default for Soldier {
     fn default() -> Self {
         Self { health: 100.0, speed: 3.5, sight: 40.0, fire_interval: 0.6, damage: 12.0, spread: 0.02, forget: 4.0, hold: 12.0, bullet_speed: 750.0, hearing: 150.0, squad_radius: 60.0, cover_time: 2.5 }
+    }
+}
+
+/// The planet's terrain and streaming (table `[terrain]`).
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct TerrainTuning {
+    /// The finest terrain cell (m).
+    pub cell: f32,
+    /// A chunk splits when the player will be nearer than this many chunk sizes in a second.
+    pub split: f32,
+    /// Solid ground and awake physics within this of the player (m).
+    pub bubble: f32,
+    /// Sites load within this (m) and unload 500 m further out.
+    pub site_range: f32,
+    /// The world re-centres on the player after this far (m).
+    pub origin_step: f32,
+    /// Chunk builds in flight.
+    pub workers: usize,
+}
+
+impl Default for TerrainTuning {
+    fn default() -> Self {
+        Self { cell: 0.5, split: 2.5, bubble: 400.0, site_range: 1500.0, origin_step: 2000.0, workers: 4 }
+    }
+}
+
+impl TerrainTuning {
+    /// A split chunk merges back only past this many chunk sizes, half a chunk beyond `split`.
+    pub fn merge(&self) -> f32 {
+        self.split + 0.5
     }
 }
 
@@ -754,5 +787,17 @@ fn reload(keys: Res<ButtonInput<KeyCode>>, mut tuning: ResMut<Tuning>) {
     if keys.just_pressed(KeyCode::F5) {
         *tuning = load();
         info!("Reloaded {PATH}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terrain_table_defaults() {
+        let t = TerrainTuning::default();
+        assert_eq!((t.cell, t.split, t.bubble, t.site_range, t.origin_step, t.workers), (0.5, 2.5, 400.0, 1500.0, 2000.0, 4));
+        assert_eq!(t.merge(), 3.0);
     }
 }

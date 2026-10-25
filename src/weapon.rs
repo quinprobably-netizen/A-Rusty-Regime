@@ -435,7 +435,7 @@ fn fire(
 
     let (player_entity, p, tf, driving) = &mut *player;
     let player_entity = *player_entity;
-    let eye = tf.translation + Vec3::Y * p.eye_offset(t);
+    let eye = tf.translation + p.up() * p.eye_offset(t);
     let filter = SpatialQueryFilter::from_excluded_entities([player_entity]);
     let mut aim = view.rotation();
     // Third person: the crosshair is the camera's, behind the shoulder. Shoot from the eyes at
@@ -447,7 +447,7 @@ fn fire(
         let from = cam.translation + dir * (eye - cam.translation).dot(dir).max(0.0);
         let reach = spatial.cast_ray(from, Dir3::new(dir).unwrap(), 2000.0, true, &filter).map_or(2000.0, |h| h.distance);
         let target = from + dir * reach.max(1.0);
-        aim = Transform::from_translation(eye).looking_at(target, Vec3::Y).rotation;
+        aim = Transform::from_translation(eye).looking_at(target, p.up()).rotation;
     }
     let forward = aim * Vec3::NEG_Z;
     // Where tracers start: the viewmodel's muzzle.

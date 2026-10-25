@@ -1,0 +1,28 @@
+# The celestial bodies: each `[body.<id>]` is one round world. Missing keys take the home world's
+# values.
+
+[body.home]
+radius = 17500       # m
+gravity = 9.8        # m/s² at sea level
+day_minutes = 48     # one rotation in real minutes
+tilt = 12            # axial tilt, degrees; the star's declination this far north until orbits exist
+sea_level = 0        # m above radius
+seed = 7
+height = 900         # tallest peaks above the sea, m
+wavelength = 2000    # base wavelength of the relief noise, m
+land = 0.3           # fraction of the surface above water
+# The home continent: about 35 km across, with the 4 km island region at its heart where the
+# six sites go. Latitude and longitude in degrees.
+home = { lat = 12, lon = 40, core = 4000, continent = 35000 }
+
+# debug sphere for RUST_REGIME_LEVEL=moon
+[body.moon]
+radius = 2000
+gravity = 9.8
+day_minutes = 48
+tilt = 0
+sea_level = 0
+seed = 11
+height = 10
+wavelength = 2000
+land = 1.0

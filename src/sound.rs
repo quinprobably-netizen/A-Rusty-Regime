@@ -393,7 +393,7 @@ fn steps(mut commands: Commands, s: Res<Sounds>, tuning: Res<Tuning>, time: Res<
         if ground && !was_ground {
             oneshot(&mut commands, &s.land, v * 0.9, 1.0);
         }
-        if was_ground && p.state == MoveState::Air && p.velocity.y > 2.0 {
+        if was_ground && p.state == MoveState::Air && p.vertical() > 2.0 {
             oneshot(&mut commands, &s.jump, v * 0.5, 1.0);
         }
     }

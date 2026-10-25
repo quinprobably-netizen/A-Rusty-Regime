@@ -211,6 +211,8 @@ fn drive(
     time: Res<Time>,
     tuning: Res<Tuning>,
     bounds: Res<WorldBounds>,
+    surface: Res<crate::surface::Surface>,
+    origin: Res<crate::surface::Origin>,
     roads: Option<Res<crate::roads::Roads>>,
     fx: Option<Res<crate::weapon::FxAssets>>,
     mut materials: Option<ResMut<Assets<StandardMaterial>>>,
@@ -293,7 +295,7 @@ fn drive(
         }
         step(&mut v, &mut forces, &spatial, entity, driver, ctl, t, roads.as_deref(), power, g, dt);
 
-        if forces.position().y < bounds.kill_y {
+        if surface.altitude(origin.body(forces.position().0)) < bounds.kill_altitude {
             let home = v.home;
             for w in &mut v.wheels {
                 *w = WheelState { normal: Vec3::Y, ..default() };
@@ -442,9 +444,7 @@ fn step(
         w.comp_vel = ((w.comp - prev) / dt).clamp(-12.0, 12.0);
 
         let t_drive = if ws.driven { per_wheel } else { 0.0 };
-        // Brake torques are real-world figures; the game's heavier gravity presses the tyres harder, so the
-        // brakes scale with it to keep the same margin over grip.
-        let brake_t = spec.brake_t * g / 9.81;
+        let brake_t = spec.brake_t;
         let t_brake = v.brake * brake_t + if v.handbrake && !ws.steers { 2.0 * brake_t } else { 0.0 };
         let i_w = spec.unsprung * ws.radius * ws.radius * 0.6;
         let mut om = w.om + t_drive / i_w * dt;

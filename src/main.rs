@@ -31,6 +31,9 @@ mod menu;
 mod gunsmith;
 mod scope;
 mod fingers;
+mod system;
+mod surface;
+mod planet;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -74,18 +77,23 @@ fn main() {
         .run();
 }
 
-/// `RUST_REGIME_LEVEL=arena` runs the old walled arena; anything else is the island.
+/// `RUST_REGIME_LEVEL=arena` runs the old walled arena, `RUST_REGIME_LEVEL=moon` the debug moon;
+/// anything else is the island.
 fn level_plugin() -> bevy::app::PluginGroupBuilder {
     use bevy::app::PluginGroup;
-    struct Level(bool);
+    struct Level(Option<String>);
     impl PluginGroup for Level {
         fn build(self) -> bevy::app::PluginGroupBuilder {
             let group = bevy::app::PluginGroupBuilder::start::<Self>();
-            let group = if self.0 { group.add(level::LevelPlugin) } else { group.add(terrain::TerrainPlugin).add(look::LookPlugin).add(veg::VegPlugin).add(world::WorldPlugin) };
+            let group = match self.0.as_deref() {
+                Some("arena") => group.add(level::LevelPlugin),
+                Some("moon") => group.add(planet::PlanetPlugin { body: "moon".into() }),
+                _ => group.add(terrain::TerrainPlugin).add(look::LookPlugin).add(veg::VegPlugin).add(world::WorldPlugin),
+            };
             if std::env::var("RUST_REGIME_MODE").is_ok_and(|m| m == "6v6") { group.add(bots::MatchPlugin) } else { group }
         }
     }
-    Level(std::env::var("RUST_REGIME_LEVEL").is_ok_and(|v| v == "arena")).build()
+    Level(std::env::var("RUST_REGIME_LEVEL").ok()).build()
 }
 
 /// Dev aid: `RUST_REGIME_SCREENSHOT=shot.png` saves a frame after a few
@@ -102,6 +110,7 @@ fn dev_screenshot(
     mut view: ResMut<input::ViewAngles>,
     mut player: Single<(&mut controller::Player, &mut Transform)>,
     heightmap: Option<Res<terrain::Heightmap>>,
+    surface: Res<surface::Surface>,
     vehicles: Query<(&Transform, &vehicle::Vehicle, Option<&Children>), Without<controller::Player>>,
 ) {
     use bevy::render::view::screenshot::{Screenshot, save_to_disk};
@@ -130,7 +139,10 @@ fn dev_screenshot(
         if let Some(yaw) = parts.next() {
             view.yaw = yaw.to_radians();
         }
-        if let (Some(x), Some(z)) = (parts.next(), parts.next()) {
+        // A spot means nothing on a round body: there the player stays where they are.
+        if let (Some(x), Some(z)) = (parts.next(), parts.next())
+            && !matches!(*surface, surface::Surface::Sphere(_))
+        {
             let (p, tf) = &mut *player;
             let y = heightmap.as_ref().map_or(0.0, |hm| hm.height_at(x, z)) + 1.0;
             tf.translation = Vec3::new(x, y, z);
