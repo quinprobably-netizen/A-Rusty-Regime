@@ -837,6 +837,33 @@ fn walk_on_streamed_ground(rebase: bool) -> (Vec<(Vec3, MoveState)>, Vec<usize>)
 }
 
 #[test]
+fn an_idle_player_far_from_the_origin_stays_put() {
+    // Rotating the position into the frame and back each tick is not exact in f32, and the error
+    // is biased: 1.5 km out, a player standing still crept tens of centimetres in 10 s.
+    let (mut app, sphere, _) = streaming_app(4);
+    app.world_mut().resource_mut::<Tuning>().terrain.origin_step = f32::INFINITY;
+    settle(&mut app);
+    // 43 degrees north, about 1.47 km from the world origin at the moon's centre.
+    let dir = Quat::from_rotation_z(0.75) * Vec3::X;
+    let o = *app.world().resource::<Origin>();
+    set_player(&mut app, o.world(sphere.surface_point(dir) + dir), Vec3::ZERO);
+    settle(&mut app);
+    run(&mut app, 1.0);
+    let (start, _, state) = player(&mut app);
+    assert_eq!(state, MoveState::Ground, "landed");
+    assert!((1400.0..1600.0).contains(&start.length()), "{} m from the origin", start.length());
+    let mut worst = 0.0_f32;
+    for _ in 0..(10.0 / DT).round() as usize {
+        app.update();
+        let (pos, _, state) = player(&mut app);
+        assert_eq!(state, MoveState::Ground);
+        worst = worst.max(pos.distance(start));
+    }
+    eprintln!("idle creep {worst} m in 10 s at {} m from the origin", start.length());
+    assert!(worst < 1e-3, "an idle player crept {worst} m in 10 s");
+}
+
+#[test]
 fn walking_across_a_rebase_stays_grounded() {
     // A ~1 km rebase mid-walk: stale collider trees would miss the ground entirely for a tick.
     let (with, rebases) = walk_on_streamed_ground(true);

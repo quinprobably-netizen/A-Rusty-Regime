@@ -201,14 +201,24 @@ struct Hit {
 }
 
 /// Collision queries in the player's frame: positions, directions and normals
-/// going in and coming out are frame-local.
+/// going in and coming out are frame-local. Local positions are measured from `anchor`, the
+/// player's world position at the start of the tick, so a tick that does not move them maps
+/// back to exactly where they were. Rotating the whole world position into the frame and back
+/// instead is not exact in f32, and its error is biased: far from the origin an idle player
+/// crept tens of centimetres every 10 s.
 struct Space<'a, 'w, 's> {
     query: &'a SpatialQuery<'w, 's>,
     filter: SpatialQueryFilter,
     frame: Quat,
+    anchor: Vec3,
 }
 
 impl Space<'_, '_, '_> {
+    /// The world position of the frame-local `pos`.
+    fn world(&self, pos: Vec3) -> Vec3 {
+        self.anchor + self.frame * pos
+    }
+
     fn cast(&self, shape: &Collider, pos: Vec3, dir: Vec3, max: f32) -> Option<Hit> {
         let dir = Dir3::new(self.frame * dir).ok()?;
         let config = ShapeCastConfig {
@@ -218,19 +228,19 @@ impl Space<'_, '_, '_> {
             ..ShapeCastConfig::DEFAULT
         };
         self.query
-            .cast_shape(shape, self.frame * pos, self.frame, dir, &config, &self.filter)
+            .cast_shape(shape, self.world(pos), self.frame, dir, &config, &self.filter)
             .map(|h| Hit { distance: h.distance, normal: self.frame.inverse() * h.normal1, entity: h.entity })
     }
 
     fn ray(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<Hit> {
         let dir = Dir3::new(self.frame * dir).ok()?;
         self.query
-            .cast_ray(self.frame * origin, dir, max, true, &self.filter)
+            .cast_ray(self.world(origin), dir, max, true, &self.filter)
             .map(|h| Hit { distance: h.distance, normal: self.frame.inverse() * h.normal, entity: h.entity })
     }
 
     fn fits(&self, shape: &Collider, pos: Vec3) -> bool {
-        self.query.shape_intersections(shape, self.frame * pos, self.frame, &self.filter).is_empty()
+        self.query.shape_intersections(shape, self.world(pos), self.frame, &self.filter).is_empty()
     }
 
     /// Quake-style collide and slide. Returns true if a wall (non-walkable
@@ -383,10 +393,11 @@ fn player_tick(
             continue;
         }
 
-        // Into the frame: from here until `leave_frame` every vector is frame-local.
+        // Into the frame: from here until `leave_frame` every vector is frame-local, and
+        // positions are measured from where the player starts the tick.
         let frame = p.frame;
-        let space = Space { query: &spatial, filter: SpatialQueryFilter::from_excluded_entities([entity]), frame };
-        let mut pos = frame.inverse() * world_pos;
+        let space = Space { query: &spatial, filter: SpatialQueryFilter::from_excluded_entities([entity]), frame, anchor: world_pos };
+        let mut pos = Vec3::ZERO;
         p.velocity = frame.inverse() * p.velocity;
         p.wall_normal = frame.inverse() * p.wall_normal;
         p.last_wall = p.last_wall.map(|n| frame.inverse() * n);
@@ -508,11 +519,11 @@ fn player_tick(
                 if input.movement.y > 0.5 {
                     if let Some(m) = try_mantle(&space, &p, &shape, pos, forward, vel, t) {
                         // A mantle stores world points.
-                        p.mantle = Some(Mantle { from: frame * m.from, mid: frame * m.mid, to: frame * m.to, exit_velocity: frame * m.exit_velocity, ..m });
+                        p.mantle = Some(Mantle { from: space.world(m.from), mid: space.world(m.mid), to: space.world(m.to), exit_velocity: frame * m.exit_velocity, ..m });
                         p.air_jumps_left = t.air_jumps;
                         p.state = MoveState::Mantle;
                         p.velocity = Vec3::ZERO;
-                        leave_frame(&mut p, &mut tf, pos);
+                        leave_frame(&mut p, &mut tf, space.world(pos));
                         continue;
                     }
                 }
@@ -522,7 +533,7 @@ fn player_tick(
         }
 
         p.velocity = vel;
-        leave_frame(&mut p, &mut tf, pos);
+        leave_frame(&mut p, &mut tf, space.world(pos));
 
         // Shove dynamic props we ran into.
         let mut pushed: Vec<Entity> = Vec::new();
@@ -541,13 +552,14 @@ fn player_tick(
     }
 }
 
-/// Rotates the tick's frame-local position, velocity and wall normals back out to the world.
-fn leave_frame(p: &mut Player, tf: &mut Transform, pos: Vec3) {
+/// Rotates the tick's frame-local velocity and wall normals back out to the world and moves the
+/// player to `world_pos`, the tick's end position from `Space::world`.
+fn leave_frame(p: &mut Player, tf: &mut Transform, world_pos: Vec3) {
     let frame = p.frame;
     p.velocity = frame * p.velocity;
     p.wall_normal = frame * p.wall_normal;
     p.last_wall = p.last_wall.map(|n| frame * n);
-    tf.translation = frame * pos;
+    tf.translation = world_pos;
     tf.rotation = frame;
 }
 
