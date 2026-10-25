@@ -46,9 +46,10 @@ pub fn third_person(tuning: &Tuning, driving: bool, menu: Option<&crate::menu::M
     tuning.third_person && !driving && menu.is_none_or(|m| m.playing)
 }
 
-/// T flips between first and third person, and the settings remember it.
-fn toggle_view(keys: Res<ButtonInput<KeyCode>>, menu: Option<Res<crate::menu::Menu>>, mut tuning: ResMut<Tuning>, settings: Option<ResMut<crate::menu::Settings>>) {
-    if !keys.just_pressed(KeyCode::KeyT) || menu.is_some_and(|m| !m.playing) {
+/// T or R3 flips between first and third person, and the settings remember it.
+fn toggle_view(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, menu: Option<Res<crate::menu::Menu>>, mut tuning: ResMut<Tuning>, settings: Option<ResMut<crate::menu::Settings>>) {
+    let pressed = keys.just_pressed(KeyCode::KeyT) || pads.iter().any(|p| p.just_pressed(GamepadButton::RightThumb));
+    if !pressed || menu.is_some_and(|m| !m.playing) {
         return;
     }
     tuning.third_person = !tuning.third_person;

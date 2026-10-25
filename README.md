@@ -23,25 +23,28 @@ First build takes a while. Linux needs `libasound2-dev libudev-dev libwayland-de
 `RUST_REGIME_SCREENSHOT=shot.png cargo run --release` saves a frame and quits (handy with Xvfb + lavapipe on a box with no GPU).
 
 ## Controls
-| Action | Keyboard / mouse | Gamepad |
+| Action | Keyboard / mouse | Gamepad (Titanfall 2 style) |
 |---|---|---|
 | Move | WASD | Left stick (analog) |
 | Look | Mouse (click to lock) | Right stick |
 | Menu / pause | Esc | Start |
 | Jump / wall jump / double jump | Space | A / Cross |
-| Grapple (fire, press again to let go) | G or mouse 4 | L3 |
-| Wardrobe (at the camp locker) | E, then arrows, 1 2 3 | |
-| Crouch / slide | Ctrl, Shift or C | B / Circle, L3 or LT |
+| Crouch / slide | Ctrl, Shift or C | B / Circle or L3 |
 | Fire | Left mouse | RT |
 | Aim down sights | Right mouse | LT |
-| Flashlight | F | |
-| Weapon 1-4 | 1 2 3 4 | D-pad up / right / down / left |
-| Next / previous weapon | Wheel down / up | RB / LB |
+| Grapple (fire, press again to let go) | G or mouse 4 | LB |
+| Reload | R | Tap X / Square |
+| Enter / leave a vehicle | E | Hold X / Square |
 | Last weapon | Q | Y / Triangle |
-| Enter / leave a vehicle | E | X / Square |
-| Drive (throttle, brake, reverse, steer) | WASD | Left stick |
+| Next / previous weapon | Wheel down / up | RB, d-pad right / left |
+| Weapon 1-10 | 1 - 9, 0 | |
+| Flashlight | F | D-pad up |
+| Inspect weapon | V | D-pad down |
+| First / third person | T | R3 |
+| Wardrobe (at the camp locker) | E, then arrows, 1 2 3 | |
+| Drive (gas, brake / reverse, steer) | WASD | RT, LT, left stick |
 | Handbrake | Space | A / Cross |
-| Respawn | R | Select / Back |
+| Respawn | Backspace | View / Select |
 | Reload `tuning.toml` | F5 | |
 
 ## Menus
