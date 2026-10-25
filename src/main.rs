@@ -34,6 +34,7 @@ mod fingers;
 mod system;
 mod surface;
 mod planet;
+mod solar;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -77,8 +78,8 @@ fn main() {
         .run();
 }
 
-/// `RUST_REGIME_LEVEL=arena` runs the old walled arena, `RUST_REGIME_LEVEL=moon` the debug moon;
-/// anything else is the island.
+/// `RUST_REGIME_LEVEL=arena` runs the old walled arena, `RUST_REGIME_LEVEL=moon` the debug moon,
+/// `RUST_REGIME_LEVEL=system` the solar system; anything else is the island.
 fn level_plugin() -> bevy::app::PluginGroupBuilder {
     use bevy::app::PluginGroup;
     struct Level(Option<String>);
@@ -88,6 +89,7 @@ fn level_plugin() -> bevy::app::PluginGroupBuilder {
             let group = match self.0.as_deref() {
                 Some("arena") => group.add(level::LevelPlugin),
                 Some("moon") => group.add(planet::PlanetPlugin { body: "moon".into() }),
+                Some("system") => group.add(solar::SolarPlugin),
                 _ => group.add(terrain::TerrainPlugin).add(look::LookPlugin).add(veg::VegPlugin).add(world::WorldPlugin),
             };
             if std::env::var("RUST_REGIME_MODE").is_ok_and(|m| m == "6v6") { group.add(bots::MatchPlugin) } else { group }

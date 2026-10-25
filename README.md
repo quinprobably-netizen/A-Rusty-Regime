@@ -215,6 +215,28 @@ once the first tiling had loaded): at `terrain.cell = 0.5` a chunk builds in 0.4
 on average (0.79 ms at most over the first 200) and 21.0 chunks a second are applied;
 at `terrain.cell = 1` 0.48 ms (0.71 ms max) and 10.1 a second.
 
+### Solar system
+`./play.sh system` (`play.bat system` on Windows) starts you on a landing pad on
+Haven, a 17.5 km world with seas, beside your ship. Press E to board. The mouse pitches
+and yaws, A and D roll, W and S thrust, Space and Ctrl lift and sink, Shift boosts, E
+again steps out, anywhere, even in mid-air. Flight assist holds you up and levels you
+below 3 km, so landing is sinking onto flat ground. Boosting is capped by your height
+over the ground and reaches 6 km/s in space; thick air drags and heats the nose.
+
+Everything is in `assets/system.toml`: a star, Haven and its low-gravity moon Ash, and
+the three faction worlds, Bastion (Regime: heavy, slate, thin pale air), Cinder
+(Scrappers: rust desert, dusty orange sky) and Frost (PMC: airless ice). They orbit and
+spin on analytic clocks, so day and night are Haven turning and the other worlds cross
+the sky where you will find them. Physics runs in the frame of the world whose sphere of
+influence you are in; flying into another one hands the ship over to its frame with the
+same path and speed, its ground streams in, and your old world shrinks to a coarse mesh in
+the sky. The top left reads where you are, your height, speed and gravity, and how far
+every other world is. `RUST_REGIME_AT=<world>,<altitude>[,<speed>]` starts you flying over
+any world, for screenshots (`home`, `ash`, `bastion`, `cinder`, `frost`).
+
+Not in yet: the island's sites, soldiers and missions on Haven, swimming and buoyancy
+(the seas are only drawn), Coriolis drift, and a gamepad layout for the ship.
+
 ## Arena
 - Spawn area: dominoes, crate pyramid, barrels, balls, heavy crates
 - Ramps at 15, 30 and 45 degrees, a long wall for wall running, box steps
