@@ -279,7 +279,7 @@ fn drive(
         }
 
         let ctl = match driver {
-            Some(_) => Controls { axis: input.movement.y, steer: -input.movement.x, handbrake: input.jump_held },
+            Some(_) => Controls { axis: (input.movement.y + input.throttle).clamp(-1.0, 1.0), steer: -input.movement.x, handbrake: input.jump_held },
             None => Controls::default(),
         };
         // Damage saps power; an empty tank or a wreck has none.

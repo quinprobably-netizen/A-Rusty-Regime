@@ -17,28 +17,33 @@ pub struct PlayerInput {
     pub jump_pressed: bool,
     pub crouch_held: bool,
     pub fire_held: bool,
-    /// Aim down sights (right mouse / left trigger).
+    /// Aim down sights (right mouse / LT).
     pub aim_held: bool,
     /// Latched like `jump_pressed`; semi-auto guns fire once per press.
     pub fire_pressed: bool,
     pub reset_pressed: bool,
-    /// Reload (R / R3), latched.
+    /// Reload (R / tap X), latched.
     pub reload_pressed: bool,
-    /// Turn the weapon over to look at it (V), latched.
+    /// Turn the weapon over to look at it (V / d-pad down), latched.
     pub inspect_pressed: bool,
     /// Weapon slot (0-based) picked with the number keys this frame.
     pub weapon_select: Option<usize>,
-    /// +1 / -1 steps from the mouse wheel, bumpers or d-pad, accumulated until a tick reads them.
+    /// +1 / -1 steps from the mouse wheel, RB or d-pad left / right, accumulated until a tick reads them.
     pub weapon_step: i32,
     /// Swap to the previous weapon (Q / Y).
     pub weapon_last: bool,
-    /// Enter or leave a vehicle (E / X), latched like `jump_pressed`.
+    /// Enter or leave a vehicle (E / hold X), latched like `jump_pressed`.
     pub interact_pressed: bool,
-    /// Use the class ability (G / mouse 4 / L3), latched like `jump_pressed`.
+    /// Use the class ability (G / mouse 4 / LB), latched like `jump_pressed`.
     pub ability_pressed: bool,
-    /// Toggle the flashlight (F), latched.
+    /// Toggle the flashlight (F / d-pad up), latched.
     pub flashlight_pressed: bool,
+    /// Analog gas minus brake from the triggers (RT - LT), -1..1; only vehicles read it.
+    pub throttle: f32,
 }
+
+/// How long X must be held to use (enter or leave a vehicle) instead of reloading.
+pub const HOLD_TO_USE: f32 = 0.3;
 
 /// Where the player is looking, in radians, relative to the player's local frame.
 #[derive(Resource, Default, Debug, Clone, Copy)]
@@ -107,10 +112,12 @@ fn gather(
     aim: Option<Res<crate::weapon::Aim>>,
     scoped: Option<Res<crate::scope::Scoped>>,
     screen: Option<Res<State<crate::menu::Screen>>>,
+    mut x_held: Local<f32>,
 ) {
     // A menu is up: nothing reaches the player, and a held key is not a latched press later.
     if screen.is_some_and(|s| *s.get() != crate::menu::Screen::Playing) {
         *input = PlayerInput::default();
+        *x_held = 0.0;
         return;
     }
     let t = &*tuning;
@@ -149,6 +156,9 @@ fn gather(
         }
     }
     let mut weapon_step = 0;
+    let mut throttle = 0.0;
+    let mut inspect = keys.just_pressed(KeyCode::KeyV);
+    let mut flashlight = keys.just_pressed(KeyCode::KeyF);
     let mut weapon_last = keys.just_pressed(KeyCode::KeyQ);
     let mut interact = keys.just_pressed(KeyCode::KeyE);
     let mut ability = keys.just_pressed(KeyCode::KeyG) || mouse.just_pressed(MouseButton::Back);
@@ -179,33 +189,35 @@ fn gather(
         look.x += curved.x * t.stick_yaw_speed * dt;
         look.y -= curved.y * t.stick_pitch_speed * dt * invert;
 
+        // Titanfall 2 style: A jump, B / L3 crouch and slide, X reload (hold to use), Y swap,
+        // LT aim, RT fire, LB grapple, RB next weapon. R3 is the view toggle (see camera).
         jump_held |= pad.pressed(GamepadButton::South);
         jump_pressed |= pad.just_pressed(GamepadButton::South);
-        crouch_held |= pad.any_pressed([
-            GamepadButton::East,
-            GamepadButton::LeftThumb,
-            GamepadButton::LeftTrigger2,
-        ]);
+        crouch_held |= pad.any_pressed([GamepadButton::East, GamepadButton::LeftThumb]);
         fire_held |= pad.pressed(GamepadButton::RightTrigger2);
-        aim_held |= pad.pressed(GamepadButton::LeftTrigger);
+        aim_held |= pad.pressed(GamepadButton::LeftTrigger2);
         fire_pressed |= pad.just_pressed(GamepadButton::RightTrigger2);
-        // RB = next weapon, LB = previous, Y = last weapon, d-pad = pick a slot.
-        if pad.just_pressed(GamepadButton::RightTrigger) {
+        throttle += pad.get(GamepadButton::RightTrigger2).unwrap_or(0.0) - pad.get(GamepadButton::LeftTrigger2).unwrap_or(0.0);
+        ability |= pad.just_pressed(GamepadButton::LeftTrigger);
+        if pad.any_just_pressed([GamepadButton::RightTrigger, GamepadButton::DPadRight]) {
             weapon_step += 1;
         }
-        if pad.just_pressed(GamepadButton::LeftTrigger) {
+        if pad.just_pressed(GamepadButton::DPadLeft) {
             weapon_step -= 1;
         }
         weapon_last |= pad.just_pressed(GamepadButton::North);
-        interact |= pad.just_pressed(GamepadButton::West);
-        ability |= pad.just_pressed(GamepadButton::LeftThumb);
-        for (i, button) in [GamepadButton::DPadUp, GamepadButton::DPadRight, GamepadButton::DPadDown, GamepadButton::DPadLeft].into_iter().enumerate() {
-            if pad.just_pressed(button) {
-                weapon_select = Some(i);
-            }
-        }
+        flashlight |= pad.just_pressed(GamepadButton::DPadUp);
+        inspect |= pad.just_pressed(GamepadButton::DPadDown);
         reset |= pad.just_pressed(GamepadButton::Select);
-        reload |= pad.just_pressed(GamepadButton::RightThumb);
+    }
+
+    // X: a tap reloads on release, a hold uses once it has been down long enough.
+    if gamepads.iter().any(|p| p.pressed(GamepadButton::West)) {
+        interact |= *x_held < HOLD_TO_USE && *x_held + dt >= HOLD_TO_USE;
+        *x_held += dt;
+    } else {
+        reload |= *x_held > 0.0 && *x_held < HOLD_TO_USE;
+        *x_held = 0.0;
     }
 
     // Aiming down sights narrows the view (or a scope magnifies it), so the mouse turns it less.
@@ -224,7 +236,7 @@ fn gather(
     input.fire_pressed |= fire_pressed;
     input.reset_pressed |= reset;
     input.reload_pressed |= reload;
-    input.inspect_pressed |= keys.just_pressed(KeyCode::KeyV);
+    input.inspect_pressed |= inspect;
     if weapon_select.is_some() {
         input.weapon_select = weapon_select;
     }
@@ -232,7 +244,8 @@ fn gather(
     input.weapon_last |= weapon_last;
     input.interact_pressed |= interact;
     input.ability_pressed |= ability;
-    input.flashlight_pressed |= keys.just_pressed(KeyCode::KeyF);
+    input.flashlight_pressed |= flashlight;
+    input.throttle = throttle.clamp(-1.0, 1.0);
 }
 
 fn grab_cursor(
