@@ -315,6 +315,7 @@ const MAPS: &[MapDef] = &[
     MapDef { level: "island", mode: "", name: "ISLAND", desc: "4 km open island: sites, caches, extraction, missions" },
     MapDef { level: "island", mode: "6v6", name: "ISLAND  6V6", desc: "You and five bots against six at the fort" },
     MapDef { level: "arena", mode: "", name: "ARENA", desc: "The old walled parkour arena" },
+    MapDef { level: "system", mode: "", name: "SOLAR SYSTEM", desc: "Haven, its moon Ash and your ship: fly between worlds" },
     MapDef { level: "moon", mode: "", name: "MOON", desc: "Debug round world with a parkour course" },
 ];
 
@@ -322,7 +323,7 @@ const MAPS: &[MapDef] = &[
 fn current_map() -> usize {
     let level = std::env::var("RUST_REGIME_LEVEL").ok();
     let level = match level.as_deref() {
-        Some(l @ ("arena" | "moon")) => l,
+        Some(l @ ("arena" | "moon" | "system")) => l,
         _ => "island",
     };
     let mode = if std::env::var("RUST_REGIME_MODE").is_ok_and(|m| m == "6v6") { "6v6" } else { "" };
