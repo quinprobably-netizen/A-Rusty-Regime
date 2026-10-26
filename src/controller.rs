@@ -126,7 +126,7 @@ impl Plugin for ControllerPlugin {
         app.init_resource::<WorldBounds>()
             .init_resource::<Surface>()
             .init_resource::<Origin>()
-            .add_systems(Startup, spawn_player)
+            .add_systems(OnEnter(crate::boot::Boot::Ready), spawn_player)
             .add_systems(FixedUpdate, (player_tick, sync_hull).chain().in_set(ControllerSet));
     }
 }

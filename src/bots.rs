@@ -16,7 +16,7 @@ pub struct MatchPlugin;
 impl Plugin for MatchPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MatchState>()
-            .add_systems(Startup, setup.after(crate::island::spawn_sites).after(targets::load_assets))
+            .add_systems(OnEnter(crate::boot::Boot::Ready), setup.after(crate::island::spawn_sites))
             .add_systems(FixedUpdate, score.after(targets::TargetSet));
     }
 }

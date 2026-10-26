@@ -22,6 +22,7 @@ mod vehicle;
 mod loot;
 mod mission;
 mod bots;
+mod boot;
 mod look;
 mod veg;
 mod sound;
@@ -56,6 +57,7 @@ fn main() {
         // TF2 simulates at 66 ticks per second.
         .insert_resource(Time::<Fixed>::from_hz(66.0))
         .insert_resource(Gravity(Vec3::NEG_Y * tuning.gravity))
+        .add_plugins(boot::BootPlugin { island: is_island() })
         .add_plugins((
             tuning::TuningPlugin,
             input::InputPlugin,
@@ -81,6 +83,11 @@ fn main() {
     if let Some(code) = menu::wait_for_relaunch() {
         std::process::exit(code);
     }
+}
+
+/// Anything but the arena, the debug moon and the solar system is the island, which builds on a loading screen.
+fn is_island() -> bool {
+    !matches!(std::env::var("RUST_REGIME_LEVEL").as_deref(), Ok("arena" | "moon" | "system"))
 }
 
 /// `RUST_REGIME_LEVEL=arena` runs the old walled arena, `RUST_REGIME_LEVEL=moon` the debug moon,

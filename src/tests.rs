@@ -40,13 +40,14 @@ fn make_app(tuning: Tuning) -> App {
 /// `make_app` before `finish`, for tests that add a plugin or resources first.
 fn build_app(tuning: Tuning) -> App {
     let mut app = App::new();
-    app.add_plugins((MinimalPlugins, TransformPlugin, AssetPlugin::default(), bevy::world_serialization::WorldSerializationPlugin, bevy::mesh::MeshPlugin, PhysicsPlugins::default()))
+    app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin, TransformPlugin, AssetPlugin::default(), bevy::world_serialization::WorldSerializationPlugin, bevy::mesh::MeshPlugin, PhysicsPlugins::default()))
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(DT)))
         .insert_resource(Time::<Fixed>::from_seconds(DT as f64))
         .insert_resource(tuning)
         .insert_resource(SaveFile(None))
         .init_resource::<PlayerInput>()
         .init_resource::<ViewAngles>()
+        .add_plugins(crate::boot::BootPlugin { island: false })
         .insert_resource(crate::character::Characters::load())
         .add_plugins((ControllerPlugin, WeaponPlugin, TargetsPlugin, HealthPlugin, VehiclePlugin, LootPlugin, MissionPlugin, crate::abilities::AbilitiesPlugin));
     app.world_mut().spawn((RigidBody::Static, Collider::cuboid(200.0, 1.0, 200.0), Transform::from_xyz(0.0, -0.5, 0.0)));
@@ -307,6 +308,7 @@ fn full_game_boots_headless() {
         VehiclePlugin,
         LootPlugin,
         MissionPlugin,
+        crate::boot::BootPlugin { island: false },
         crate::level::LevelPlugin,
     ));
     app.finish();
@@ -1341,8 +1343,8 @@ fn vehicle_respawns_after_falling_off_the_world() {
     assert!(pos.y > -15.0 && (pos.xz() - Vec2::new(300.0, 300.0)).length() < 0.5, "back home, got {pos}");
 }
 
-#[test]
-fn vehicles_park_on_the_island() {
+/// The island level as `main` runs it, headless: the loading screen, then the terrain and the player.
+fn island_app() -> App {
     use bevy::render::{RenderPlugin, settings::WgpuSettings};
     let mut app = App::new();
     app.add_plugins((
@@ -1357,6 +1359,7 @@ fn vehicles_park_on_the_island() {
     .insert_resource(Gravity(Vec3::NEG_Y * Tuning::default().gravity))
     .insert_resource(SaveFile(None))
     .add_plugins((
+        crate::boot::BootPlugin { island: true },
         crate::tuning::TuningPlugin,
         crate::input::InputPlugin,
         ControllerPlugin,
@@ -1373,6 +1376,36 @@ fn vehicles_park_on_the_island() {
     ));
     app.finish();
     app.cleanup();
+    app
+}
+
+/// Run until the loading screen has let go and the world has spawned. The island builds on a
+/// background thread, so this runs in real time, up to a minute.
+fn wait_for_world(app: &mut App) {
+    let start = std::time::Instant::now();
+    while *app.world().resource::<State<crate::boot::Boot>>().get() != crate::boot::Boot::Ready {
+        assert!(start.elapsed().as_secs() < 60, "the island never finished loading");
+        app.update();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn nothing_spawns_before_the_loading_screen_lets_go() {
+    let mut app = island_app();
+    app.update();
+    assert_eq!(*app.world().resource::<State<crate::boot::Boot>>().get(), crate::boot::Boot::Loading);
+    assert!(app.world().get_resource::<terrain::Heightmap>().is_none(), "the island is still being built");
+    assert_eq!(app.world_mut().query_filtered::<Entity, With<Player>>().iter(app.world()).count(), 0);
+    wait_for_world(&mut app);
+    assert!(app.world().get_resource::<terrain::Heightmap>().is_some());
+    assert_eq!(app.world_mut().query_filtered::<Entity, With<Player>>().iter(app.world()).count(), 1);
+}
+
+#[test]
+fn vehicles_park_on_the_island() {
+    let mut app = island_app();
+    wait_for_world(&mut app);
     run(&mut app, 10.0);
     let mut q = app.world_mut().query::<(&Transform, &Vehicle)>();
     let mut n = 0;
@@ -2057,7 +2090,7 @@ fn tap(app: &mut App, key: KeyCode) {
 fn menus_stop_time_and_esc_pauses() {
     use crate::menu::{MenuPlugin, Screen};
     let mut app = build_app(Tuning::default());
-    app.add_plugins((bevy::state::app::StatesPlugin, crate::gunsmith::GunsmithPlugin, MenuPlugin))
+    app.add_plugins((crate::gunsmith::GunsmithPlugin, MenuPlugin))
         .init_resource::<ButtonInput<KeyCode>>()
         .init_resource::<ButtonInput<MouseButton>>();
     app.finish();
@@ -2109,7 +2142,7 @@ fn gamepad_b_crouches_in_game_and_only_start_pauses() {
     use crate::menu::{MenuPlugin, Screen};
     let mut app = build_app(Tuning::default());
     // The game's input plugin without Bevy's, so a pressed button is not cleared by event processing.
-    app.add_plugins((bevy::state::app::StatesPlugin, crate::input::InputPlugin, crate::gunsmith::GunsmithPlugin, MenuPlugin))
+    app.add_plugins((crate::input::InputPlugin, crate::gunsmith::GunsmithPlugin, MenuPlugin))
         .init_resource::<ButtonInput<KeyCode>>()
         .init_resource::<ButtonInput<MouseButton>>()
         .init_resource::<bevy::input::mouse::AccumulatedMouseMotion>()
@@ -2323,7 +2356,7 @@ fn third_person_camera_sits_over_the_shoulder_and_stops_at_walls() {
 fn t_switches_to_third_person_in_game() {
     use crate::menu::{MenuPlugin, Screen};
     let mut app = build_app(Tuning::default());
-    app.add_plugins((bevy::state::app::StatesPlugin, crate::gunsmith::GunsmithPlugin, MenuPlugin, crate::camera::CameraPlugin))
+    app.add_plugins((crate::gunsmith::GunsmithPlugin, MenuPlugin, crate::camera::CameraPlugin))
         .init_resource::<ButtonInput<KeyCode>>()
         .init_resource::<ButtonInput<MouseButton>>();
     app.finish();
