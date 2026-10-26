@@ -2,10 +2,15 @@
 //! colliders. `Heightmap` is plain data so the generator, the colliders,
 //! enemy placement and the tests all read the same samples.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use avian3d::prelude::*;
 use bevy::prelude::*;
+use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, poll_once};
 use fastnoise_lite::{FastNoiseLite, FractalType, NoiseType};
 
+use crate::boot::Boot;
 use crate::tuning::Island;
 
 /// `n` by `n` samples, row-major (`z * n + x`). Sample `(x, z)` sits at world
@@ -239,40 +244,97 @@ pub fn value_noise(p: Vec2) -> f32 {
     x1 + (x2 - x1) * u.y
 }
 
-/// The island level: terrain chunks, water, sun and fog.
+/// The island level: terrain chunks, water, sun and fog. The island is built on a background
+/// thread while the loading screen shows (see `boot`); the world spawns once it is `Ready`.
 pub struct TerrainPlugin;
 
 impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
-        let tuning = crate::tuning::load();
-        let island = tuning.island;
-        // With the physical sky the camera's exposure is ~30 times lower, and the sky itself lights the shade.
-        let ambient = if tuning.graphics.atmosphere { 2000.0 } else { 450.0 };
-        let start = std::time::Instant::now();
-        let mut hm = generate(&island);
-        let sites = crate::island::place(&mut hm, &island);
-        let roads = crate::roads::carve(&mut hm, &sites, &island);
-        info!("roads: {} segments", roads.segments.len());
-        info!(
-            "island: {}x{} samples, {} chunks, generated in {:.0} ms",
-            hm.n,
-            hm.n,
-            hm.chunks() * hm.chunks(),
-            start.elapsed().as_secs_f32() * 1000.0
-        );
-        for s in &sites {
-            info!("site {}: x {:.0} z {:.0} y {:.1}", s.name, s.center.x, s.center.y, s.height);
-        }
-        let camp = sites[0].origin();
-        app.insert_resource(crate::controller::WorldBounds { spawn: camp + Vec3::new(0.0, 1.0, 6.0), kill_altitude: island.water_level - 2.0 })
-            .insert_resource(crate::island::Sites(sites))
-            .insert_resource(roads)
-            .insert_resource(hm)
-            .insert_resource(ClearColor(SKY))
-            .insert_resource(bevy::light::GlobalAmbientLight { color: Color::srgb(0.75, 0.85, 1.0), brightness: ambient, ..default() })
-            .add_systems(Startup, (spawn_terrain, crate::island::spawn_sites.after(crate::targets::load_assets).after(crate::vehicle::load_assets)))
-        .add_systems(PostStartup, add_fog.run_if(|t: Res<crate::tuning::Tuning>| !t.graphics.atmosphere));
+        app.add_systems(OnEnter(Boot::Loading), start_build)
+            .add_systems(Update, finish_build.run_if(in_state(Boot::Loading)))
+            .add_systems(OnEnter(Boot::Ready), (spawn_terrain, crate::island::spawn_sites))
+            .add_systems(PostStartup, add_fog.run_if(|t: Res<crate::tuning::Tuning>| !t.graphics.atmosphere));
     }
+}
+
+/// The island being built off the main thread while the loading screen shows.
+#[derive(Resource)]
+pub struct Building {
+    task: Task<Built>,
+    /// Index into `STEPS` of the step under way; the build bumps it as each step finishes.
+    step: Arc<AtomicU32>,
+}
+
+/// The build's steps, in order. The last one is the hand-over to the world.
+const STEPS: [&str; 4] = ["Shaping the island", "Placing the sites", "Carving the roads", "Finishing"];
+
+impl Building {
+    /// How much of the build is done, from 0 to 1.
+    pub fn progress(&self) -> f32 {
+        self.step.load(Ordering::Relaxed) as f32 / (STEPS.len() - 1) as f32
+    }
+
+    /// What the build is doing right now.
+    pub fn step_label(&self) -> &'static str {
+        STEPS[(self.step.load(Ordering::Relaxed) as usize).min(STEPS.len() - 1)]
+    }
+}
+
+/// What the background build hands back to the world.
+struct Built {
+    hm: Heightmap,
+    sites: Vec<crate::island::Placed>,
+    roads: crate::roads::Roads,
+    bounds: crate::controller::WorldBounds,
+    ambient: f32,
+}
+
+fn start_build(mut commands: Commands, tuning: Res<crate::tuning::Tuning>) {
+    let (island, atmosphere) = (tuning.island.clone(), tuning.graphics.atmosphere);
+    let step = Arc::new(AtomicU32::new(0));
+    let task_step = step.clone();
+    let task = AsyncComputeTaskPool::get().spawn(async move { build(&island, atmosphere, &task_step) });
+    commands.insert_resource(Building { task, step });
+}
+
+/// Generate the island with its sites and roads. Runs on a background thread.
+fn build(island: &Island, atmosphere: bool, step: &AtomicU32) -> Built {
+    // With the physical sky the camera's exposure is ~30 times lower, and the sky itself lights the shade.
+    let ambient = if atmosphere { 2000.0 } else { 450.0 };
+    let start = std::time::Instant::now();
+    let mut hm = generate(island);
+    step.store(1, Ordering::Relaxed);
+    let sites = crate::island::place(&mut hm, island);
+    step.store(2, Ordering::Relaxed);
+    let roads = crate::roads::carve(&mut hm, &sites, island);
+    step.store(3, Ordering::Relaxed);
+    info!("roads: {} segments", roads.segments.len());
+    info!(
+        "island: {}x{} samples, {} chunks, generated in {:.0} ms",
+        hm.n,
+        hm.n,
+        hm.chunks() * hm.chunks(),
+        start.elapsed().as_secs_f32() * 1000.0
+    );
+    for s in &sites {
+        info!("site {}: x {:.0} z {:.0} y {:.1}", s.name, s.center.x, s.center.y, s.height);
+    }
+    let camp = sites[0].origin();
+    let bounds = crate::controller::WorldBounds { spawn: camp + Vec3::new(0.0, 1.0, 6.0), kill_altitude: island.water_level - 2.0 };
+    Built { hm, sites, roads, bounds, ambient }
+}
+
+/// Once the build is done, hand the island to the world. The loading screen then leaves once the textures are in.
+fn finish_build(mut commands: Commands, building: Option<ResMut<Building>>) {
+    let Some(mut building) = building else { return };
+    let Some(built) = block_on(poll_once(&mut building.task)) else { return };
+    commands.remove_resource::<Building>();
+    commands.insert_resource(built.bounds);
+    commands.insert_resource(crate::island::Sites(built.sites));
+    commands.insert_resource(built.roads);
+    commands.insert_resource(built.hm);
+    commands.insert_resource(ClearColor(SKY));
+    commands.insert_resource(bevy::light::GlobalAmbientLight { color: Color::srgb(0.75, 0.85, 1.0), brightness: built.ambient, ..default() });
 }
 
 const SKY: Color = Color::srgb(0.55, 0.7, 0.85);

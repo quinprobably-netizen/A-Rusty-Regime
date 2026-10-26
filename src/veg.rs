@@ -17,8 +17,8 @@ pub struct VegPlugin;
 
 impl Plugin for VegPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn.after(crate::terrain::spawn_terrain).after(crate::look::load))
-            .add_systems(Update, grass.run_if(|t: Res<Tuning>| t.graphics.grass));
+        app.add_systems(OnEnter(crate::boot::Boot::Ready), spawn.after(crate::terrain::spawn_terrain))
+            .add_systems(Update, grass.run_if(|t: Res<Tuning>| t.graphics.grass).run_if(resource_exists::<Heightmap>));
     }
 }
 

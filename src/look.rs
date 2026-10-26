@@ -28,7 +28,7 @@ impl Plugin for LookPlugin {
             MaterialPlugin::<SurfaceMaterial>::default(),
             MaterialPlugin::<WaterMaterial>::default(),
         ))
-        .add_systems(Startup, load.before(crate::terrain::spawn_terrain).before(crate::island::spawn_sites))
+        .add_systems(Startup, load)
         .add_systems(PostStartup, (setup_view, setup_sky))
         .add_systems(Update, mip_textures);
     }
@@ -148,8 +148,23 @@ pub struct Textures {
     pub wood: Handle<SurfaceMaterial>,
     pub metal: Handle<SurfaceMaterial>,
     pub rock: Handle<SurfaceMaterial>,
-    /// Every image, so `mip_textures` can give each a mip chain once it is loaded.
+    /// Every image still waiting for its mip chain, so `mip_textures` can give each one once it is loaded.
     images: Vec<Handle<Image>>,
+    /// How many images there were to begin with.
+    total: usize,
+}
+
+impl Textures {
+    /// The share of the images that are loaded with their mip chains built, from 0 to 1. `mip_textures`
+    /// takes an image out of `images` once it is done; a failed image never gets there, so it counts as done
+    /// here and one missing file cannot hold the loading screen up for ever.
+    pub fn loaded_fraction(&self, server: &AssetServer) -> f32 {
+        if self.total == 0 {
+            return 1.0;
+        }
+        let waiting = self.images.iter().filter(|h| !server.load_state(*h).is_failed()).count();
+        (self.total - waiting) as f32 / self.total as f32
+    }
 }
 
 /// A tiling texture; normal and roughness maps are linear.
@@ -229,7 +244,7 @@ pub fn load(
             },
         },
     });
-    commands.insert_resource(Textures { terrain, water, concrete, wood, metal, rock: rock_m, images });
+    commands.insert_resource(Textures { terrain, water, concrete, wood, metal, rock: rock_m, total: images.len(), images });
 }
 
 /// JPEGs load with one mip level, which shimmers at a distance; build a box-filtered chain for

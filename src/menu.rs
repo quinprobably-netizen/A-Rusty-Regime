@@ -458,7 +458,8 @@ impl Plugin for MenuPlugin {
             .add_systems(OnEnter(Screen::Playing), enter_play)
             .add_systems(OnEnter(Screen::Paused), enter_menu)
             .add_systems(OnEnter(Screen::Title), enter_menu)
-            .add_systems(Update, (read_input.run_if(resource_exists::<ButtonInput<KeyCode>>), act, sync, apply_live, rebuild).chain());
+            // Nothing to pick from until the world is in: the loading screen covers the title.
+            .add_systems(Update, (read_input.run_if(resource_exists::<ButtonInput<KeyCode>>), act, sync, apply_live, rebuild).chain().run_if(in_state(crate::boot::Boot::Ready)));
     }
 }
 
