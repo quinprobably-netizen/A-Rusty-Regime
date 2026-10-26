@@ -545,9 +545,12 @@ fn read_input(
     pads: Query<&Gamepad>,
     rows: Query<(&Interaction, &RowId), Changed<Interaction>>,
     arrows: Query<(&Interaction, &Arrow), Changed<Interaction>>,
+    screen: Res<State<Screen>>,
     mut nav: ResMut<Nav>,
 ) {
     let mut n = Nav::default();
+    // In the game B is crouch, so only Start pauses; in a menu B backs out too.
+    let in_menu = *screen.get() != Screen::Playing;
     let down = |n: &mut Nav, k: KeyCode, d: i32| if keys.just_pressed(k) { n.moved += d };
     down(&mut n, KeyCode::ArrowDown, 1);
     down(&mut n, KeyCode::KeyS, 1);
@@ -581,7 +584,7 @@ fn read_input(
             n.adjust -= 1;
         }
         n.select |= pad.just_pressed(GamepadButton::South);
-        n.back |= pad.any_just_pressed([GamepadButton::East, GamepadButton::Start]);
+        n.back |= pad.just_pressed(GamepadButton::Start) || (in_menu && pad.just_pressed(GamepadButton::East));
         if pad.just_pressed(GamepadButton::RightTrigger) {
             n.weapon += 1;
         }

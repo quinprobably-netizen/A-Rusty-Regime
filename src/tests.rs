@@ -2083,6 +2083,55 @@ fn menus_stop_time_and_esc_pauses() {
     assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Playing);
 }
 
+/// Press and release a gamepad button over two frames.
+fn pad_tap(app: &mut App, pad: Entity, button: GamepadButton) {
+    app.world_mut().get_mut::<Gamepad>(pad).unwrap().digital_mut().press(button);
+    app.update();
+    let mut g = app.world_mut().get_mut::<Gamepad>(pad).unwrap();
+    g.digital_mut().release(button);
+    g.digital_mut().clear();
+    app.update();
+}
+
+#[test]
+fn gamepad_b_crouches_in_game_and_only_start_pauses() {
+    use crate::menu::{MenuPlugin, Screen};
+    let mut app = build_app(Tuning::default());
+    // The game's input plugin without Bevy's, so a pressed button is not cleared by event processing.
+    app.add_plugins((bevy::state::app::StatesPlugin, crate::input::InputPlugin, crate::gunsmith::GunsmithPlugin, MenuPlugin))
+        .init_resource::<ButtonInput<KeyCode>>()
+        .init_resource::<ButtonInput<MouseButton>>()
+        .init_resource::<bevy::input::mouse::AccumulatedMouseMotion>()
+        .init_resource::<bevy::input::mouse::AccumulatedMouseScroll>()
+        .add_message::<bevy::input::gamepad::GamepadRumbleRequest>();
+    app.finish();
+    app.update();
+    let pad = app.world_mut().spawn(Gamepad::default()).id();
+    // `input::gather` reads the window's cursor; headless, a bare one stands in.
+    app.world_mut().spawn(bevy::window::CursorOptions::default());
+
+    // A picks PLAY on the title screen.
+    pad_tap(&mut app, pad, GamepadButton::South);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Playing);
+    run(&mut app, 1.0);
+
+    // B in the game crouches and leaves the menu closed.
+    app.world_mut().get_mut::<Gamepad>(pad).unwrap().digital_mut().press(GamepadButton::East);
+    app.update();
+    assert!(input(&mut app).crouch_held, "B crouches");
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Playing, "B must not pause the game");
+    let mut g = app.world_mut().get_mut::<Gamepad>(pad).unwrap();
+    g.digital_mut().release(GamepadButton::East);
+    g.digital_mut().clear();
+    app.update();
+
+    // Start pauses, B backs out of the pause menu.
+    pad_tap(&mut app, pad, GamepadButton::Start);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Paused);
+    pad_tap(&mut app, pad, GamepadButton::East);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Playing);
+}
+
 #[test]
 fn gunsmith_parts_change_the_gun_and_persist() {
     use crate::gunsmith::{Loadout, PARTS, SLOTS};
