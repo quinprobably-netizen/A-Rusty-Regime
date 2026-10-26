@@ -40,6 +40,7 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 
 fn main() {
+    input::install_pad_mappings();
     let tuning = tuning::load();
     App::new()
         .add_plugins((

@@ -2094,6 +2094,17 @@ fn pad_tap(app: &mut App, pad: Entity, button: GamepadButton) {
 }
 
 #[test]
+fn pad_mappings_join_the_users_sdl_config() {
+    // SAFETY: the only test that touches this variable.
+    unsafe { std::env::set_var("SDL_GAMECONTROLLERCONFIG", "deadbeef,Test Pad,a:b0,platform:Linux,") };
+    crate::input::install_pad_mappings();
+    let all = std::env::var("SDL_GAMECONTROLLERCONFIG").unwrap();
+    assert!(all.starts_with("deadbeef,Test Pad"), "the user's mapping comes first");
+    assert!(all.contains("\n05000000c82d00001260000001000000,8BitDo Ultimate 2,"), "Ultimate 2 over Bluetooth is listed on its own line");
+    assert!(all.lines().all(|l| l.is_empty() || l.ends_with("platform:Linux,") || l.ends_with("platform:Windows,")), "every line names a platform");
+}
+
+#[test]
 fn gamepad_b_crouches_in_game_and_only_start_pauses() {
     use crate::menu::{MenuPlugin, Screen};
     let mut app = build_app(Tuning::default());
