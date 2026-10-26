@@ -437,6 +437,8 @@ const CONTROLS: &[(&str, &str, &str)] = &[
     ("First / third person", "T", "R3"),
     ("Drive: gas, brake / reverse", "W, S", "RT, LT (or left stick)"),
     ("Steer, handbrake", "A D, Space", "Left stick, A"),
+    ("Fly: pitch / yaw, roll", "Mouse, A D", "Right stick, left stick"),
+    ("Fly: thrust, lift, boost", "W S, Space Ctrl, Shift", "RT LT, left stick, A"),
     ("Respawn", "Backspace", "View / Select"),
     ("Menu", "Esc", "Start"),
     ("Reload tuning.toml", "F5", ""),

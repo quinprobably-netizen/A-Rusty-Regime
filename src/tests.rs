@@ -2396,6 +2396,28 @@ fn the_system_starts_on_havens_pad_beside_the_ship() {
 }
 
 #[test]
+fn the_pad_flies_the_ship() {
+    let mut app = build_app(Tuning::default());
+    drop_flat_floor(&mut app);
+    app.add_plugins(solar::SolarPlugin).init_resource::<ButtonInput<KeyCode>>();
+    app.finish();
+    app.update();
+    run(&mut app, 1.0);
+    board(&mut app);
+    // Triggers thrust, the left stick lifts and rolls, A boosts; the keyboard is idle.
+    let mut i = input(&mut app);
+    i.throttle = 0.6;
+    i.movement = Vec2::new(0.5, 1.0);
+    i.jump_held = true;
+    app.update();
+    let c = app.world().resource::<ShipControls>();
+    assert!((c.thrust - 0.6).abs() < 1e-5, "RT thrusts: {}", c.thrust);
+    assert!((c.lift - 1.0).abs() < 1e-5, "stick up lifts: {}", c.lift);
+    assert!((c.turn.z + 0.5).abs() < 1e-5, "stick right rolls right: {}", c.turn.z);
+    assert!(c.boost, "A boosts");
+}
+
+#[test]
 fn the_ship_lifts_off_hovers_and_lands() {
     let mut app = system_app();
     run(&mut app, 1.0);

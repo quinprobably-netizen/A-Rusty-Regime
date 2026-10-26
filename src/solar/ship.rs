@@ -1,6 +1,7 @@
 //! The ship: a six-degree-of-freedom craft on an Avian dynamic body, boarded like a vehicle.
 //! The mouse pitches and yaws it, A and D roll, W and S thrust along the nose, Space and Ctrl
-//! lift and sink, Shift boosts. Flight assist bleeds off sideways drift and, below a few
+//! lift and sink, Shift boosts. On a pad the right stick pitches and yaws, the left stick rolls
+//! and lifts, the triggers thrust and A boosts (Battlefield / Star Citizen style). Flight assist bleeds off sideways drift and, below a few
 //! kilometres, holds the ship against gravity and levels it over the ground, so landing is a
 //! matter of sinking onto a flat spot. Speed is capped by height over the ground, low near it
 //! and up to kilometres a second in space, and thick air drags at it and heats the nose.
@@ -169,9 +170,16 @@ pub fn spawn(world: &mut World, transform: Transform) -> Entity {
     ship
 }
 
-/// Fills the stick from the keyboard and the mouse while the player flies, and keeps the view
-/// angles at rest so the mouse is read afresh each frame.
-fn controls(keys: Option<Res<ButtonInput<KeyCode>>>, mut controls: ResMut<ShipControls>, mut view: ResMut<ViewAngles>, flying: Query<(), (With<Player>, With<Driving>)>, ships: Query<&Ship>) {
+/// Fills the stick from the keyboard, the mouse and the pad while the player flies, and keeps
+/// the view angles at rest so the mouse (and right stick) is read afresh each frame.
+fn controls(
+    keys: Option<Res<ButtonInput<KeyCode>>>,
+    input: Res<PlayerInput>,
+    mut controls: ResMut<ShipControls>,
+    mut view: ResMut<ViewAngles>,
+    flying: Query<(), (With<Player>, With<Driving>)>,
+    ships: Query<&Ship>,
+) {
     if flying.is_empty() || ships.iter().all(|s| s.pilot.is_none()) {
         return;
     }
@@ -180,10 +188,11 @@ fn controls(keys: Option<Res<ButtonInput<KeyCode>>>, mut controls: ResMut<ShipCo
     view.pitch = 0.0;
     let Some(keys) = keys else { return };
     let axis = |plus: KeyCode, minus: KeyCode| keys.pressed(plus) as i32 as f32 - keys.pressed(minus) as i32 as f32;
-    controls.thrust = axis(KeyCode::KeyW, KeyCode::KeyS);
-    controls.lift = axis(KeyCode::Space, KeyCode::ControlLeft);
-    controls.turn.z = axis(KeyCode::KeyA, KeyCode::KeyD);
-    controls.boost = keys.pressed(KeyCode::ShiftLeft);
+    // Pad: RT / LT thrust, left stick up lifts and right rolls right, A boosts.
+    controls.thrust = (axis(KeyCode::KeyW, KeyCode::KeyS) + input.throttle).clamp(-1.0, 1.0);
+    controls.lift = (axis(KeyCode::Space, KeyCode::ControlLeft) + input.movement.y).clamp(-1.0, 1.0);
+    controls.turn.z = (axis(KeyCode::KeyA, KeyCode::KeyD) - input.movement.x).clamp(-1.0, 1.0);
+    controls.boost = keys.pressed(KeyCode::ShiftLeft) || input.jump_held;
 }
 
 /// E boards the nearest ship in reach, or leaves the one being flown: out to its left, moving

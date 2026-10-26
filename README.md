@@ -44,6 +44,8 @@ First build takes a while. Linux needs `libasound2-dev libudev-dev libwayland-de
 | Wardrobe (at the camp locker) | E, then arrows, 1 2 3 | |
 | Drive (gas, brake / reverse, steer) | WASD | RT, LT, left stick |
 | Handbrake | Space | A / Cross |
+| Fly: pitch / yaw, roll | Mouse, A D | Right stick, left stick left / right |
+| Fly: thrust, lift, boost | W S, Space Ctrl, Shift | RT LT, left stick up / down, A |
 | Respawn | Backspace | View / Select |
 | Reload `tuning.toml` | F5 | |
 
@@ -238,7 +240,7 @@ every other world is. `RUST_REGIME_AT=<world>,<altitude>[,<speed>]` starts you f
 any world, for screenshots (`home`, `ash`, `bastion`, `cinder`, `frost`).
 
 Not in yet: the island's sites, soldiers and missions on Haven, swimming and buoyancy
-(the seas are only drawn), Coriolis drift, and a gamepad layout for the ship.
+(the seas are only drawn) and Coriolis drift.
 
 ## Arena
 - Spawn area: dominoes, crate pyramid, barrels, balls, heavy crates
