@@ -643,13 +643,8 @@ fn act(
     file: Option<Res<SaveFile>>,
     mut exit: MessageWriter<AppExit>,
     mut closet: Closet,
-    loading: Option<Res<crate::loading::Loading>>,
 ) {
     let nav = std::mem::take(&mut *nav);
-    // The loading cover is up: the menu behind it waits.
-    if loading.is_some_and(|l| !l.done) {
-        return;
-    }
     let screen = *screen.get();
     if screen == Screen::Playing {
         if nav.back {
