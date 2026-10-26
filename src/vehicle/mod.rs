@@ -316,6 +316,7 @@ fn drive(
         input.fire_held = false;
         input.fire_pressed = false;
         input.jump_pressed = false;
+        input.aim_held = false;
     }
 }
 
