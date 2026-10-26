@@ -86,6 +86,11 @@ impl Plugin for InputPlugin {
             .add_message::<Rumble>()
             .add_systems(PreUpdate, gather.after(bevy::input::InputSystems))
             .add_systems(Update, (grab_cursor, rumble));
+        // `RUST_REGIME_PAD_DEBUG=1` logs each pad as it connects and every button it presses, to
+        // see what Linux makes of a controller (8BitDo pads in D-input mode come out scrambled).
+        if std::env::var_os("RUST_REGIME_PAD_DEBUG").is_some() {
+            app.add_systems(Update, pad_debug);
+        }
     }
 }
 
@@ -278,6 +283,21 @@ fn rumble(
                 duration: Duration::from_secs_f32(r.seconds),
                 intensity: GamepadRumbleIntensity { strong_motor: s, weak_motor: s },
             });
+        }
+    }
+}
+
+fn pad_debug(pads: Query<(Entity, &Gamepad, Option<&Name>)>, new: Query<Entity, Added<Gamepad>>) {
+    for e in &new {
+        let (_, pad, name) = pads.get(e).unwrap();
+        info!("pad {e}: {:?} vendor {:04x?} product {:04x?}", name.map(|n| n.as_str()), pad.vendor_id(), pad.product_id());
+    }
+    for (e, pad, _) in &pads {
+        for b in pad.get_just_pressed() {
+            info!("pad {e}: {b:?} down");
+        }
+        for b in pad.get_just_released() {
+            info!("pad {e}: {b:?} up");
         }
     }
 }
