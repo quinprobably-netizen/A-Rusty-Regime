@@ -10,7 +10,8 @@ use std::time::Duration;
 
 use bevy::asset::LoadState;
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
-use bevy::gltf::GltfMaterialName;
+use bevy::asset::RenderAssetUsages;
+use bevy::gltf::{GltfLoaderSettings, GltfMaterialName};
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot, WorldInstanceReady};
 use serde::{Deserialize, Serialize};
@@ -479,19 +480,35 @@ fn load(mut commands: Commands, server: Res<AssetServer>, graphs: Option<Res<Ass
     commands.insert_resource(CharacterAssets { models: HashMap::new(), weapons, queue: CHARACTERS.to_vec() });
 }
 
-/// Start the next character's load once the last one is in, sooner for characters a rig is
-/// waiting on.
-fn stream(server: Res<AssetServer>, assets: Option<ResMut<CharacterAssets>>, mut graphs: Option<ResMut<Assets<AnimationGraph>>>, data: Res<Characters>, rigs: Query<&Rig>) {
+/// The outfit a rig wears: its own, or for a soldier one picked for its team.
+fn outfit_of(data: &Characters, rig: &Rig, entity: Entity) -> Option<OutfitDef> {
+    let name = match rig.team {
+        Some(team) => data.for_team(team, entity.index().index()).unwrap_or("acolyte").to_string(),
+        None => rig.outfit.clone(),
+    };
+    data.outfit(&name).or_else(|| data.default_outfit("runner"))
+}
+
+/// Characters keep their meshes and textures on the GPU only: nothing reads them back, and a
+/// second copy in RAM cost about 150 MB each.
+fn gpu_only(s: &mut GltfLoaderSettings) {
+    s.load_meshes = RenderAssetUsages::RENDER_WORLD;
+    s.load_materials = RenderAssetUsages::RENDER_WORLD;
+}
+
+/// Start the load of a character a rig is wearing (or about to), one at a time. Characters nobody
+/// wears are never loaded: each costs hundreds of MB.
+fn stream(server: Res<AssetServer>, assets: Option<ResMut<CharacterAssets>>, mut graphs: Option<ResMut<Assets<AnimationGraph>>>, data: Res<Characters>, rigs: Query<(Entity, &Rig)>) {
     let (Some(mut assets), Some(graphs)) = (assets, graphs.as_mut()) else { return };
     let busy = assets.models.values().any(|m| !matches!(server.load_state(&m.scene), LoadState::Loaded | LoadState::Failed(_)));
     if busy || assets.queue.is_empty() {
         return;
     }
-    let wanted = |id: &&str| rigs.iter().any(|r| r.team.is_none() && data.outfit(&r.outfit).is_some_and(|o| o.character == *id));
-    let at = assets.queue.iter().position(wanted).unwrap_or(0);
+    let wanted = |id: &&str| rigs.iter().any(|(e, r)| outfit_of(&data, r, e).is_some_and(|o| o.character == *id));
+    let Some(at) = assets.queue.iter().position(wanted) else { return };
     let id = assets.queue.remove(at);
     let path = model_path(id);
-    let clip = |i: usize| server.load(GltfAssetLabel::Animation(i).from_asset(path.clone()));
+    let clip = |i: usize| server.load_builder().with_settings(gpu_only).load(GltfAssetLabel::Animation(i).from_asset(path.clone()));
     // The poses blend among themselves (the transitions set their weights) with the reload on the
     // arms; recoil is added on top of the lot.
     let mut graph = AnimationGraph::new();
@@ -500,7 +517,8 @@ fn stream(server: Res<AssetServer>, assets: Option<ResMut<CharacterAssets>>, mut
     let nodes = Pose::ALL.map(|p| graph.add_clip(clip(p.index()), 1.0, base));
     let reload = graph.add_clip(clip(RELOAD_CLIP), 1.0, base);
     let fire = graph.add_clip(clip(FIRE_CLIP), 1.0, add);
-    let model = Model { scene: server.load(GltfAssetLabel::Scene(0).from_asset(path)), graph: graphs.add(graph), nodes, reload, fire };
+    let scene = server.load_builder().with_settings(gpu_only).load(GltfAssetLabel::Scene(0).from_asset(path));
+    let model = Model { scene, graph: graphs.add(graph), nodes, reload, fire };
     assets.models.insert(id, model);
 }
 
@@ -566,12 +584,8 @@ fn dress(
         if rig.dressed {
             continue;
         }
-        let name = match rig.team {
-            Some(team) => data.for_team(team, entity.index().index()).unwrap_or("acolyte").to_string(),
-            None => rig.outfit.clone(),
-        };
-        let Some(outfit) = data.outfit(&name).or_else(|| data.default_outfit("runner")) else {
-            warn!("no outfit named {name}");
+        let Some(outfit) = outfit_of(&data, &rig, entity) else {
+            warn!("no outfit for {}", rig.outfit);
             rig.dressed = true;
             continue;
         };
