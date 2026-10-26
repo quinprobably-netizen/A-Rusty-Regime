@@ -2105,6 +2105,30 @@ fn pad_mappings_join_the_users_sdl_config() {
 }
 
 #[test]
+fn the_menu_waits_for_the_loading_screen() {
+    use crate::menu::{MenuPlugin, Screen};
+    let mut app = build_app(Tuning::default());
+    app.add_plugins((bevy::state::app::StatesPlugin, crate::gunsmith::GunsmithPlugin, MenuPlugin))
+        .init_resource::<ButtonInput<KeyCode>>()
+        .init_resource::<ButtonInput<MouseButton>>()
+        .insert_resource(crate::loading::Loading::default());
+    app.finish();
+    app.update();
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Title, "PLAY waits while loading");
+    app.world_mut().resource_mut::<crate::loading::Loading>().done = true;
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Playing, "and works once loaded");
+}
+
+#[test]
+fn loading_progress_counts_ready_rigs() {
+    assert_eq!(crate::loading::progress(0, 0), 0.0, "no rigs yet is not done");
+    assert_eq!(crate::loading::progress(1, 4), 0.25);
+    assert_eq!(crate::loading::progress(4, 4), 1.0);
+}
+
+#[test]
 fn gamepad_b_crouches_in_game_and_only_start_pauses() {
     use crate::menu::{MenuPlugin, Screen};
     let mut app = build_app(Tuning::default());
