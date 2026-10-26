@@ -45,6 +45,28 @@ pub struct PlayerInput {
 /// How long X must be held to use (enter or leave a vehicle) instead of reloading.
 pub const HOLD_TO_USE: f32 = 0.3;
 
+/// SDL mappings newer than the table gilrs ships: the 8BitDo Ultimate 2 over Bluetooth, USB
+/// and the 2.4G dongle (from SDL_GameControllerDB, zlib licence, see CREDITS.md). Without
+/// them the pad falls back to raw button codes and X / Y swap and the triggers go digital.
+const PAD_MAPPINGS: &str = "\
+05000000c82d00001260000001000000,8BitDo Ultimate 2,a:b0,b:b1,back:b10,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,dpup:h0.1,guide:b12,leftshoulder:b6,leftstick:b13,lefttrigger:a5,leftx:a0,lefty:a1,paddle1:b17,paddle2:b16,paddle3:b2,paddle4:b5,rightshoulder:b7,rightstick:b14,righttrigger:a4,rightx:a2,righty:a3,start:b11,x:b3,y:b4,platform:Linux,
+03000000c82d00001260000011010000,8BitDo Ultimate 2,a:b0,b:b1,back:b10,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,dpup:h0.1,guide:b12,leftshoulder:b6,leftstick:b13,lefttrigger:a5,leftx:a0,lefty:a1,paddle1:b17,paddle2:b16,paddle3:b2,paddle4:b5,rightshoulder:b7,rightstick:b14,righttrigger:a4,rightx:a2,righty:a3,start:b11,x:b3,y:b4,platform:Linux,
+03000000c82d00000b31000014010000,8BitDo Ultimate 2,a:b0,b:b1,back:b6,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,dpup:h0.1,guide:b8,leftshoulder:b4,leftstick:b9,lefttrigger:a2,leftx:a0,lefty:a1,rightshoulder:b5,rightstick:b10,righttrigger:a5,rightx:a3,righty:a4,start:b7,x:b2,y:b3,platform:Linux,
+03000000c82d00001260000000000000,8BitDo Ultimate 2,a:b0,b:b1,back:b10,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,dpup:h0.1,guide:b12,leftshoulder:b6,leftstick:b13,lefttrigger:b8,leftx:a0,lefty:a1,paddle1:b17,paddle2:b16,paddle3:b2,paddle4:b5,rightshoulder:b7,rightstick:b14,righttrigger:b9,rightx:a3,righty:a4,start:b11,x:b3,y:b4,platform:Windows,
+";
+
+/// Hands `PAD_MAPPINGS` to gilrs through `SDL_GAMECONTROLLERCONFIG`, keeping anything the
+/// user put there. Call before the app is built, from the main thread.
+pub fn install_pad_mappings() {
+    let mut all = std::env::var("SDL_GAMECONTROLLERCONFIG").unwrap_or_default();
+    if !all.is_empty() && !all.ends_with('\n') {
+        all.push('\n');
+    }
+    all.push_str(PAD_MAPPINGS);
+    // SAFETY: called from `main` before any other thread exists.
+    unsafe { std::env::set_var("SDL_GAMECONTROLLERCONFIG", all) };
+}
+
 /// Where the player is looking, in radians, relative to the player's local frame.
 #[derive(Resource, Default, Debug, Clone, Copy)]
 pub struct ViewAngles {
