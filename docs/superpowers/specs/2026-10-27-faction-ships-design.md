@@ -126,3 +126,19 @@ Q asked for more detailed hulls and interiors you can walk through on foot.
   is static two seconds after the pilot leaves it at rest, dynamic again once boarded. Leaving
   leaves the player standing (`Ground`) on the cabin floor, and walking aft takes them out the
   ramp onto the apron without a jump.
+
+## Round 3 (Q, 2026-10-27): detailed interiors, not boxes
+
+Every fitting inside a cabin is a real object from `tools/ships/interior.py`, built the way the
+hulls are: flight seats with bolsters, raked backs, headrests, armrests and harnesses; fold-down
+troop seats on wall brackets; church pews with carved ends and kneelers; a console with a kick
+plate, a desk of switches and a keyboard, and a raked bank of bezelled screens; stick and
+throttle on a plinth; an overhead switch panel; cabinets with proud door panels, pull handles,
+hinges and vents; bunks on tube frames with pillows and rolled blankets; crates with corner caps,
+bands, latches and stencils; oil drums with hoops; gas bottles; rope cargo nets; a gun rack;
+an equipment rack; pipe runs with saddles and a valve wheel; flanged ducts; clipped cable
+bundles; open grating floors; bolted wall lining; round ceiling lamps (caged on the Mule) that
+are `lamp.<n>` nodes the game lights the cabin from; a pressure hatch; a workbench with a vice
+and tools; a chain hoist on a ceiling rail; candelabra, censers, an altar and a font for the
+Litany. The triangle budget rises to 60 k per ship (Kestrel 44 k, Litany 52 k, Mule 51 k,
+Vantage 27 k); fittings do not collide, the cabin boxes still do.

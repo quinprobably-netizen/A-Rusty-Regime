@@ -341,6 +341,10 @@ fn dress(
             commands.entity(e).with_child((Exhaust, Mesh3d(meshes.disc.clone()), MeshMaterial3d(look.exhaust.clone()), Transform::from_rotation(x90).with_scale(Vec3::new(r, 1.0, r)), bevy::light::NotShadowCaster));
         } else if name.as_str() == "heat" {
             commands.entity(e).with_child((HeatGlow(parent.parent()), Mesh3d(meshes.nose.clone()), MeshMaterial3d(look.heat.clone()), Transform::from_scale(Vec3::new(2.0, 1.6, 4.0) * hull_scale), Visibility::Hidden, bevy::light::NotShadowCaster));
+        } else if name.starts_with("lamp.") {
+            // Cabin lamps: the hull is lit from inside, a few metres each, no shadows (the hull is
+            // one mesh, so shadow maps would cost more than the lamps are worth).
+            commands.entity(e).insert(PointLight { color: Color::srgb(1.0, 0.92, 0.8), intensity: 4.0e5, range: 7.0, radius: 0.12, shadow_maps_enabled: false, ..default() });
         } else if name.as_str() == "ramp" {
             let open = transforms.get(e).map_or(Quat::IDENTITY, |t| t.rotation);
             commands.entity(e).insert(Ramp { ship: parent.parent(), open, shut: open * spec.ramp_shut() });

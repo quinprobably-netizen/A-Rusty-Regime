@@ -1,10 +1,13 @@
 """The Regime's Litany: a cathedral in flight you can walk through. Long narrow nave with a rear
 ramp between two bell engines (a third rides the roof), a tall dorsal spire, slit-window galleries
 down each flank, buttress stabilisers with braziers, a prow blade. Slate and bone with gold ribs,
-symmetrical and pristine. Inside: pews, a lectern, an altar console, candles and gold ribs."""
+symmetrical and pristine. Inside: a
+panelled nave with pews, a lectern, candelabra and censers, the throne, the altar console
+and the altar."""
 
-from kit import (Ship, bell, block, cabin, console, cyl, handrail, hinge, label, leg, light_strip, nav_light, prism, ramp, rivets, seams,
-                 seat, side_plate, sphere, stripe, tube)
+from kit import (Ship, bell, block, cabin, cyl, handrail, hinge, label, leg, nav_light, prism, ramp, rivets, seams, side_plate, sphere,
+                 stripe, tube)
+from interior import altar, bucket_seat, cabinet, candelabra, censer, controls, dash, font, lamp, pew, turn, wall_panels
 
 REST = 2.2
 FLOOR = -1.48
@@ -84,15 +87,28 @@ def build():
     # Landing legs: two forward, two aft.
     for x, y in ((-1.1, 5.0), (1.1, 5.0), (-1.1, -6.0), (1.1, -6.0)):
         s.add(leg("leg", (x, y), -REST, -1.5, r=0.16))
-    # Inside: pews either side of the aisle, a lectern, the altar console, candles, ribs, light.
+    # Inside: the nave. Bone-panelled walls with gold bolts, five pews a side on a red runner, candle
+    # stands and ribs, censers over the aisle, a lectern, then the throne, the altar console and
+    # the altar itself under the forward bulkhead; a font and a reliquary by the door.
+    wall_panels(s, -1.38, -8.7, 8.7, FLOOR + 0.15, CEIL - 0.15, bone, n=8, bolt_mat=gold)
+    wall_panels(s, 1.38, -8.7, 8.7, FLOOR + 0.15, CEIL - 0.15, bone, n=8, bolt_mat=gold)
     for i in range(5):
-        y = -6.0 + i * 1.7
+        y = -6.2 + i * 1.7
         for sx in (-1, 1):
-            s.add(seat("pew", (sx * 0.75, y, FLOOR + 0.45), facing=1, material="leather", frame=gold, w=0.9))
-    s.add(seat("throne", (0, 5.2, FLOOR + 0.5), facing=1, material="red", frame=gold, w=0.7))
-    console(s, (0, 6.6, FLOOR + 0.55), (2.0, 0.7, 1.1), material=bone, screens=3, screen_mat="gold_light", facing=1)
+            s.add(pew("pew", (sx * 0.78, y, FLOOR + 0.45), w=0.8, facing=1, material="leather", frame=gold, wood=slate))
+    s.add(bucket_seat("throne", (0, 5.4, FLOOR + 0.5), facing=1, material="red", frame=gold, trim=gold, harness=False))
+    dash(s, (0, 6.75, FLOOR), 2.0, material=bone, screens=3, screen_mat="gold_light", facing=1, trim=gold)
+    controls(s, (0, 5.95, FLOOR), facing=1, frame=slate, grip=gold)
+    altar(s, (0, 8.1, FLOOR), (1.6, 0.6, 1.0), material=bone, cloth="red", trim=gold)
     s.add(block("lectern", (0, 3.4, FLOOR + 0.6), (0.4, 0.3, 1.2), gold, bevel=0.01))
     s.add(block("book", (0, 3.3, FLOOR + 1.22), (0.5, 0.4, 0.06), bone, bevel=0.005, rot=-20))
+    for sx in (-1, 1):
+        candelabra(s, (sx * 1.0, 4.3, FLOOR), material=gold, arms=3, h=1.3)
+    for y in (-3.5, 0.5):
+        censer(s, (0, y, CEIL), 0.55, material=gold)
+    s.add(font("font", (1.0, -8.2, FLOOR), material=bone, trim=gold))
+    c = (-1.08, -8.2, FLOOR + 0.9)
+    s.add(turn(cabinet("reliquary", c, (0.55, 0.5, 1.8), material=bone, doors=1, handle=gold, trim=gold, vents=False), c, 90))
     for i in range(6):
         y = -7.0 + i * 2.6
         for sx in (-1, 1):
@@ -101,13 +117,16 @@ def build():
             s.add(sphere("flame", (sx * 1.2, y, FLOOR + 1.36), 0.04, "gold_light", segs=6), "lights")
         s.add(block("innerrib", (0, y + 1.3, CEIL - 0.05), (2.7, 0.1, 0.1), gold, bevel=0))
         for sx in (-1, 1):
-            s.add(block("innerrib", (sx * 1.33, y + 1.3, 0), (0.1, 0.1, 2.9), gold, bevel=0))
+            s.add(block("innerrib", (sx * 1.3, y + 1.3, 0), (0.1, 0.1, 2.9), gold, bevel=0))
     for sx in (-1, 1):
-        s.add(block("banner", (sx * 1.3, 1.0, FLOOR + 1.6), (0.04, 0.8, 1.6), "red", bevel=0))
-        s.add(block("bannerbar", (sx * 1.3, 1.0, FLOOR + 2.42), (0.08, 1.0, 0.06), gold, bevel=0))
+        s.add(block("banner", (sx * 1.26, 1.0, FLOOR + 1.6), (0.04, 0.8, 1.6), "red", bevel=0))
+        s.add(block("bannerbar", (sx * 1.26, 1.0, FLOOR + 2.42), (0.08, 1.0, 0.06), gold, bevel=0))
     s.add(handrail("rail", (-1.2, -8.6, FLOOR + 0.9), (-1.2, -7.0, FLOOR + 0.9), posts=2, material=gold))
-    light_strip(s, (0, -8.0, CEIL - 0.02), (0, 6.0, CEIL - 0.02), w=0.16, material="gold_light")
-    s.add(block("aisle", (0, -1.0, FLOOR + 0.01), (1.0, 15.5, 0.02), "red", bevel=0))
+    for i, y in enumerate((-6.5, -2.5, 1.5, 5.5)):
+        lamp(s, f"lamp.{i}", (0, y, CEIL), rim=gold, r=0.14)
+    s.add(block("floor", (0, 0, FLOOR + 0.01), (2.7, 17.6, 0.02), slate, bevel=0))
+    seams(s, (0, 0, FLOOR + 0.012), (2.7, 17.6, 0.02), ys=tuple(range(-8, 9, 2)), xs=(-0.9, 0.9), material=gold, width=0.025, proud=0.006)
+    s.add(block("aisle", (0, -1.0, FLOOR + 0.03), (1.0, 15.5, 0.02), "red", bevel=0))
     s.node("heat", (0, 11.0, 0.2))
     return s
 
@@ -117,7 +136,7 @@ SPEC = {
     "size": (23.5, 9.0, 9.85),
     "rest": REST,
     "cabin": (FLOOR, CEIL, HALF),
-    "nodes": ["exhaust.0", "exhaust.1", "exhaust.2", "heat", "ramp", "light.0", "light.1", "light.2"],
+    "nodes": ["exhaust.0", "exhaust.1", "exhaust.2", "heat", "ramp", "light.0", "light.1", "light.2", "lamp.0", "lamp.1", "lamp.2", "lamp.3"],
     "view": {"cam": (-20.0, -20.0, 9.0), "look": (0, -0.5, 1.5), "lens": 40},
     "inside": {"cam": (0.3, -11.5, FLOOR + 1.6), "look": (0, 5.0, FLOOR + 1.0), "lens": 24},
 }

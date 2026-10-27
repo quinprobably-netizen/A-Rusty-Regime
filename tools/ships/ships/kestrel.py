@@ -1,10 +1,13 @@
 """The Deserters' Kestrel: a patched ex-military gunship you can walk into. Slab fuselage with a
 rear ramp, stub wings with twin pod engines and missile pods, raised canopy, chin gun, raked tail
 fin, four skids. Dark hull, pale bolted plates, orange stripes, tan canvas and tape. Inside: a
-pilot's seat and console, four jump seats, lockers, crates, a canvas roll and a light strip."""
+lined troop bay with a flight seat and console, fold-down seats, bunks, lockers, a gun rack,
+crates, pipework and grating."""
 
-from kit import (Ship, bell, block, cabin, chain, console, crate, cyl, handrail, hinge, label, light_strip, locker, nav_light, pipe,
-                 prism, ramp, rivets, seams, seat, side_plate, skid, stripe, tube)
+from kit import (Ship, bell, block, cabin, chain, cyl, hinge, label, nav_light, pipe, prism, ramp, rivets, seams, side_plate, skid, stripe,
+                 tube)
+from interior import (bucket_seat, bunk, cabinet, cable_bundle, cargo_net, controls, crate, dash, duct, extinguisher, first_aid, grating,
+                      gun_rack, jump_seat, lamp, overhead, pipe_run, turn, wall_panels)
 
 REST = 1.6
 FLOOR = -0.88
@@ -114,21 +117,48 @@ def build():
     s.add(label("DSR-07", (-1.53, 1.6, 0.6), 0.5, pale, side=-1, depth=0.01))
     s.add(label("07", (1.53, 1.6, 0.6), 0.5, orange, side=1, depth=0.01))
     s.add(label("NO STEP", (-1.53, -3.6, -0.2), 0.16, orange, side=-1, depth=0.008))
-    # Inside: cockpit forward, jump seats along the walls, lockers, crates, a canvas roll, light.
-    s.add(seat("pilot", (0, 2.6, FLOOR + 0.5), facing=1, material="leather"))
-    console(s, (0, 3.9, FLOOR + 0.5), (1.9, 0.6, 1.0), material=dark, screens=3, screen_mat="screen", facing=1)
-    s.add(block("stick", (0, 3.1, FLOOR + 0.6), (0.05, 0.05, 0.4), "black", bevel=0))
-    for sx in (-1, 1):
-        for y in (-1.4, -2.9):
-            s.add(seat("jump", (sx * 0.9, y, FLOOR + 0.5), facing=1, material=tan))
-        s.add(locker("locker", (sx * 0.95, 4.35, FLOOR + 0.95), (0.55, 0.5, 1.9), material="grey"))
-    s.add(crate("crate", (0.55, -4.2, FLOOR + 0.3), (0.7, 0.7, 0.6), material="olive"))
-    s.add(crate("crate2", (-0.6, -4.3, FLOOR + 0.25), (0.8, 0.6, 0.5), material=tan))
-    s.add(cyl("roll2", (-0.95, -0.5, FLOOR + 0.26), (-0.95, 1.2, FLOOR + 0.26), 0.25, tan, segs=12, bevel=0.02))
-    s.add(handrail("rail", (1.2, -4.6, 0.1), (1.2, -0.8, 0.1), posts=3))
-    s.add(chain("chain", (-1.1, -3.6, CEIL), (-1.1, -3.6, CEIL - 0.9), links=8))
-    light_strip(s, (0, -4.6, CEIL - 0.02), (0, 2.0, CEIL - 0.02))
-    s.add(block("floorplate", (0, -0.6, FLOOR + 0.01), (2.4, 8.8, 0.02), "gunmetal", bevel=0))
+    # Inside: a lined troop bay. Cockpit forward (flight seat, console, stick and throttle, overhead
+    # panel), three fold-down seats a side, two bunks aft to port, lockers and a gun rack to
+    # starboard, crates by the ramp, pipework and a duct along the ceiling, grating underfoot.
+    wall_panels(s, -1.28, -5.0, 4.0, FLOOR + 0.1, CEIL - 0.1, pale, n=5)
+    wall_panels(s, 1.28, -5.0, 4.0, FLOOR + 0.1, CEIL - 0.1, pale, n=5)
+    s.add(bucket_seat("pilot", (0, 2.4, FLOOR + 0.5), facing=1, material="leather", frame="gunmetal", trim=orange))
+    dash(s, (0, 3.75, FLOOR), 2.2, material=dark, screens=3, screen_mat="screen", facing=1)
+    controls(s, (0, 2.95, FLOOR), facing=1)
+    overhead(s, (0, 3.3, CEIL - 0.12), (1.2, 0.5, 0.06), material=dark, facing=1)
+    for y in (-1.0, -1.8, -2.6):
+        c = (-0.96, y, FLOOR + 0.5)
+        s.add(turn(jump_seat("jump", c, facing=1, material=tan, frame="gunmetal"), c, -90))
+    for y in (-2.0, -2.8, -3.6):
+        c = (0.96, y, FLOOR + 0.5)
+        s.add(turn(jump_seat("jump", c, facing=1, material=tan, frame="gunmetal"), c, 90))
+    for z in (FLOOR + 0.35, FLOOR + 1.05):
+        s.add(bunk("bunk", (-0.88, -4.1, z), (0.72, 1.9, 0.12), material="olive", frame="gunmetal", wall=-1))
+    s.add(cargo_net("net", (-1.22, -4.1, FLOOR + 1.95), (0.5, 1.6)))
+    for y in (0.4, 1.0):
+        c = (0.98, y, FLOOR + 0.95)
+        s.add(turn(cabinet("locker", c, (0.55, 0.5, 1.9), material="grey", doors=1), c, -90))
+    c = (0.98, 2.2, FLOOR + 0.1)
+    s.add(turn(gun_rack("rack", c, facing=1, n=3, material=dark), c, 90))
+    c = (1.18, -4.4, FLOOR + 1.4)
+    s.add(turn(first_aid("aid", c, facing=-1), c, -90))
+    s.add(extinguisher("ext", (-1.12, -4.5, FLOOR + 0.3), wall=-1))
+    s.add(crate("crate", (0.55, -4.5, FLOOR + 0.3), (0.7, 0.7, 0.6), material="olive", stencil="DSR-07"))
+    s.add(crate("crate2", (-0.35, -4.7, FLOOR + 0.25), (0.8, 0.6, 0.5), material=tan, stencil="RATIONS"))
+    s.add(cyl("roll", (-0.95, 0.0, FLOOR + 0.26), (-0.95, 1.7, FLOOR + 0.26), 0.25, tan, segs=12, bevel=0.02))
+    s.add(block("rollstrap", (-0.95, 0.5, FLOOR + 0.26), (0.54, 0.06, 0.54), "leather", bevel=0.01))
+    pipe_run(s, [(-1.1, -5.0, CEIL - 0.15), (-1.1, 3.9, CEIL - 0.15)], r=0.04, material="steel", valve_at=(-1.1, 0.5, CEIL - 0.15))
+    pipe_run(s, [(-0.98, -5.0, CEIL - 0.28), (-0.98, 3.9, CEIL - 0.28)], r=0.025, material="copper", brackets=1.4)
+    s.add(duct("duct", (1.05, -5.0, CEIL - 0.2), (1.05, 3.9, CEIL - 0.2), (0.3, 0, 0.24), material="grey"))
+    s.add(cable_bundle("cables", [(0.6, -5.0, CEIL - 0.06), (0.6, -2.0, CEIL - 0.1), (0.6, 1.0, CEIL - 0.06), (0.6, 3.9, CEIL - 0.1)]))
+    s.add(cyl("grab", (0.3, -4.6, CEIL - 0.14), (0.3, 1.6, CEIL - 0.14), 0.02, "steel", segs=8, bevel=0))
+    for y in (-4.4, -1.5, 1.4):
+        s.add(block("hanger", (0.3, y, CEIL - 0.07), (0.05, 0.04, 0.14), "steel", bevel=0))
+    s.add(chain("chain", (-0.5, -3.6, CEIL), (-0.5, -3.6, CEIL - 0.9), links=8))
+    for i, y in enumerate((-3.5, -0.5, 2.5)):
+        lamp(s, f"lamp.{i}", (0, y, CEIL), rim="gunmetal", r=0.16)
+    grating(s, (0, -0.5, FLOOR + 0.015), (2.4, 9.0))
+    s.add(stripe("doorhaz", (0, -4.95, FLOOR + 0.04), (1.6, 0.15, 0.0), "hazard"))
     s.node("heat", (0, 6.9, 0.2))
     return s
 
@@ -138,7 +168,7 @@ SPEC = {
     "size": (15.0, 12.0, 5.6),
     "rest": REST,
     "cabin": (FLOOR, CEIL, HALF),
-    "nodes": ["exhaust.0", "exhaust.1", "heat", "ramp", "light.0", "light.1", "light.2", "light.3"],
+    "nodes": ["exhaust.0", "exhaust.1", "heat", "ramp", "light.0", "light.1", "light.2", "light.3", "lamp.0", "lamp.1", "lamp.2"],
     "view": {"cam": (-13.0, -15.0, 7.0), "look": (0, -0.5, 0.5), "lens": 40},
     "inside": {"cam": (0.3, -7.5, FLOOR + 1.5), "look": (0, 3.0, FLOOR + 0.9), "lens": 24},
 }

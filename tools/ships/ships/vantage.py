@@ -1,10 +1,12 @@
 """The PMC's Vantage: a faceted interceptor with a two-seat cabin you can walk into. Angular hull
 with chamfered decks, a chamfered nose, swept wings, a canopy flush with the hull, two slot
 engines flanking a rear ramp, twin fins, blue running lights and strips, a corporate stencil.
-Gunmetal and white. Inside: pilot and co-pilot seats, a wide console, white panels, lockers."""
+Gunmetal and white. Inside: two flight seats at a
+wide console, an overhead panel, a hatch, an equipment rack, lockers, a gun cage and a bench."""
 
-from kit import (Ship, block, cabin, console, cyl, handrail, hinge, label, leg, light_strip, locker, nav_light, plan, prism, ramp, rivets,
-                 seams, seat, side_plate, sphere, stripe, tube)
+from kit import Ship, block, cabin, cyl, handrail, hinge, label, leg, nav_light, plan, prism, ramp, rivets, seams, side_plate, sphere, stripe, tube
+from interior import (bucket_seat, cabinet, cable_bundle, controls, dash, duct, extinguisher, first_aid, gun_rack, hatch, lamp, overhead,
+                      server_rack, turn, wall_panels)
 
 REST = 1.9
 FLOOR = -1.1
@@ -70,20 +72,40 @@ def build():
     for x, y in ((0.0, 3.4), (-1.0, -2.6), (1.0, -2.6)):
         s.add(leg("leg", (x, y), -REST, -1.5, r=0.1))
         s.add(block("legdoor", (x + 0.2, y, -1.6), (0.06, 0.8, 0.6), white, bevel=0.005))
-    # Inside: two seats, a wide console, white panels, lockers, blue strips, grating.
+    # Inside: a clean two-seat flight deck. White-panelled walls, two flight seats at a wide
+    # console with sticks, an overhead switch panel, a pressure hatch forward, an equipment rack,
+    # lockers and a gun cage, a cushioned bench aft, blue strips and a slim duct overhead.
+    wall_panels(s, -1.4, -5.3, 3.3, FLOOR + 0.1, CEIL - 0.1, white, n=4)
+    wall_panels(s, 1.4, -5.3, 3.3, FLOOR + 0.1, CEIL - 0.1, white, n=4)
     for x in (-0.5, 0.5):
-        s.add(seat("seat", (x, 1.4, FLOOR + 0.5), facing=1, material="black", frame=white))
-    console(s, (0, 2.6, FLOOR + 0.55), (2.4, 0.7, 1.0), material=white, screens=4, screen_mat="blue_light", facing=1)
-    s.add(block("stick", (0.5, 1.9, FLOOR + 0.6), (0.04, 0.04, 0.4), "black", bevel=0))
-    s.add(block("throttle", (-0.5, 1.9, FLOOR + 0.6), (0.08, 0.2, 0.3), "black", bevel=0))
+        s.add(bucket_seat("seat", (x, 1.3, FLOOR + 0.5), facing=1, material="black", frame=white, trim="steel"))
+        controls(s, (x, 1.85, FLOOR), facing=1, frame="black", grip="steel")
+    dash(s, (0, 2.55, FLOOR), 2.5, material=white, screens=4, screen_mat="blue_light", facing=1)
+    overhead(s, (0, 2.0, CEIL - 0.1), (1.6, 0.5, 0.06), material=white, facing=1, light_mat="blue_light")
+    s.add(hatch("hatch", (0, 3.45, FLOOR + 1.5), facing=1, r=0.34, material=gm))
+    server_rack(s, (1.0, 3.15, FLOOR + 0.95), (0.6, 0.5, 1.9), material=white)
+    c = (-1.14, 0.6, FLOOR + 0.95)
+    s.add(turn(cabinet("locker", c, (0.5, 0.45, 1.9), material=white, doors=1), c, 90))
+    c = (1.14, 0.0, FLOOR + 0.95)
+    s.add(turn(cabinet("locker", c, (0.5, 0.45, 1.9), material=white, doors=1), c, -90))
+    c = (1.14, -2.0, FLOOR + 0.1)
+    s.add(turn(gun_rack("cage", c, facing=1, n=3, material=white), c, 90))
+    s.add(block("benchbase", (-1.05, -3.5, FLOOR + 0.22), (0.6, 2.0, 0.44), gm, bevel=0.02))
+    for y in (-4.1, -3.5, -2.9):
+        s.add(block("cushion", (-1.05, y, FLOOR + 0.5), (0.56, 0.56, 0.12), "black", bevel=0.04, segs=3))
+        s.add(block("backpad", (-1.3, y, FLOOR + 0.9), (0.06, 0.56, 0.5), "black", bevel=0.03))
+    c = (-1.3, -2.1, FLOOR + 1.5)
+    s.add(turn(first_aid("aid", c, facing=-1), c, 90))
+    s.add(extinguisher("ext", (1.22, -5.0, FLOOR + 0.3), wall=1))
+    s.add(duct("duct", (0, -5.3, CEIL - 0.12), (0, 1.6, CEIL - 0.12), (0.5, 0, 0.14), material=white, flange=1.4))
+    s.add(cable_bundle("cables", [(1.2, -5.3, CEIL - 0.08), (1.2, -2.0, CEIL - 0.12), (1.2, 1.0, CEIL - 0.08), (1.2, 3.3, CEIL - 0.12)], material="grey"))
     for sx in (-1, 1):
-        s.add(side_plate("innerpanel", sx * 1.35, (-1.5, 0.2), (6.0, 1.8), white, thick=0.04))
-        s.add(locker("locker", (sx * 1.05, 3.0, FLOOR + 0.95), (0.5, 0.45, 1.9), material=white, doors=1))
-        s.add(block("innerstrip", (sx * 1.3, -1.5, CEIL - 0.04), (0.04, 6.5, 0.04), "blue_light", bevel=0), "lights")
-    s.add(handrail("rail", (1.25, -5.0, FLOOR + 1.0), (1.25, -2.0, FLOOR + 1.0), posts=2))
-    s.add(block("bench", (-1.0, -3.5, FLOOR + 0.25), (0.6, 2.0, 0.5), "black", bevel=0.02))
-    light_strip(s, (0, -4.8, CEIL - 0.02), (0, 1.0, CEIL - 0.02), w=0.1)
+        s.add(block("innerstrip", (sx * 1.33, -1.0, CEIL - 0.04), (0.04, 8.4, 0.04), "blue_light", bevel=0), "lights")
+    s.add(handrail("rail", (1.25, -5.1, FLOOR + 1.0), (1.25, -3.2, FLOOR + 1.0), posts=2))
+    for i, y in enumerate((-4.0, -1.5, 1.0)):
+        lamp(s, f"lamp.{i}", (0, y, CEIL), rim=white, r=0.15)
     s.add(block("floorplate", (0, -1.0, FLOOR + 0.01), (2.6, 8.6, 0.02), gm, bevel=0))
+    seams(s, (0, -1.0, FLOOR + 0.012), (2.6, 8.6, 0.02), ys=(-3.0, -1.0, 1.0, 3.0), xs=(-0.8, 0.8), material=white, width=0.03, proud=0.006)
     s.node("heat", (0, 6.9, 0.1))
     return s
 
@@ -93,7 +115,7 @@ SPEC = {
     "size": (14.9, 11.0, 5.3),
     "rest": REST,
     "cabin": (FLOOR, CEIL, HALF),
-    "nodes": ["exhaust.0", "exhaust.1", "heat", "ramp", "light.0", "light.1", "light.2", "light.3", "light.4"],
+    "nodes": ["exhaust.0", "exhaust.1", "heat", "ramp", "light.0", "light.1", "light.2", "light.3", "light.4", "lamp.0", "lamp.1", "lamp.2"],
     "view": {"cam": (-12.0, -13.0, 6.0), "look": (0, -0.5, 0.3), "lens": 40},
     "inside": {"cam": (0.3, -8.3, FLOOR + 1.5), "look": (0, 2.0, FLOOR + 0.9), "lens": 24},
 }

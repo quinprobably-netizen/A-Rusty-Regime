@@ -2,10 +2,12 @@
 makes the right flank longer than the left, a rear ramp between one big engine and one small,
 tanks and pipework down the left, a crane folded over the roof, canvas over the cargo, a winch,
 tyre bumpers, a ladder, a smoke stack. Brass, copper, rust, leather and hazard yellow. Inside:
-crates, barrels, chains, a workbench, the pilot's seat and a greasy console."""
+a greasy cab, a workbench, tyres, drums and gas bottles, netted crates and a chain hoist."""
 
-from kit import (Ship, bell, block, cabin, chain, console, crate, cyl, handrail, hinge, label, light_strip, locker, nav_light, pipe,
-                 prism, ramp, rivets, seams, seat, side_plate, skid, stripe, tube)
+from kit import (Ship, bell, block, cabin, chain, cyl, handrail, hinge, label, nav_light, pipe, prism, ramp, rivets, seams, side_plate,
+                 skid, stripe, tube)
+from interior import (barrel, bucket_seat, cabinet, cable_bundle, cargo_net, controls, crate, dash, duct, extinguisher, first_aid,
+                      gas_bottle, grating, hoist, lamp, overhead, pipe_run, turn, tyre, wheel, workbench)
 
 REST = 1.9
 FLOOR = -1.36
@@ -110,30 +112,45 @@ def build():
     s.add(label("MULE", (4.53, 3.2, 0.5), 0.8, "black", side=1, depth=0.012))
     s.add(label("SCRAP", (-3.14, 0.8, -0.4), 0.5, "hazard", side=-1, depth=0.012))
     s.add(label("MAX 9T", (-3.14, -4.2, 1.6), 0.25, "black", side=-1, depth=0.01))
-    # Inside: the hold, with crates, barrels, chains, a workbench and the pilot's seat up front.
-    s.add(seat("pilot", (0, 3.6, FLOOR + 0.5), facing=1, material="leather"))
-    console(s, (0, 4.8, FLOOR + 0.55), (2.2, 0.7, 1.0), material="rust", screens=2, screen_mat="screen", facing=1)
-    s.add(block("wheel", (0, 4.2, FLOOR + 1.0), (0.5, 0.05, 0.5), "black", bevel=0.01))
-    s.add(crate("c1", (-1.8, -1.0, FLOOR + 0.45), (1.2, 1.2, 0.9), material="olive"))
-    s.add(crate("c2", (-1.8, -1.0, FLOOR + 1.3), (1.0, 1.0, 0.8), material="deserter_tan"))
-    s.add(crate("c3", (1.9, -3.5, FLOOR + 0.4), (1.0, 1.4, 0.8), material="red"))
+    # Inside: the hold. A greasy cab up front (seat, console, wheel, overhead panel), a workbench
+    # and tool cabinet to starboard, tyres, drums, gas bottles and netted crates to port, a chain
+    # hoist on a ceiling rail, pipes and a duct overhead, caged lamps, grating underfoot.
+    s.add(bucket_seat("pilot", (0, 3.5, FLOOR + 0.5), facing=1, material="leather", frame="rust", trim="brass"))
+    dash(s, (0, 4.85, FLOOR), 2.4, material="rust", screens=2, screen_mat="screen", facing=1)
+    s.add(wheel("wheel", (0, 4.12, FLOOR + 1.05), facing=1, r=0.22))
+    controls(s, (-0.6, 4.1, FLOOR), facing=1, frame="rust", grip="brass")
+    overhead(s, (0, 4.2, CEIL - 0.12), (1.4, 0.5, 0.06), material="rust", facing=1)
+    s.add(workbench("bench", (2.2, 3.0, FLOOR), (1.2, 2.4, 0.9), top="steel", frame="rust"))
+    c = (2.56, 2.2, FLOOR + 1.75)
+    s.add(turn(cabinet("toolcab", c, (0.9, 0.3, 0.6), material="red", doors=2), c, -90))
+    for i in range(3):
+        s.add(tyre("tyre", (-2.2, 3.6, FLOOR + 0.15 + i * 0.3), r=0.45, w=0.28))
+    for i, y in enumerate((-4.3, -3.5, -2.7)):
+        s.add(barrel("drum", (-2.3, y, FLOOR), r=0.3, h=0.9, material="brass" if i % 2 else "rust"))
+    for y in (-1.7, -1.35):
+        s.add(gas_bottle("bottle", (-2.65, y, FLOOR), material="olive" if y < -1.5 else "steel"))
+    s.add(chain("bottlechain", (-2.45, -1.95, FLOOR + 0.7), (-2.45, -1.1, FLOOR + 0.7), links=8, r=0.02))
+    s.add(crate("c1", (-1.8, -1.0, FLOOR + 0.45), (1.2, 1.2, 0.9), material="olive", stencil="SCRAP"))
+    s.add(crate("c2", (-1.8, -1.0, FLOOR + 1.3), (1.0, 1.0, 0.8), material="deserter_tan", stencil="9T"))
+    s.add(crate("c3", (1.9, -3.5, FLOOR + 0.4), (1.0, 1.4, 0.8), material="red", stencil="PARTS"))
     s.add(crate("c4", (1.9, 1.0, FLOOR + 0.5), (1.2, 1.0, 1.0), material="olive"))
-    for i, y in enumerate((-4.2, -3.4, -2.6)):
-        s.add(cyl("barrel", (-2.2, y, FLOOR), (-2.2, y, FLOOR + 0.9), 0.32, "brass" if i % 2 else "rust", segs=14, bevel=0.02))
-    s.add(block("bench", (2.2, 3.0, FLOOR + 0.9), (1.2, 2.4, 0.08), "steel", bevel=0.005))
-    for y in (2.0, 4.0):
-        s.add(block("benchleg", (2.2, y, FLOOR + 0.45), (1.0, 0.08, 0.9), "rust", bevel=0))
-    s.add(crate("tools", (2.2, 3.4, FLOOR + 1.1), (0.5, 0.4, 0.3), material="red"))
-    s.add(locker("locker", (-2.1, 4.9, FLOOR + 1.0), (1.2, 0.5, 2.0), material="grey", doors=2))
-    for x, y in ((0.8, -2.0), (-0.6, 1.5), (1.4, -4.5)):
-        s.add(chain("chain", (x, y, CEIL), (x, y, CEIL - 1.1), links=10, r=0.035))
-        s.add(block("hook", (x, y, CEIL - 1.2), (0.12, 0.05, 0.2), "steel", bevel=0))
+    s.add(cargo_net("net", (-2.82, -1.0, FLOOR + 2.2), (0.8, 2.4)))
+    s.add(cabinet("locker", (-2.1, 4.9, FLOOR + 1.0), (1.2, 0.5, 2.0), material="grey", doors=2))
+    hoist(s, (0.8, 0.0, CEIL - 0.02), 9.0, 1.2)
+    s.add(extinguisher("ext", (-2.72, -4.9, FLOOR + 0.3), wall=-1))
+    s.add(extinguisher("ext2", (2.72, -4.9, FLOOR + 0.3), wall=1))
+    c = (2.78, -3.5, FLOOR + 1.5)
+    s.add(turn(first_aid("aid", c, facing=-1), c, -90))
+    pipe_run(s, [(-2.6, -5.2, CEIL - 0.2), (-2.6, 5.2, CEIL - 0.2)], r=0.05, material="steel", valve_at=(-2.6, 1.0, CEIL - 0.2))
+    pipe_run(s, [(-2.42, -5.2, CEIL - 0.36), (-2.42, 5.2, CEIL - 0.36)], r=0.03, material="copper", brackets=1.4)
+    s.add(duct("duct", (2.5, -5.2, CEIL - 0.25), (2.5, 5.2, CEIL - 0.25), (0.4, 0, 0.3), material="grey"))
+    s.add(cable_bundle("cables", [(2.15, -5.2, CEIL - 0.06), (2.15, -2.0, CEIL - 0.1), (2.15, 1.0, CEIL - 0.06), (2.15, 5.2, CEIL - 0.1)]))
+    for i, (x, y) in enumerate(((-1.3, -2.5), (1.3, -2.5), (-1.3, 2.5), (1.3, 2.5))):
+        lamp(s, f"lamp.{i}", (x, y, CEIL), rim="black", r=0.16, cage=True)
     s.add(handrail("rail", (-2.6, -5.0, FLOOR + 1.0), (-2.6, 2.0, FLOOR + 1.0), posts=4))
-    light_strip(s, (-1.2, -4.5, CEIL - 0.02), (-1.2, 4.0, CEIL - 0.02))
-    light_strip(s, (1.2, -4.5, CEIL - 0.02), (1.2, 4.0, CEIL - 0.02))
+    grating(s, (0, -0.2, FLOOR + 0.015), (5.4, 10.4), pitch=0.16, cross=1.0)
     for sx in (-1, 1):
-        s.add(stripe("floorhaz", (sx * 2.6, -0.5, FLOOR), (0.2, 10.0, 0.0), "hazard"))
-    s.add(block("floorplate", (0, -0.2, FLOOR + 0.01), (5.4, 10.4, 0.02), "gunmetal", bevel=0))
+        s.add(stripe("floorhaz", (sx * 2.6, -0.5, FLOOR + 0.035), (0.2, 10.0, 0.0), "hazard"))
     s.node("heat", (0, 8.2, 0.3))
     return s
 
@@ -143,7 +160,7 @@ SPEC = {
     "size": (17.4, 13.0, 6.0),
     "rest": REST,
     "cabin": (FLOOR, CEIL, HALF),
-    "nodes": ["exhaust.0", "exhaust.1", "heat", "ramp", "light.0", "light.1"],
+    "nodes": ["exhaust.0", "exhaust.1", "heat", "ramp", "light.0", "light.1", "lamp.0", "lamp.1", "lamp.2", "lamp.3"],
     "view": {"cam": (19.0, -15.0, 8.0), "look": (0, 0.0, 0.8), "lens": 40},
     "inside": {"cam": (0.3, -8.4, FLOOR + 1.6), "look": (0, 4.0, FLOOR + 1.0), "lens": 22},
 }

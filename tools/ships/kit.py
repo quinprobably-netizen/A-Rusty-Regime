@@ -28,9 +28,9 @@ wk = _weapons_kit()
 import bpy  # noqa: E402
 from mathutils import Matrix, Vector  # noqa: E402
 
-block, cut, cyl, join, label, plan, prism, tube, unite = wk.block, wk.cut, wk.cyl, wk.join, wk.label, wk.plan, wk.prism, wk.tube, wk.unite
+block, cut, cyl, join, label, plan, prism, ring, tube, unite = wk.block, wk.cut, wk.cyl, wk.join, wk.label, wk.plan, wk.prism, wk.ring, wk.tube, wk.unite
 
-TRIS_MAX = 30000
+TRIS_MAX = 60000
 MESHES_MAX = 6
 
 
@@ -54,6 +54,7 @@ wk.PALETTE.update({
     "red_light": ((1.0, 0.08, 0.05), (1.0, 0.08, 0.05), 0.0, 0.3, 0.0, 6.0),
     "green_light": ((0.1, 1.0, 0.3), (0.1, 1.0, 0.3), 0.0, 0.3, 0.0, 6.0),
     "screen": ((0.35, 0.9, 0.6), (0.35, 0.9, 0.6), 0.0, 0.3, 0.0, 3.0),
+    "lights_amber": ((1.0, 0.55, 0.12), (1.0, 0.55, 0.12), 0.0, 0.3, 0.0, 4.0),
     "deserter_dark": srgb("#141413", metallic=0.3, roughness=0.6, lighten=2.5),
     "deserter_pale": srgb("#F0EEE6", roughness=0.45, lighten=0.85),
     "deserter_orange": srgb("#D97757", roughness=0.5),
@@ -245,6 +246,15 @@ def preview(path, cam, look=(0, 0, 0), lens=35, res=(960, 600)):
         ld.energy = energy
         lo = bpy.data.objects.new(name, ld)
         lo.rotation_euler = tuple(math.radians(a) for a in rot)
+        scene.collection.objects.link(lo)
+    # Every `lamp.<n>` empty lights the cabin in the render as it does in the game.
+    for e in [o for o in bpy.data.objects if o.type == "EMPTY" and o.name.startswith("lamp.")]:
+        ld = bpy.data.lights.new(e.name, "POINT")
+        ld.energy = 120.0
+        ld.color = (1.0, 0.9, 0.75)
+        ld.shadow_soft_size = 0.15
+        lo = bpy.data.objects.new(e.name, ld)
+        lo.location = e.matrix_world.translation - Vector((0, 0, 0.05))
         scene.collection.objects.link(lo)
     # A ground plane catches the shadow so the ship reads as sitting on its gear.
     import bmesh
