@@ -154,6 +154,7 @@ def _module_boxes(name, m, gaps):
 SPEC = {
     "build": build,
     "name": "Site Vantage",
+    "color": (0.3, 0.65, 1.0),
     "faction": "pmc",
     "body": "frost",
     "lat": 24.0,

@@ -11,6 +11,7 @@
 pub mod base;
 pub mod orbit;
 pub mod ship;
+pub mod waypoint;
 
 use avian3d::prelude::*;
 use bevy::light::atmosphere::ScatteringMedium;
@@ -122,6 +123,7 @@ impl Plugin for SolarPlugin {
         add_streaming(app);
         ship::build(app);
         base::build(app);
+        waypoint::build(app);
         // The clock moves on with the physics step, so between steps every position and the epoch
         // agree: a handoff converts positions at the instant they hold.
         app.add_systems(FixedUpdate, gravitate.before(ControllerSet))

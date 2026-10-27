@@ -6,7 +6,7 @@
 # the base has its own; `near_pad` places a base in Haven's pad frame (x, z), otherwise `lat`
 # and `lon` (degrees) are snapped to the flattest ground near there on `body`; `yaw` turns the
 # base on its site (degrees, 0 = door to the south). `door` is a
-# point in the doorway, for the tests. Hulls are hollow: the boxes are the floors, walls, roofs
+# point in the doorway, for the tests. `color` is the faction's waypoint and beam colour (rgb). Hulls are hollow: the boxes are the floors, walls, roofs
 # and stairs (`rot` in degrees) the player walks between; fittings do not collide.
 
 [[base]]
@@ -14,6 +14,7 @@ id = "roost"
 name = "The Roost"
 faction = "deserters"
 body = "home"
+color = [0.3, 1, 0.5]
 near_pad = [70, 85]
 yaw = 180
 footprint = [26, 18]
@@ -47,6 +48,7 @@ id = "reliquary"
 name = "The Reliquary"
 faction = "regime"
 body = "bastion"
+color = [1, 0.2, 0.2]
 lat = 18
 lon = -35
 footprint = [22, 42]
@@ -94,6 +96,7 @@ id = "yard"
 name = "The Yard"
 faction = "scrappers"
 body = "cinder"
+color = [1, 0.85, 0.1]
 lat = -8
 lon = 120
 footprint = [36, 32]
@@ -163,6 +166,7 @@ id = "outpost"
 name = "Site Vantage"
 faction = "pmc"
 body = "frost"
+color = [0.3, 0.65, 1]
 lat = 24
 lon = 200
 footprint = [26, 20]

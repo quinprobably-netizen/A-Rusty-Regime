@@ -55,3 +55,15 @@ at 2048²) and site helpers (`stair`, `catwalk`, `railing`, `container`, `mast`,
   point a metre inside it are clear of every collider box and have a floor under them.
 - The Roost stands on Haven at start as a `Fixture`; after a handoff to Bastion the Reliquary's
   fixtures stand there and Haven's are gone.
+
+## Waypoints (2026-10-27, Q: "add easily identifiable waypoints")
+
+`src/solar/waypoint.rs`: one marker per base plus one for the player's parked Kestrel, hung off a
+`HudRoot` so the menus hide them. A coloured diamond, the name and `world - distance` beside it
+(flipped to the left past 70 % of the screen width), placed by projecting the target through the
+player camera, clamped to a 36 × 105 px margin (clear of the compass and the plates) when off-screen and sat on the side it is on when behind
+you; hidden within 30 m, and the Kestrel's while you pilot it. A base on the anchor world is
+marked 14 m over the building; a base elsewhere at its world's centre (distance to the surface).
+Colours come from `color` in each base's SPEC (`bases.toml`): Deserters green, Regime red,
+Scrappers yellow, PMC blue, so the colour says the faction at a glance. Each anchor-world base also
+gets a 6 m wide, 900 m tall additive beam in the same colour, to be seen from kilometres away.

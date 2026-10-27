@@ -31,6 +31,9 @@ pub struct BaseSpec {
     #[cfg_attr(not(test), allow(dead_code))]
     pub faction: String,
     pub body: String,
+    /// The faction's colour (rgb): its waypoint and the beam over the base.
+    #[serde(default = "white")]
+    pub color: [f32; 3],
     /// Where it stands in Haven's pad frame (x, z), for a base beside the apron.
     pub near_pad: Option<[f32; 2]>,
     /// Otherwise: snapped to the flattest ground near this latitude and longitude, degrees.
@@ -50,6 +53,14 @@ pub struct BaseSpec {
     pub door: [f32; 3],
     pub collider: Vec<ShipBox>,
 }
+
+fn white() -> [f32; 3] {
+    [1.0; 3]
+}
+
+/// The light beam over each base: this wide, this tall, so it reads from kilometres off.
+const BEAM_RADIUS: f32 = 3.0;
+const BEAM_HEIGHT: f32 = 900.0;
 
 impl BaseSpec {
     pub fn collider(&self) -> Collider {
@@ -171,6 +182,18 @@ pub fn spawn_bases(world: &mut World) {
         let base = world.spawn((Name::new(spec.name.clone()), Base { spec: i }, Fixture, RigidBody::Static, spec.collider(), transform, Visibility::default())).id();
         let model = world.spawn((BaseModel { spec: i }, Transform::default(), Visibility::default())).id();
         world.entity_mut(base).add_child(model);
+        // The beam: additive and unlit, a column of the faction's colour straight up.
+        let (mesh, material) = (
+            world.get_resource_mut::<Assets<Mesh>>().map(|mut m| m.add(Cylinder::new(BEAM_RADIUS, BEAM_HEIGHT))),
+            world.get_resource_mut::<Assets<StandardMaterial>>().map(|mut m| {
+                let c = Vec3::from(spec.color) * 2.5;
+                m.add(StandardMaterial { base_color: Color::LinearRgba(LinearRgba::new(c.x, c.y, c.z, 0.5)), alpha_mode: AlphaMode::Add, unlit: true, ..default() })
+            }),
+        );
+        if let (Some(mesh), Some(material)) = (mesh, material) {
+            let beam = world.spawn((Name::new("Beam"), Mesh3d(mesh), MeshMaterial3d(material), Transform::from_xyz(0.0, BEAM_HEIGHT / 2.0, 0.0), bevy::light::NotShadowCaster)).id();
+            world.entity_mut(base).add_child(beam);
+        }
         if world.contains_resource::<AssetServer>() {
             world.entity_mut(model).insert(Pending);
         }
