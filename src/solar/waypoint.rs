@@ -109,6 +109,7 @@ fn update_markers(
     solar: Res<Solar>,
     origin: Res<Origin>,
     bases: Res<Bases>,
+    save: Option<Res<crate::loot::Save>>,
     camera: Query<(&Transform, &Projection), With<PlayerCamera>>,
     window: Query<&Window, With<PrimaryWindow>>,
     placed: Query<(&Transform, &Base)>,
@@ -155,7 +156,12 @@ fn update_markers(
                 Target::Base(i) => bases.base[*i].name.to_uppercase(),
                 Target::Ship => "KESTREL".to_string(),
             };
-            let line = if world.is_empty() { format!("{name}\n{}", km(distance)) } else { format!("{name}\n{} - {}", world.to_uppercase(), km(distance)) };
+            // The base a parcel is bound for says so.
+            let parcel = match (target, save.as_ref().and_then(|s| s.contract.as_ref())) {
+                (Target::Base(i), Some(c)) if bases.base[*i].id == c.to => format!("\nDELIVER HERE +${}", c.pay),
+                _ => String::new(),
+            };
+            let line = if world.is_empty() { format!("{name}\n{}", km(distance)) } else { format!("{name}\n{} - {}", world.to_uppercase(), km(distance)) } + &parcel;
             if text.0 != line {
                 text.0 = line;
             }

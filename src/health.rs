@@ -54,7 +54,7 @@ impl PlayerHealth {
     }
 }
 
-fn tick(time: Res<Time>, tuning: Res<Tuning>, mut hits: MessageReader<PlayerHit>, mut health: ResMut<PlayerHealth>, mut input: ResMut<PlayerInput>) {
+pub fn tick(time: Res<Time>, tuning: Res<Tuning>, mut hits: MessageReader<PlayerHit>, mut health: ResMut<PlayerHealth>, mut input: ResMut<PlayerInput>) {
     let dt = time.delta_secs();
     let t = &tuning.player;
     health.max = t.health;

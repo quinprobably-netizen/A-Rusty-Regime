@@ -455,6 +455,7 @@ fn fly(
     origin: Res<Origin>,
     tuning: Res<crate::tuning::Tuning>,
     specs: Res<Ships>,
+    save: Option<Res<crate::loot::Save>>,
     mut controls: ResMut<ShipControls>,
     mut input: ResMut<PlayerInput>,
     mut ships: Query<(&mut Ship, Forces)>,
@@ -465,6 +466,8 @@ fn fly(
         return;
     }
     let mouse = std::mem::take(&mut controls.mouse);
+    // The Yard's tuning rig: more thrust and speed, a little sharper turning.
+    let (power, agility) = super::station::tune(save.map_or(0, |s| s.ship_level));
     let mut flown = false;
     for (mut ship, mut forces) in &mut ships {
         let Some(pilot) = ship.pilot else {
@@ -489,7 +492,7 @@ fn fly(
 
         // Turning: the mouse pitches and yaws, the keys roll; near the ground, assist levels.
         let stick = Vec3::new(mouse.y / MOUSE_FULL, mouse.x / MOUSE_FULL, 0.0).clamp(Vec3::NEG_ONE, Vec3::ONE) + Vec3::new(controls.turn.x, controls.turn.y, controls.turn.z);
-        let mut w = rot * (stick.clamp(Vec3::NEG_ONE, Vec3::ONE) * Vec3::from(spec.rates));
+        let mut w = rot * (stick.clamp(Vec3::NEG_ONE, Vec3::ONE) * Vec3::from(spec.rates) * agility);
         let assisted = clearance < ASSIST_HEIGHT;
         if assisted && controls.turn.z == 0.0 {
             let strength = if clearance < 200.0 { 2.5 } else { 0.8 };
@@ -502,10 +505,10 @@ fn fly(
 
         // Thrust, then assist: drift sideways bleeds off, gravity is held near the ground, and
         // the speed cap pulls back anything over it.
-        let mut a = fwd * controls.thrust * spec.thrust + ship_up * controls.lift * spec.lift;
-        let cap = spec.speed_cap(clearance, controls.boost);
+        let mut a = fwd * controls.thrust * spec.thrust * power + ship_up * controls.lift * spec.lift * power;
+        let cap = spec.speed_cap(clearance, controls.boost) * power;
         if controls.boost {
-            a += fwd * (cap * 0.25).clamp(spec.thrust * 2.0, 400.0);
+            a += fwd * (cap * 0.25).clamp(spec.thrust * power * 2.0, 400.0 * power);
         }
         let along = fwd * v.dot(fwd);
         // Sideways drift bleeds off, and up-and-down drift too unless the lift engines are on.
@@ -519,7 +522,7 @@ fn fly(
         let pushing = controls.thrust != 0.0 || controls.boost;
         a -= drift * if air > 0.01 { 1.5 } else if pushing { 0.4 } else { 0.0 };
         if controls.thrust < 0.0 && v.dot(fwd) > 0.0 {
-            a -= along.normalize_or_zero() * spec.thrust;
+            a -= along.normalize_or_zero() * spec.thrust * power;
         }
         if assisted && controls.lift == 0.0 {
             a -= surface.gravity(body, tuning.gravity);

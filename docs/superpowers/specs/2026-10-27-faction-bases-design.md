@@ -67,3 +67,23 @@ marked 14 m over the building; a base elsewhere at its world's centre (distance 
 Colours come from `color` in each base's SPEC (`bases.toml`): Deserters green, Regime red,
 Scrappers yellow, PMC blue, so the colour says the faction at a glance. Each anchor-world base also
 gets a 6 m wide, 900 m tall additive beam in the same colour, to be seen from kilometres away.
+
+## Purposes (2026-10-27, Q: "add more depth and a purpose for each base")
+
+Each base gets a small standalone annex (`basekit.room`/`room_boxes`: hall, cap, door frame and
+the matching collision boxes) and one or two **stations** in its SPEC (`stations`: kind, point,
+label; emitted to `bases.toml`, spawned as children of the base so they follow handoffs). E within
+2.8 m of a station does its job and uses the press up, so the ship and the wardrobe never see it
+(`src/solar/station.rs`). A `footprint_at` offset lets the foundation cover an annex off to one side.
+
+| Base | Annex | Station | Job |
+|---|---|---|---|
+| The Roost (Deserters) | Supply depot by the bay door | Quartermaster, Locker | free heal + ammo; the locker opens the wardrobe |
+| The Yard (Scrappers) | Tuning garage outside the east wall | Tuning rig | `Save.ship_level` 0-3, $300/$700/$1400; thrust x1.12/level, speed x1.12, turn x1.05 |
+| Site Vantage (PMC) | Freight office east of the armoury | Courier desk | `Save.contract`: parcel to another base, $250 + $150 per leg of the round, paid at its door |
+| The Reliquary (Regime) | Chantry before the steps | Shrine | $150 tithe: +50 max health and a full heal for 5 minutes |
+
+Contracts are the only income in the solar system (extraction is island-only), so they pay for the
+tune and the blessing. The destination's waypoint says DELIVER HERE and the flight readout lists the
+parcel and the bank. Save gained `ship_level`, `contract` (destination base id, pay) and
+`contracts_done`. Not built: faction standing, contracts from other bases, more upgrade tracks.

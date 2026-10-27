@@ -299,6 +299,14 @@ distance, clamped to the screen edge when it is off-screen or behind you, and a 
 light over each base on the world you are on. A base on another world is marked at that
 world's centre. Markers hide within 30 m and under the menus. `RUST_REGIME_AT=<base>,<altitude>` (`roost`,
 `reliquary`, `yard`, `outpost`) starts you flying over its pad.
+**Each base has a job**, done with E at a station inside its annex (listed in `bases.toml`, paid
+from the banked money in `save.toml`): the Roost's quartermaster resupplies health and ammunition
+for free and its hangar locker opens the wardrobe; the Yard's tuning rig upgrades the Kestrel's
+engines (three levels, $300 / $700 / $1400: more thrust and top speed, a little sharper
+turning); Site Vantage's courier desk hands out parcels to the other bases (the only income in
+the system: deliver by walking up to the destination's door, which is marked DELIVER HERE;
+$250 / $400 / $550); the Reliquary's shrine sells a blessing for a $150 tithe (+50 health for
+five minutes). The flight readout shows what is in reach, your bank and the parcel you carry.
 
 Everything is in `assets/system.toml`: a star, Haven and its low-gravity moon Ash, and
 the three faction worlds, Bastion (Regime: heavy, slate, thin pale air), Cinder

@@ -4,7 +4,7 @@ sandbag nest, a water tank, floodlights and a radio mast, reached by an outside 
 and a tarp awning over the door. Dark plating with pale panels and orange chevrons. Inside: bunks,
 a workbench, gun racks, a planning table, lockers, crates and drums, pendant lamps."""
 
-from basekit import Base, band, box, catwalk, door_frame, floodlight, hall, ladder, mast, railing, sandbags, slab, slope, stair, tank, wall_lamp, window
+from basekit import Base, band, box, catwalk, door_frame, floodlight, hall, ladder, mast, railing, room, room_boxes, sandbags, slab, slope, stair, tank, wall_lamp, window
 from kit import block, cyl, label, light_strip, seams, stripe
 from interior import (barrel, bunk, cabinet, cable_bundle, cargo_net, crate, duct, extinguisher, first_aid, gun_rack, jump_seat, lamp,
                       pipe_run, turn, tyre, wall_panels, workbench)
@@ -131,7 +131,43 @@ def build():
         lamp(b, f"lamp.{i}", (x, y, 4.86), rim="gunmetal", r=0.2, cage=True)
     wall_lamp(b, "lamp.4", (-6.0, 6.68, FLOOR + 2.6), rim="black")
     wall_lamp(b, "lamp.5", (6.0, 6.68, FLOOR + 2.6), rim="black")
+    depot(b)
     return b
+
+
+DEPOT = ((-10.0, -13.5), (8.0, 5.0, 3.2))
+DEPOT_DOORS = [("+x", 0.0, 1.4, 2.4)]
+
+
+def depot(b):
+    """The quartermaster's depot in the front yard beside the bay door: a counter with a terminal,
+    gun racks and ammunition stacked behind it, a medic's cot and the first-aid box. Resupply here."""
+    (x, y), s = DEPOT
+    z0 = 0.15
+    room(b, "depot", (x, y), s, dark, DEPOT_DOORS, trim=pale)
+    band(b, (x, y, 0), (s[0], s[1], 0), 2.7, 0.3, orange, front_gap=0.0)
+    b.add(turn(label("SUPPLY", (x, y - s[1] / 2 - 0.03, 2.95), 0.4, pale, side=-1, depth=0.02), (x, y - s[1] / 2 - 0.03, 2.95), 90))
+    xe = x + s[0] / 2
+    b.add(block("cross", (xe + 0.02, y - 2.0, 2.0), (0.06, 0.8, 0.26), "red", bevel=0))
+    b.add(block("cross", (xe + 0.02, y - 2.0, 2.0), (0.06, 0.26, 0.8), "red", bevel=0))
+    b.add(crate("crate", (xe + 0.7, y + 1.4, 0.5), (1.0, 0.8, 0.8), material=orange))
+    b.add(barrel("drum", (xe + 0.5, y - 1.7, 0.1), r=0.3, h=0.9, material="rust"))
+    # The counter and its terminal.
+    b.add(block("counter", (x + 0.9, y + 0.1, z0 + 0.55), (0.7, 3.4, 1.1), dark, bevel=0.02))
+    b.add(block("countertop", (x + 0.9, y + 0.1, z0 + 1.12), (0.9, 3.6, 0.05), "steel", bevel=0.01))
+    b.add(block("termbody", (x + 0.9, y - 0.8, z0 + 1.3), (0.35, 0.5, 0.3), "black", bevel=0.01))
+    b.add(block("termscreen", (x + 1.07, y - 0.8, z0 + 1.32), (0.02, 0.42, 0.22), "screen", bevel=0), "lights")
+    b.add(cyl("stamp", (x + 0.9, y + 1.0, z0 + 1.15), (x + 0.9, y + 1.0, z0 + 1.3), 0.06, "brass", segs=8, bevel=0))
+    # Behind it: racks on the south wall, ammunition on the north, the cot in the west corner.
+    for gx in (x - 2.6, x - 0.6):
+        b.add(gun_rack("rack", (gx, y - 2.3, z0), facing=1, n=4, material="gunmetal"))
+    for i, cx in enumerate((x - 3.0, x - 1.8, x - 0.6)):
+        b.add(crate("ammo", (cx, y + 2.0, z0 + 0.3), (1.0, 0.7, 0.6), material="olive" if i != 1 else orange))
+    b.add(crate("ammo", (x - 1.8, y + 2.0, z0 + 0.9), (0.8, 0.6, 0.5), material=tan))
+    b.add(bunk("cot", (x - 3.2, y - 0.3, z0 + 0.5), (0.9, 2.0, 0.15), material="olive", wall=-1))
+    b.add(first_aid("aid", (x - 1.4, y + s[1] / 2 - 0.2, z0 + 1.6), facing=-1))
+    b.add(extinguisher("ext", (x + 3.1, y + 2.0, z0 + 0.3), wall=1))
+    lamp(b, "lamp.6", (x, y, s[2] - 0.17), rim="black", r=0.18, cage=True)
 
 
 SPEC = {
@@ -142,11 +178,12 @@ SPEC = {
     "body": "home",
     "near_pad": (70.0, 85.0),
     "yaw": 180.0,
-    "footprint": (26.0, 18.0),
+    "footprint": (28.0, 25.0),
+    "footprint_at": (-1.0, -4.0),
     "door": (0.0, -6.85, 1.2),
-    "size": (17.8, 27.0, 18.0),
+    "size": (23.7, 27.0, 18.0),
     "depth": 0.3,
-    "nodes": ["lamp.0", "lamp.1", "lamp.2", "lamp.3", "lamp.4", "lamp.5", "flood.0", "flood.1"],
+    "nodes": ["lamp.0", "lamp.1", "lamp.2", "lamp.3", "lamp.4", "lamp.5", "lamp.6", "flood.0", "flood.1"],
     "boxes": [
         box("floor", (0, 0, 0.15), (22.0, 14.0, 0.3)),
         box("roof", (0, 0, ROOF - 0.15), (22.0, 14.0, 0.3)),
@@ -169,7 +206,15 @@ SPEC = {
         box("table", (0, 0.5, FLOOR + 0.42), (2.6, 1.3, 0.84)),
         box("tank", (7.0, 3.5, ROOF + 1.8), (2.8, 2.8, 3.6)),
         box("genset", (11.9, 3.5, 0.75), (1.4, 2.2, 1.5)),
+        *room_boxes("depot", DEPOT[0], DEPOT[1], DEPOT_DOORS),
+        box("depot counter", (DEPOT[0][0] + 0.9, DEPOT[0][1] + 0.1, 0.7), (0.7, 3.4, 1.1)),
+    ],
+    "stations": [
+        ("resupply", (DEPOT[0][0] + 2.0, DEPOT[0][1], 1.15), "Quartermaster"),
+        ("locker", (5.7, -6.0, FLOOR + 1.0), "Locker"),
     ],
     "view": {"cam": (-24.0, -30.0, 14.0), "look": (0, 0, 4.0), "lens": 35},
+    "annex": {"cam": (-6.6, -15.3, 2.0), "look": (-11.5, -12.8, 1.2), "lens": 22},
+    "annex_out": {"cam": (-22.0, -27.0, 5.0), "look": (-10.0, -13.5, 1.5), "lens": 30},
     "inside": {"cam": (0.5, -9.5, FLOOR + 1.6), "look": (0, 2.0, FLOOR + 1.8), "lens": 22},
 }

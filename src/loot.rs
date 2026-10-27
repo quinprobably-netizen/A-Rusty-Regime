@@ -104,6 +104,11 @@ pub struct Save {
     pub preset: usize,
     /// Gunsmith parts fitted to each weapon.
     pub loadout: Option<crate::gunsmith::Loadout>,
+    /// How far the Yard has tuned the Kestrel's engines.
+    pub ship_level: u8,
+    /// The courier parcel being carried, and how many have been delivered.
+    pub contract: Option<crate::solar::station::Contract>,
+    pub contracts_done: u32,
 }
 
 /// What you carry right now.

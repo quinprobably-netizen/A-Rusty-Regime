@@ -11,6 +11,7 @@
 pub mod base;
 pub mod orbit;
 pub mod ship;
+pub mod station;
 pub mod waypoint;
 
 use avian3d::prelude::*;
@@ -123,6 +124,7 @@ impl Plugin for SolarPlugin {
         add_streaming(app);
         ship::build(app);
         base::build(app);
+        station::build(app);
         waypoint::build(app);
         // The clock moves on with the physics step, so between steps every position and the epoch
         // agree: a handoff converts positions at the instant they hold.
@@ -627,6 +629,8 @@ fn flight_text(
     specs: Res<ship::Ships>,
     bases: Query<(&Transform, &base::Base)>,
     base_specs: Res<base::Bases>,
+    prompt: Res<station::Prompt>,
+    save: Option<Res<crate::loot::Save>>,
     mut text: Single<&mut Text, With<FlightText>>,
 ) {
     let (tf, p, driving) = *player;
@@ -659,6 +663,13 @@ fn flight_text(
     for (d, name) in &others {
         line.push_str(&format!("\n{name}  {}", km(*d)));
     }
+    if let Some(save) = save.filter(|s| s.banked > 0 || s.contract.is_some()) {
+        line.push_str(&format!("\nBANK ${}", save.banked));
+        if let Some(c) = &save.contract {
+            line.push_str(&format!("   PARCEL for {} +${}", base_specs.base.iter().find(|b| b.id == c.to).map_or("?", |b| b.name.as_str()), c.pay));
+        }
+    }
+    line.push_str(&prompt.text());
     if driving.is_none() {
         let near = ships.iter().map(|(s, _, ship)| (s.translation.distance(tf.translation), ship.spec)).filter(|(d, _)| *d < ship::BOARD_RADIUS).min_by(|a, b| a.0.total_cmp(&b.0));
         if let Some((_, spec)) = near {

@@ -7,9 +7,9 @@ container made into quarters with bunks."""
 
 import math
 
-from basekit import Base, box, container, floodlight, hall, ladder, mast, railing, slab, tank, truss, wall_lamp
+from basekit import Base, box, container, floodlight, hall, ladder, mast, railing, room, room_boxes, slab, tank, truss, wall_lamp
 from kit import block, cyl, label, seams, stripe
-from interior import (barrel, cabinet, cable_bundle, cargo_net, crate, extinguisher, gas_bottle, grating, gun_rack, hoist, lamp, pipe_run, turn, tyre,
+from interior import (barrel, cabinet, cable_bundle, cargo_net, crate, dash, extinguisher, gas_bottle, grating, gun_rack, hoist, lamp, pipe_run, turn, tyre,
                       wheel, workbench)
 from mathutils import Vector
 
@@ -143,7 +143,47 @@ def build():
         lamp(b, f"lamp.{i}", (x, y, 5.24), rim="black", r=0.2, cage=True)
     wall_lamp(b, "lamp.4", (-12.0, -8.5, 10.4), rim="black")
     wall_lamp(b, "lamp.5", (-8.0, 11.5, 2.2), rim="black")
+    garage(b)
     return b
+
+
+GARAGE = ((22.0, -2.0), (8.0, 6.0, 3.6))
+GARAGE_DOORS = [("-y", 0.0, 2.6, 2.8)]
+
+
+def garage(b):
+    """The tuning garage outside the east wall: a ship engine on a stand under a hoist rail, a
+    console with its screens, a bench and tyres. Pay here to tune the Kestrel's engines."""
+    (x, y), s = GARAGE
+    z0 = 0.25
+    room(b, "garage", (x, y), s, rust, GARAGE_DOORS, wall=0.25, trim="black")
+    for sx in (-1, 1):
+        b.add(stripe("doorchev", (x + sx * 1.6, y - s[1] / 2, 1.5), (0.4, 0.04, 3.0), hazard))
+    b.add(stripe("garagestripe", (x, y - s[1] / 2, 3.3), (s[0], 0.05, 0.3), hazard))
+    b.add(turn(label("TUNING", (x, y - s[1] / 2 - 0.03, 3.0), 0.35, hazard, side=-1, depth=0.02), (x, y - s[1] / 2 - 0.03, 3.0), 90))
+    b.add(cyl("vent", (x + 2.5, y + 1.5, s[2] + 0.1), (x + 2.5, y + 1.5, s[2] + 1.0), 0.18, "black", segs=10, bevel=0))
+    b.add(cyl("ventcap", (x + 2.5, y + 1.5, s[2] + 1.0), (x + 2.5, y + 1.5, s[2] + 1.1), 0.3, "black", segs=10, bevel=0))
+    for i, gx in enumerate((x - 3.0, x + 3.0)):
+        b.add(gas_bottle("gas", (gx, y - s[1] / 2 - 0.5, 0), material="olive" if i else "red"))
+    # The engine: a drum body, a flared bell and bands, in a cradle on a low stand, a spare nozzle beside it.
+    ex = x - 1.6
+    b.add(block("stand", (ex, y - 1.2, z0 + 0.25), (1.5, 2.6, 0.5), "black", bevel=0.02))
+    for dy in (-1.6, -0.2):
+        b.add(block("cradle", (ex, y + dy, z0 + 0.7), (1.1, 0.12, 0.5), "gunmetal", bevel=0.01))
+    b.add(cyl("engine", (ex, y - 2.0, z0 + 1.05), (ex, y + 0.2, z0 + 1.05), 0.5, "gunmetal", segs=16, bevel=0.01))
+    b.add(cyl("bell", (ex, y + 0.2, z0 + 1.05), (ex, y + 1.1, z0 + 1.05), 0.34, "steel", r1=0.62, segs=16, bevel=0.01))
+    for dy in (-1.6, -0.9, -0.2):
+        b.add(cyl("enginering", (ex, y + dy, z0 + 1.05), (ex, y + dy + 0.12, z0 + 1.05), 0.54, copper, segs=16, bevel=0))
+    b.add(cyl("feed", (ex, y - 2.0, z0 + 1.05), (ex, y - 2.4, z0 + 1.05), 0.25, brass, segs=12, bevel=0))
+    hoist(b, (ex, y - 0.4, s[2] - 0.5), 4.4, 0.9)
+    # The console on the north wall and the bench along the east.
+    dash(b, (x + 1.8, y + s[1] / 2 - 0.65, z0), 2.4, material="gunmetal", screens=3, screen_mat="lights_amber", facing=1)
+    b.add(workbench("bench", (x + s[0] / 2 - 0.7, y - 0.6, z0), (0.9, 2.4, 0.9), top="steel", frame=rust))
+    for i, ty in enumerate((y - 2.4, y - 2.2)):
+        b.add(tyre("tyre", (x + 3.0, ty, z0 + 0.15 + i * 0.3), axis=(0, 0, 1), r=0.42, w=0.28))
+    b.add(crate("part", (x + 3.0, y + 1.6, z0 + 0.35), (0.9, 0.9, 0.7), material="olive", band=hazard))
+    b.add(barrel("drum", (x - 3.2, y + 2.2, z0), r=0.3, h=0.9, material=hazard))
+    lamp(b, "lamp.6", (x, y, s[2] - 0.27), rim="black", r=0.2, cage=True)
 
 
 def _containers():
@@ -169,12 +209,13 @@ SPEC = {
     "body": "cinder",
     "lat": -8.0,
     "lon": 120.0,
-    "footprint": (36.0, 32.0),
+    "footprint": (44.0, 32.0),
+    "footprint_at": (4.0, 0.0),
     "pad": (0.0, -30.0),
     "door": (0.0, -12.0, 1.2),
-    "size": (32.0, 36.0, 17.5),
+    "size": (32.0, 44.2, 17.8),
     "depth": 0.3,
-    "nodes": [f"lamp.{i}" for i in range(6)] + ["flood.0", "flood.1", "flood.2"],
+    "nodes": [f"lamp.{i}" for i in range(7)] + ["flood.0", "flood.1", "flood.2"],
     "boxes": [
         *_containers(),
         box("gatepost", (-3.3, -12.0, 2.75), (0.6, 0.6, 5.5)),
@@ -207,7 +248,13 @@ SPEC = {
         box("bench", (9.6, 6.0, 0.7), (1.0, 2.6, 0.9)),
         box("crate", (2.0, -8.5, 0.5), (1.2, 1.0, 1.0)),
         box("crate", (6.5, 9.5, 0.75), (1.4, 1.0, 1.0)),
+        *room_boxes("garage", GARAGE[0], GARAGE[1], GARAGE_DOORS, wall=0.25),
+        box("engine stand", (GARAGE[0][0] - 1.6, GARAGE[0][1] - 1.2, 0.5), (1.5, 2.6, 0.5)),
+        box("garage bench", (GARAGE[0][0] + 3.3, GARAGE[0][1] - 0.6, 0.7), (0.9, 2.4, 0.9)),
     ],
+    "stations": [("workshop", (GARAGE[0][0] + 1.8, GARAGE[0][1] + 1.2, 1.3), "Tuning rig")],
     "view": {"cam": (-30.0, -40.0, 18.0), "look": (0, 0, 3.0), "lens": 35},
+    "annex": {"cam": (25.4, -4.5, 1.9), "look": (21.0, -0.6, 1.2), "lens": 22},
+    "annex_out": {"cam": (36.0, -16.0, 6.0), "look": (22.0, -2.0, 2.0), "lens": 30},
     "inside": {"cam": (4.0, -4.0, 1.7), "look": (4.0, 8.0, 2.0), "lens": 24},
 }

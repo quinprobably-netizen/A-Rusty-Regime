@@ -4,7 +4,7 @@ floodlights, radiator panels and blue running strips. Gunmetal and white. Inside
 with a two-seat desk under a bank of screens and server racks, the quarters with bunks and
 lockers, the armoury with gun cages, crates and a hatch."""
 
-from basekit import Base, band, box, dish, door_frame, floodlight, hall, mast, railing, slab, slope, stair, tank, window
+from basekit import Base, band, box, dish, door_frame, floodlight, hall, mast, railing, room, room_boxes, slab, slope, stair, tank, window
 from kit import block, cyl, label, seams, stripe
 from interior import (bucket_seat, bunk, cabinet, cable_bundle, crate, dash, duct, extinguisher, first_aid, gas_bottle, gun_rack, hatch, lamp,
                       overhead, server_rack, turn, wall_panels)
@@ -125,7 +125,41 @@ def build():
     b.add(turn(hatch("hatch", (cx, cy + csy / 2 - WALL, FLOOR + 1.4), facing=1, r=0.4, material=gm), (cx, cy + csy / 2 - WALL, FLOOR + 1.4), 0))
     for i, y in enumerate((-3.0, 2.0)):
         lamp(b, f"lamp.{4 + i}", (cx, y, FLOOR + 2.68), rim=white, r=0.18)
+    freight(b)
     return b
+
+
+FREIGHT = ((17.5, -4.0), (7.0, 5.0, 3.0))
+FREIGHT_DOORS = [("-x", 0.0, 1.6, 2.2)]
+
+
+def freight(b):
+    """The freight office on the ice east of the armoury: a courier desk under a lit contract
+    board, parcels stacked for pickup and a scale. Take a contract here; it pays at the far door."""
+    (x, y), s = FREIGHT
+    z0 = 0.15
+    room(b, "freight", (x, y), s, white, FREIGHT_DOORS, trim=gm)
+    band(b, (x, y, 0), (s[0], s[1], 0), s[2] - 0.35, 0.06, blue, proud=0.02)
+    b.add(turn(label("FREIGHT", (x, y - s[1] / 2 - 0.03, 2.35), 0.3, blue, side=-1, depth=0.015), (x, y - s[1] / 2 - 0.03, 2.35), 90))
+    b.add(cyl("beaconmast", (x + 2.5, y + 1.5, s[2] + 0.1), (x + 2.5, y + 1.5, s[2] + 2.2), 0.05, "steel", segs=8, bevel=0))
+    b.add(cyl("beacon", (x + 2.5, y + 1.5, s[2] + 2.2), (x + 2.5, y + 1.5, s[2] + 2.4), 0.12, "blue_light", segs=10, bevel=0), "lights")
+    for i, px in enumerate((x - 1.0, x + 0.4, x + 1.8)):
+        b.add(crate("parcel", (px, y - s[1] / 2 - 0.7, 0.5), (1.0, 0.9, 0.9), material="grey", band=blue if i != 1 else "black"))
+    # Inside: the desk and its terminal against the north wall under the board, parcels, a scale.
+    yn = y + s[1] / 2 - 0.15
+    dash(b, (x, yn - 0.4, z0), 3.4, material=white, screens=4, screen_mat=blue, facing=1)
+    b.add(block("board", (x, yn + 0.02, z0 + 2.15), (3.6, 0.05, 0.9), "black", bevel=0.01))
+    for i in range(6):
+        b.add(block("boardrow", (x - 1.5 + i * 0.6, yn - 0.01, z0 + 2.15), (0.5, 0.02, 0.7), blue if i % 2 else "screen", bevel=0), "lights")
+    b.add(bucket_seat("seat", (x, yn - 1.3, z0 + 0.5), facing=1, material="black", frame=white, trim="steel"))
+    for i, py in enumerate((y - 1.0, y - 0.1)):
+        b.add(crate("parcel", (x + 2.6, py, z0 + 0.4), (0.8, 0.8, 0.7), material="grey", band=blue))
+    b.add(crate("parcel", (x + 2.6, y - 0.5, z0 + 1.1), (0.7, 0.6, 0.6), material=white, band=blue))
+    b.add(block("scale", (x - 2.4, y - 1.2, z0 + 0.06), (1.0, 1.0, 0.12), gm, bevel=0.02))
+    b.add(block("scaleread", (x - 2.4, y - 0.65, z0 + 0.5), (0.3, 0.05, 0.2), "screen", bevel=0), "lights")
+    b.add(cyl("scalepost", (x - 2.4, y - 0.68, z0 + 0.1), (x - 2.4, y - 0.68, z0 + 0.9), 0.04, gm, segs=8, bevel=0))
+    b.add(extinguisher("ext", (x + 3.3, y - 2.0, z0 + 0.3), wall=1))
+    lamp(b, "lamp.7", (x, y, s[2] - 0.17), rim=white, r=0.18)
 
 
 def _module_boxes(name, m, gaps):
@@ -159,12 +193,13 @@ SPEC = {
     "body": "frost",
     "lat": 24.0,
     "lon": 200.0,
-    "footprint": (26.0, 20.0),
+    "footprint": (34.0, 20.0),
+    "footprint_at": (4.0, 1.0),
     "pad": (0.0, -24.0),
     "door": (0.0, 0.4, FLOOR + 1.1),
-    "size": (20.0, 26.0, 11.2),
+    "size": (20.0, 34.2, 11.7),
     "depth": 0.3,
-    "nodes": [f"lamp.{i}" for i in range(7)] + ["flood.0", "flood.1"],
+    "nodes": [f"lamp.{i}" for i in range(8)] + ["flood.0", "flood.1"],
     "boxes": [
         *_module_boxes("ops", A, [("-y", 0.0, 1.6), ("-x", -2.0, 1.6), ("+x", -2.0, 1.6)]),
         *_module_boxes("quarters", B, [("+x", 4.0, 1.6)]),
@@ -176,7 +211,12 @@ SPEC = {
         box("desk", (A[0][0], A[0][1] + 1.6, FLOOR + 0.5), (3.4, 0.7, 1.0)),
         box("tank", (12.0, 4.0, 2.2), (2.0, 2.0, 2.8)),
         box("pallet", (-5.0, -5.0, 0.5), (1.4, 1.2, 1.0)),
+        *room_boxes("freight", FREIGHT[0], FREIGHT[1], FREIGHT_DOORS, wall=0.15),
+        box("freight desk", (FREIGHT[0][0], FREIGHT[0][1] + 1.8, 0.65), (3.4, 0.7, 1.0)),
     ],
+    "stations": [("contracts", (FREIGHT[0][0], FREIGHT[0][1] + 0.8, 1.3), "Courier desk")],
     "view": {"cam": (-26.0, -28.0, 12.0), "look": (0, 2.0, 2.0), "lens": 35},
+    "annex": {"cam": (14.5, -5.9, 1.9), "look": (19.0, -2.0, 1.3), "lens": 22},
+    "annex_out": {"cam": (30.0, -16.0, 6.0), "look": (17.5, -4.0, 1.5), "lens": 30},
     "inside": {"cam": (0.0, -0.6, FLOOR + 1.6), "look": (0, 8.0, FLOOR + 1.3), "lens": 24},
 }
