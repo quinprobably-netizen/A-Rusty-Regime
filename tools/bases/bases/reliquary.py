@@ -4,7 +4,7 @@ cross, an apse, buttresses with gold ribs, red slit windows, bone statues flanki
 braziers at the great door. Inside: bone columns, pews either side of a red aisle, a font, the
 dais with the altar, candelabra and the throne, censers swinging over the aisle."""
 
-from basekit import Base, band, box, column, door_frame, hall, slab, slope, stair, window
+from basekit import Base, band, box, column, door_frame, hall, room, room_boxes, slab, slope, stair, window
 from kit import block, cyl, label, prism, sphere, stripe
 from interior import altar, candelabra, censer, font, lamp, pew, turn, wall_panels
 
@@ -104,7 +104,49 @@ def build():
         b.add(block("chapelaltar", (sx * 12.5, 6.0, FLOOR + 0.5), (1.0, 2.0, 1.0), bone, bevel=0.03))
         candelabra(b, (sx * 11.5, 4.5, FLOOR), arms=3, h=1.3)
         candelabra(b, (sx * 11.5, 7.5, FLOOR), arms=3, h=1.3)
+    chantry(b)
     return b
+
+
+CHANTRY = ((-12.5, -19.5), (9.0, 5.0, 5.5))
+CHANTRY_DOORS = [("+x", 0.0, 1.6, 3.0)]
+CHANTRY_WALL = 0.25
+
+
+def chantry(b):
+    """The chantry before the steps: a small stone chapel with red slit windows, a gilded
+    reliquary on its altar between candelabra, and a kneeler. Make the tithe here."""
+    (x, y), s = CHANTRY
+    z0 = CHANTRY_WALL
+    slits = [(f, off, 0.6, 2.2, 1.6) for f in ("-y", "+y") for off in (-2.5, 2.5)]
+    room(b, "chantry", (x, y), s, slate, CHANTRY_DOORS, wall=CHANTRY_WALL, trim=gold, windows=slits)
+    for f, off, w, h, z in slits:
+        window(b, (x + off, y + (-1 if f == "-y" else 1) * s[1] / 2, z0 + z + h / 2), (w, 0.1, h), frame=gold, glass="red_glass")
+    band(b, (x, y, 0), (s[0], s[1], 0), s[2] - 0.6, 0.25, gold)
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            b.add(block("buttress", (x + sx * (s[0] / 2 + 0.2), y + sy * (s[1] / 2 + 0.2), s[2] / 2), (0.5, 0.5, s[2]), slate, bevel=0.04))
+            b.add(cyl("pinnacle", (x + sx * (s[0] / 2 + 0.2), y + sy * (s[1] / 2 + 0.2), s[2]), (x + sx * (s[0] / 2 + 0.2), y + sy * (s[1] / 2 + 0.2), s[2] + 0.9), 0.22, gold, r1=0.03, segs=8, bevel=0))
+    b.add(block("crossbar", (x, y, s[2] + 1.0), (0.12, 0.12, 1.4), gold, bevel=0.01))
+    b.add(block("crossarm", (x, y, s[2] + 1.3), (0.12, 0.7, 0.12), gold, bevel=0.01))
+    for sy in (-1, 1):
+        b.add(block("brazier", (x + s[0] / 2 + 0.9, y + sy * 1.4, 0.4), (0.4, 0.4, 0.8), "black", bevel=0.02))
+        b.add(sphere("flame", (x + s[0] / 2 + 0.9, y + sy * 1.4, 0.95), 0.15, "gold_light", segs=8), "lights")
+    # The altar against the west wall, the casket on it, candelabra either side, the kneeler.
+    ax = x - s[0] / 2 + CHANTRY_WALL + 0.6
+    altar(b, (ax, y, z0), (1.0, 2.4, 1.05), material=bone, cloth="red", trim=gold)
+    b.add(block("casket", (ax, y, z0 + 1.3), (0.5, 1.1, 0.3), gold, bevel=0.02))
+    b.add(prism("casketlid", [(y - 0.55, z0 + 1.45), (y, z0 + 1.7), (y + 0.55, z0 + 1.45)], 0.5, gold, x=ax, bevel=0.01))
+    b.add(sphere("jewel", (ax + 0.27, y, z0 + 1.3), 0.06, "red_light", segs=8), "lights")
+    for dy in (-1.5, 1.5):
+        candelabra(b, (ax, y + dy, z0), material=gold, arms=5, h=1.5)
+    b.add(block("kneeler", (ax + 1.7, y, z0 + 0.2), (0.5, 1.6, 0.4), "leather", bevel=0.05, segs=3))
+    b.add(block("kneelerrail", (ax + 1.7, y, z0 + 0.62), (0.2, 1.6, 0.05), gold, bevel=0.01))
+    for dy in (-1.4, 1.4):
+        b.add(block("bonestatue", (ax + 3.2, y + dy, z0 + 0.8), (0.4, 0.4, 1.6), bone, bevel=0.1, segs=3))
+        b.add(sphere("skull", (ax + 3.2, y + dy, z0 + 1.8), 0.22, bone, segs=10))
+    b.add(block("aisle", (x + 0.8, y, z0 + 0.01), (s[0] - 2.4, 1.2, 0.02), "red", bevel=0))
+    lamp(b, "lamp.8", (x, y, s[2] - CHANTRY_WALL - 0.02), material="gold_light", rim=gold, r=0.25)
 
 
 _NAVE_WALL = [box(n, c, s) for n, c, s in (
@@ -122,12 +164,13 @@ SPEC = {
     "body": "bastion",
     "lat": 18.0,
     "lon": -35.0,
-    "footprint": (22.0, 42.0),
+    "footprint": (28.0, 44.0),
+    "footprint_at": (-3.0, -1.0),
     "pad": (0.0, -36.0),
     "door": (0.0, -12.75, FLOOR + 1.3),
-    "size": (40.0, 28.0, 34.9),
+    "size": (44.5, 31.5, 34.9),
     "depth": 0.3,
-    "nodes": [f"lamp.{i}" for i in range(8)],
+    "nodes": [f"lamp.{i}" for i in range(9)],
     "boxes": [
         box("podium", (0, 3.2, 0.6), (18.0, 33.6, 1.2)),
         slope((0, -16.0, 0), 8.0, 2.4, 1.2, 1),
@@ -148,7 +191,12 @@ SPEC = {
         box("roof slope", (-3.8, 2.0, 16.4), (8.6, 30.0, 0.3), (0, -27.8, 0)),
         box("roof slope", (3.8, 2.0, 16.4), (8.6, 30.0, 0.3), (0, 27.8, 0)),
         box("tower", (0, -10.0, 19.7), (6.0, 6.0, 10.0)),
+        *room_boxes("chantry", CHANTRY[0], CHANTRY[1], CHANTRY_DOORS, wall=CHANTRY_WALL),
+        box("chantry altar", (CHANTRY[0][0] - CHANTRY[1][0] / 2 + CHANTRY_WALL + 0.6, CHANTRY[0][1], 0.775), (1.0, 2.4, 1.05)),
     ],
+    "stations": [("shrine", (CHANTRY[0][0] - 1.6, CHANTRY[0][1], 1.4), "Shrine")],
     "view": {"cam": (-34.0, -42.0, 16.0), "look": (0, 2.0, 9.0), "lens": 35},
+    "annex": {"cam": (-8.9, -21.4, 2.1), "look": (-15.5, -19.5, 1.5), "lens": 22},
+    "annex_out": {"cam": (-26.0, -32.0, 6.0), "look": (-12.5, -19.5, 3.0), "lens": 30},
     "inside": {"cam": (0.0, -11.5, FLOOR + 1.6), "look": (0, 6.0, FLOOR + 2.5), "lens": 24},
 }

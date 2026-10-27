@@ -12,6 +12,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use super::ship::ShipBox;
+use super::station::{Station, StationSpec};
 use super::{flat_site, lat_lon_dir, Fixture, Solar};
 use crate::surface::{Origin, Sphere, Surface};
 
@@ -46,12 +47,18 @@ pub struct BaseSpec {
     pub yaw: f32,
     /// The foundation slab (x, z).
     pub footprint: [f32; 2],
+    /// Where the foundation's centre is (x, z), when the building is not in the middle of it.
+    #[serde(default)]
+    pub footprint_at: [f32; 2],
     /// The landing pad's centre (x, z) in the base frame, if the base has its own.
     pub pad: Option<[f32; 2]>,
     /// A point in the front doorway, for the tests.
     #[cfg_attr(not(test), allow(dead_code))]
     pub door: [f32; 3],
     pub collider: Vec<ShipBox>,
+    /// What the building is for: where E does what (see `station`).
+    #[serde(default)]
+    pub stations: Vec<StationSpec>,
 }
 
 fn white() -> [f32; 3] {
@@ -71,7 +78,7 @@ impl BaseSpec {
     /// within `reach` below.
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn floor_under(&self, p: Vec3, reach: f32) -> Option<f32> {
-        let foundation = (p.x.abs() <= self.footprint[0] / 2.0 && p.z.abs() <= self.footprint[1] / 2.0).then_some(0.0);
+        let foundation = ((p.x - self.footprint_at[0]).abs() <= self.footprint[0] / 2.0 && (p.z - self.footprint_at[1]).abs() <= self.footprint[1] / 2.0).then_some(0.0);
         self.collider
             .iter()
             .filter(|b| b.rot == [0.0; 3])
@@ -135,7 +142,7 @@ pub fn site(spec: &BaseSpec, sphere: &Arc<Sphere>, pad: Vec3) -> (Vec3, Quat, f3
         }
     };
     let frame = frame * Quat::from_rotation_y(spec.yaw.to_radians());
-    let deck = deck_over(sphere, ground, frame, Vec3::ZERO, spec.footprint[0] / 2.0, spec.footprint[1] / 2.0);
+    let deck = deck_over(sphere, ground, frame, Vec3::new(spec.footprint_at[0], 0.0, spec.footprint_at[1]), spec.footprint[0] / 2.0, spec.footprint[1] / 2.0);
     (ground, frame, deck)
 }
 
@@ -164,7 +171,7 @@ pub fn spawn_bases(world: &mut World) {
     let material = world.get_resource_mut::<Assets<StandardMaterial>>().map(|mut m| m.add(StandardMaterial { base_color: Color::srgb(0.32, 0.33, 0.35), perceptual_roughness: 0.8, ..default() }));
     for (i, spec) in specs.base.iter().enumerate().filter(|(_, s)| s.body == anchor) {
         let (ground, frame, deck) = site(spec, &sphere, pad);
-        let mut slabs = vec![("Foundation", Vec3::ZERO, Vec3::new(spec.footprint[0], SLAB_DEPTH, spec.footprint[1]), deck)];
+        let mut slabs = vec![("Foundation", Vec3::new(spec.footprint_at[0], 0.0, spec.footprint_at[1]), Vec3::new(spec.footprint[0], SLAB_DEPTH, spec.footprint[1]), deck)];
         if let Some([x, z]) = spec.pad {
             let at = Vec3::new(x, 0.0, z);
             let pad_deck = deck.max(deck_over(&sphere, ground, frame, at, PAD_SIZE / 2.0, PAD_SIZE / 2.0));
@@ -180,6 +187,10 @@ pub fn spawn_bases(world: &mut World) {
         }
         let transform = Transform::from_translation(origin.world(ground + frame * Vec3::Y * deck)).with_rotation(frame);
         let base = world.spawn((Name::new(spec.name.clone()), Base { spec: i }, Fixture, RigidBody::Static, spec.collider(), transform, Visibility::default())).id();
+        for st in &spec.stations {
+            let e = world.spawn((Name::new(format!("Station {}", st.label)), Station { base: i, kind: st.kind, label: st.label.clone() }, Transform::from_translation(Vec3::from(st.at)), Visibility::default())).id();
+            world.entity_mut(base).add_child(e);
+        }
         let model = world.spawn((BaseModel { spec: i }, Transform::default(), Visibility::default())).id();
         world.entity_mut(base).add_child(model);
         // The beam: additive and unlit, a column of the faction's colour straight up.

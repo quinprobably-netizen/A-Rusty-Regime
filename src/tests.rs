@@ -2860,3 +2860,140 @@ fn every_base_and_the_ship_get_a_waypoint_in_the_faction_colour() {
     assert_eq!(colours.len(), 4);
     assert!(bases.base.iter().all(|b| b.color != [1.0; 3]));
 }
+
+// ---------------------------------------------------------------------------- base stations
+
+use solar::station::{Blessing, Contract, Station, StationKind, BLESSING_HP, TITHE, UPGRADE_COST};
+
+#[test]
+fn every_base_has_its_station_on_a_floor_clear_of_the_furniture() {
+    let bases = solar::base::Bases::load();
+    let roles: Vec<(&str, Vec<StationKind>)> = vec![
+        ("roost", vec![StationKind::Resupply, StationKind::Locker]),
+        ("reliquary", vec![StationKind::Shrine]),
+        ("yard", vec![StationKind::Workshop]),
+        ("outpost", vec![StationKind::Contracts]),
+    ];
+    for (id, kinds) in roles {
+        let b = bases.base.iter().find(|b| b.id == id).unwrap();
+        assert_eq!(b.stations.iter().map(|s| s.kind).collect::<Vec<_>>(), kinds, "{id}'s stations");
+        for s in &b.stations {
+            let at = Vec3::from(s.at);
+            let floor = b.floor_under(at, 2.0).unwrap_or_else(|| panic!("{id}: no floor under {}", s.label));
+            assert!((0.8..1.6).contains(&(at.y - floor)), "{id}: {} is {} m over the floor", s.label, at.y - floor);
+            // Someone can stand a metre from it, at chest height, in the open.
+            let stand = Vec3::new(at.x, floor + 1.0, at.z);
+            assert!(b.collider.iter().all(|bx| !bx.touches(stand, 0.2)), "{id}: {} is inside a wall or a counter", s.label);
+        }
+    }
+}
+
+/// Stands the player beside a station of `kind` that the test puts there (so it works on any world).
+fn stand_at_station(app: &mut App, kind: StationKind, base: usize) {
+    let at = player(app).0;
+    app.world_mut().spawn((Station { base, kind, label: "Test".into() }, GlobalTransform::from_translation(at)));
+}
+
+fn press_use(app: &mut App) {
+    input(app).interact_pressed = true;
+    run(app, 0.1);
+}
+
+#[test]
+fn the_quartermaster_tops_you_up_for_free_and_uses_the_press_up() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    // The real one in the Roost's depot, wherever the base ended up on Haven.
+    let at = app.world_mut().query::<(&Station, &GlobalTransform)>().iter(app.world()).find(|(s, _)| s.kind == StationKind::Resupply).map(|(_, g)| g.translation()).expect("the Roost's quartermaster");
+    set_player(&mut app, at, Vec3::ZERO);
+    app.world_mut().resource_mut::<PlayerHealth>().hp = 20.0;
+    app.world_mut().resource_mut::<Arsenal>().spent[0] = 7;
+    press_use(&mut app);
+    assert_eq!(app.world().resource::<PlayerHealth>().hp, app.world().resource::<PlayerHealth>().max);
+    assert_eq!(app.world().resource::<Arsenal>().spent[0], 0, "magazines refilled");
+    assert!(app.world().resource::<solar::station::Prompt>().text().contains("Resupplied"));
+    let id = app.world_mut().query_filtered::<Entity, With<Player>>().single(app.world()).unwrap();
+    assert!(app.world().get::<Driving>(id).is_none(), "the same press did not board the ship");
+}
+
+#[test]
+fn the_tuning_rig_sells_three_levels_for_banked_money() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    stand_at_station(&mut app, StationKind::Workshop, 2);
+    app.world_mut().resource_mut::<Save>().banked = UPGRADE_COST[0] - 1;
+    press_use(&mut app);
+    assert_eq!((app.world().resource::<Save>().ship_level, app.world().resource::<Save>().banked), (0, UPGRADE_COST[0] - 1), "too poor");
+    let total: u32 = UPGRADE_COST.iter().sum();
+    app.world_mut().resource_mut::<Save>().banked = total + 10;
+    for level in 1..=3 {
+        press_use(&mut app);
+        assert_eq!(app.world().resource::<Save>().ship_level, level);
+    }
+    press_use(&mut app);
+    let save = app.world().resource::<Save>();
+    assert_eq!((save.ship_level, save.banked), (3, 10), "three levels and no more");
+}
+
+#[test]
+fn a_tuned_ship_climbs_faster() {
+    fn lifted(level: u8) -> f32 {
+        let mut app = system_app();
+        run(&mut app, 1.0);
+        app.world_mut().resource_mut::<Save>().ship_level = level;
+        board(&mut app);
+        let surface = app.world().resource::<Surface>().clone();
+        let start = surface.altitude(ship_state(&mut app).0);
+        input(&mut app).lift = 1.0;
+        run(&mut app, 2.0);
+        surface.altitude(ship_state(&mut app).0) - start
+    }
+    let (stock, tuned) = (lifted(0), lifted(3));
+    assert!(tuned > stock * 1.2, "Mk3 climbs {tuned} m, stock {stock} m in 2 s");
+}
+
+#[test]
+fn a_parcel_is_taken_at_the_desk_and_pays_at_the_other_bases_door() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    let bases = app.world().resource::<solar::base::Bases>().clone();
+    let vantage = bases.base.iter().position(|b| b.id == "outpost").unwrap();
+    stand_at_station(&mut app, StationKind::Contracts, vantage);
+    press_use(&mut app);
+    let contract = app.world().resource::<Save>().contract.clone().expect("a contract was handed out");
+    assert_ne!(contract.to, "outpost");
+    // A second press while carrying one gives nothing new.
+    press_use(&mut app);
+    assert_eq!(app.world().resource::<Save>().contract, Some(contract.clone()));
+    // Carry it to the Roost, the only base on this world, and stand in its doorway.
+    app.world_mut().resource_mut::<Save>().contract = Some(Contract { to: "roost".into(), pay: 250 });
+    let (at, base) = app.world_mut().query::<(&GlobalTransform, &solar::base::Base)>().single(app.world()).map(|(g, b)| (*g, b.spec)).unwrap();
+    let door = at.translation() + at.rotation() * Vec3::from(bases.base[base].door);
+    set_player(&mut app, door, Vec3::ZERO);
+    run(&mut app, 0.2);
+    let save = app.world().resource::<Save>();
+    assert_eq!((save.banked, save.contracts_done, save.contract.clone()), (250, 1, None), "paid on arrival");
+}
+
+#[test]
+fn the_shrine_sells_a_blessing_that_lengthens_the_health_bar_for_a_while() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    stand_at_station(&mut app, StationKind::Shrine, 1);
+    app.world_mut().resource_mut::<Save>().banked = TITHE - 1;
+    press_use(&mut app);
+    assert_eq!(app.world().resource::<Blessing>().0, 0.0, "the tithe is not met");
+    app.world_mut().resource_mut::<Save>().banked = TITHE + 5;
+    let plain = app.world().resource::<PlayerHealth>().max;
+    press_use(&mut app);
+    run(&mut app, 0.2);
+    assert_eq!(app.world().resource::<Save>().banked, 5);
+    let health = app.world().resource::<PlayerHealth>().clone();
+    assert!(app.world().resource::<Blessing>().0 > 0.0 && (health.max - (plain + BLESSING_HP)).abs() < 0.01, "blessed, max {}", health.max);
+    assert!(health.hp > plain, "and healed past the usual maximum, {}", health.hp);
+    // It wears off.
+    app.world_mut().resource_mut::<Blessing>().0 = 0.05;
+    run(&mut app, 0.3);
+    let health = app.world().resource::<PlayerHealth>().clone();
+    assert!((health.max - plain).abs() < 0.01 && health.hp <= health.max, "back to normal: {} / {}", health.hp, health.max);
+}

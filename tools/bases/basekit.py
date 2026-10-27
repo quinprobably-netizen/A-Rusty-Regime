@@ -86,6 +86,50 @@ def hall(base, name, c, s, material, wall=0.3, openings=(), bevel=0.05, segs=2, 
     return outer
 
 
+def room(base, name, c, s, material, doors, wall=0.15, trim="gunmetal", windows=()):
+    """A small standalone building on the ground: `c` is its centre (x, y), `s` its size (x, y,
+    height), `doors` are (face, offset, width, height) doorways, framed and cut through the wall;
+    `windows` are (face, offset, width, height, bottom) holes for the caller to glaze.
+    The floor's top is `wall` above the ground. Its collision boxes come from `room_boxes`."""
+    x, y = c
+    hall(base, name, (x, y, s[2] / 2), s, material, wall=wall, openings=[(f, off, w, h, 0) for f, off, w, h in doors] + list(windows), bevel=0.03)
+    base.add(block(name + "cap", (x, y, s[2] + 0.05), (s[0] + 0.3, s[1] + 0.3, 0.1), trim, bevel=0.02))
+    base.add(block(name + "plinth", (x, y, 0.06), (s[0] + 0.2, s[1] + 0.2, 0.12), "concrete", bevel=0.01))
+    for face, off, w, h in doors:
+        fx, fy = FACES[face]
+        t, d = 0.15, 0.4
+        if fy:
+            px, py = x + off, y + fy * s[1] / 2
+            for sx in (-1, 1):
+                base.add(block("jamb", (px + sx * (w / 2 + t / 2), py, wall + h / 2), (t, d, h + t), trim, bevel=0.02))
+            base.add(block("lintel", (px, py, wall + h + t / 2), (w + 2 * t, d, t), trim, bevel=0.02))
+        else:
+            px, py = x + fx * s[0] / 2, y + off
+            for sy in (-1, 1):
+                base.add(block("jamb", (px, py + sy * (w / 2 + t / 2), wall + h / 2), (d, t, h + t), trim, bevel=0.02))
+            base.add(block("lintel", (px, py, wall + h + t / 2), (d, w + 2 * t, t), trim, bevel=0.02))
+
+
+def room_boxes(name, c, s, doors, wall=0.15):
+    """The collision boxes of a `room`: its floor, roof and walls, with the doorways left open."""
+    x, y = c
+    out = [box(f"{name} floor", (x, y, wall / 2), (s[0], s[1], wall)), box(f"{name} roof", (x, y, s[2] - wall / 2), (s[0], s[1], wall))]
+    for face, (fx, fy) in FACES.items():
+        length = s[0] if fy else s[1]
+        spans, cur = [], -length / 2
+        for off, w, h in sorted((o, w, h) for f, o, w, h in doors if f == face):
+            spans += [(cur, off - w / 2, 0.0, s[2]), (off - w / 2, off + w / 2, wall + h, s[2])]
+            cur = off + w / 2
+        spans.append((cur, length / 2, 0.0, s[2]))
+        for a, b, z0, z1 in spans:
+            if b - a < 0.01 or z1 - z0 < 0.01:
+                continue
+            size = (b - a, wall, z1 - z0) if fy else (wall, b - a, z1 - z0)
+            centre = (x + (a + b) / 2, y + fy * (s[1] / 2 - wall / 2), (z0 + z1) / 2) if fy else (x + fx * (s[0] / 2 - wall / 2), y + (a + b) / 2, (z0 + z1) / 2)
+            out.append(box(f"{name} wall", centre, size))
+    return out
+
+
 def band(base, c, s, z, h, material, proud=0.015, front_gap=0.0):
     """A painted band round the outside of a hollow block `c`, `s`: four thin strips at height `z`.
     `front_gap` leaves the middle of the front (-Y) strip out, for a doorway."""
@@ -378,6 +422,9 @@ def write_toml(path, specs):
         if s.get("yaw"):
             lines.append(f"yaw = {s['yaw']:g}")
         lines.append(f"footprint = [{_fmt(s['footprint'])}]")
+        if "footprint_at" in s:
+            fx, fy = s["footprint_at"]
+            lines.append(f"footprint_at = [{_fmt((fx, -fy))}]")
         if "pad" in s:
             px, py = s["pad"]
             lines.append(f"pad = [{_fmt((px, -py))}]")
@@ -389,7 +436,10 @@ def write_toml(path, specs):
             if any(rot):
                 entry += f", rot = [{_fmt((rot[0], rot[2], -rot[1]))}]"
             lines.append(entry + f" }},  # {name}")
-        lines += ["]", ""]
+        lines += ["]"]
+        for kind, c, label in s.get("stations", []):
+            lines.append(f'[[base.stations]]\nkind = "{kind}"\nat = [{_fmt(_game(c))}]\nlabel = "{label}"')
+        lines.append("")
     with open(path, "w") as f:
         f.write("\n".join(lines))
     print(f"wrote {path}")

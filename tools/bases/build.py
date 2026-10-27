@@ -53,8 +53,9 @@ def main():
             if "--preview" in sys.argv:
                 os.makedirs(SHOTS, exist_ok=True)
                 preview(os.path.join(SHOTS, f"{bid}.png"), **s["view"])
-                if "inside" in s:
-                    preview(os.path.join(SHOTS, f"{bid}-inside.png"), **s["inside"])
+                for key, suffix in (("inside", "-inside"), ("annex", "-annex"), ("annex_out", "-annex-out")):
+                    if key in s:
+                        preview(os.path.join(SHOTS, f"{bid}{suffix}.png"), **s[key])
     write_toml(TOML, [(bid, spec(bid)) for bid in ORDER if os.path.exists(os.path.join(HERE, "bases", f"{bid}.py"))])
 
 
