@@ -1,6 +1,7 @@
 //! The camp wardrobe: stand at the locker, press E, pick a character with left/right and cycle its
-//! three colours with 1/2/3. The result is saved in `save.toml` as an outfit over the class default
-//! and worn again next time; saves naming no known character fall back to the class default.
+//! colours with 1-5 (primary, secondary, accent, gloves, boots). The result is saved in `save.toml` as
+//! an outfit over the class default and worn again next time; saves naming no known character fall
+//! back to the class default.
 
 use bevy::prelude::*;
 
@@ -20,6 +21,8 @@ const REACH: f32 = 2.5;
 pub const PALETTE: [&str; 14] = [
     "#141413", "#D97757", "#F0EEE6", "#D4A27F", "#2b2f33", "#4a5a48", "#d98b2b", "#8a2b2b", "#1f3a5f", "#5a4632", "#c9c2b4", "#3a3a3a", "#6d8a3a", "#7a3a7a",
 ];
+/// The colour slots in wardrobe order; gloves and boots are optional and show "DEFAULT" until set.
+pub const COLOURS: [&str; 5] = ["PRIMARY", "SECONDARY", "ACCENT", "GLOVES", "BOOTS"];
 
 #[derive(Component)]
 pub struct Locker;
@@ -65,8 +68,13 @@ pub fn cycle_character(characters: &Characters, outfit: &mut OutfitDef, dir: i32
     }
 }
 
-/// Step one of the three colours through the palette.
+/// Step one of the colours (see [`COLOURS`]) through the palette.
 pub fn cycle_colour(outfit: &mut OutfitDef, which: usize) {
+    match which {
+        3 => return cycle_optional(&mut outfit.gloves),
+        4 => return cycle_optional(&mut outfit.boots),
+        _ => {}
+    }
     let field = match which {
         0 => &mut outfit.primary,
         1 => &mut outfit.secondary,
@@ -74,6 +82,29 @@ pub fn cycle_colour(outfit: &mut OutfitDef, which: usize) {
     };
     let at = PALETTE.iter().position(|c| *c == field.as_str()).map_or(0, |i| (i + 1) % PALETTE.len());
     *field = PALETTE[at].into();
+}
+
+/// Step an optional colour through the palette; past its end it goes back to the character's own.
+fn cycle_optional(field: &mut Option<String>) {
+    *field = match field.as_deref() {
+        None => Some(PALETTE[0].into()),
+        Some(hex) => match PALETTE.iter().position(|c| *c == hex) {
+            Some(i) if i + 1 < PALETTE.len() => Some(PALETTE[i + 1].into()),
+            Some(_) => None,
+            None => Some(PALETTE[0].into()),
+        },
+    };
+}
+
+/// The colour a slot (see [`COLOURS`]) wears, or `None` while an optional slot keeps the character's own.
+pub fn colour_hex(outfit: &OutfitDef, which: usize) -> Option<&str> {
+    match which {
+        0 => Some(&outfit.primary),
+        1 => Some(&outfit.secondary),
+        2 => Some(&outfit.accent),
+        3 => outfit.gloves.as_deref(),
+        _ => outfit.boots.as_deref(),
+    }
 }
 
 /// The outfit the player's class wears by default.
@@ -132,7 +163,7 @@ fn edit(keys: Res<ButtonInput<KeyCode>>, characters: Res<Characters>, class: Res
             changed = true;
         }
     }
-    for (key, which) in [(KeyCode::Digit1, 0), (KeyCode::Digit2, 1), (KeyCode::Digit3, 2)] {
+    for (key, which) in [(KeyCode::Digit1, 0), (KeyCode::Digit2, 1), (KeyCode::Digit3, 2), (KeyCode::Digit4, 3), (KeyCode::Digit5, 4)] {
         if keys.just_pressed(key) {
             cycle_colour(&mut outfit, which);
             changed = true;
@@ -179,9 +210,10 @@ fn show_ui(wardrobe: Res<Wardrobe>, characters: Res<Characters>, class: Res<Clas
     }
     **vis = Visibility::Inherited;
     let outfit = wardrobe.outfit.clone().unwrap_or_else(|| class_outfit(&characters, &class));
-    let mut lines = vec!["WARDROBE   Left/Right: character   1/2/3: colours   E: done".to_string()];
+    let mut lines = vec!["WARDROBE   Left/Right: character   1-5: colours   E: done".to_string()];
     lines.push(format!("  character: {}", characters.label(&outfit.character)));
     lines.push(format!("  colours: {} {} {}", outfit.primary, outfit.secondary, outfit.accent));
+    lines.push(format!("  gloves: {}   boots: {}", colour_hex(&outfit, 3).unwrap_or("default"), colour_hex(&outfit, 4).unwrap_or("default")));
     text.0 = lines.join("\n");
 }
 
@@ -212,5 +244,22 @@ mod tests {
         o.accent = "#123456".into();
         cycle_colour(&mut o, 2);
         assert_eq!(o.accent, PALETTE[0], "unknown colours restart the palette");
+    }
+
+    #[test]
+    fn gloves_and_boots_step_through_the_palette_then_back_to_default() {
+        let mut o = OutfitDef::default();
+        cycle_colour(&mut o, 3);
+        assert_eq!(o.gloves.as_deref(), Some(PALETTE[0]), "unset gloves start at the palette");
+        for _ in 1..PALETTE.len() {
+            cycle_colour(&mut o, 3);
+        }
+        assert_eq!(o.gloves.as_deref(), Some(PALETTE[PALETTE.len() - 1]));
+        cycle_colour(&mut o, 3);
+        assert_eq!(o.gloves, None, "past the palette the character keeps its own gloves");
+        assert_eq!(o.boots, None, "other slots are untouched");
+        cycle_colour(&mut o, 4);
+        assert_eq!(colour_hex(&o, 4), Some(PALETTE[0]));
+        assert_eq!(colour_hex(&o, 3), None);
     }
 }

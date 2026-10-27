@@ -297,7 +297,7 @@ enum Row {
     Tune(usize),
     /// The wardrobe's character picker.
     Character,
-    /// A wardrobe colour (primary, secondary, accent).
+    /// A wardrobe colour (see `wardrobe::COLOURS`).
     Colour(usize),
     /// An entry of [`MAPS`].
     Map(usize),
@@ -396,7 +396,7 @@ fn rows(panel: Panel, screen: Screen, tuned: [bool; 4]) -> Vec<Row> {
         }
         Panel::Wardrobe => {
             rows.push(Row::Character);
-            rows.extend((0..3).map(Row::Colour));
+            rows.extend((0..wardrobe::COLOURS.len()).map(Row::Colour));
             rows.push(Row::Action("BACK", Action::Back));
         }
     }
@@ -1037,8 +1037,8 @@ fn tile(p: &mut ChildSpawnerCommands, row: Row, index: usize, selected: bool, ou
             ("CHARACTER".to_string(), worn.to_uppercase(), None)
         }
         Row::Colour(c) => {
-            let hex = outfit.map(|o| [&o.primary, &o.secondary, &o.accent][c].clone()).unwrap_or_default();
-            (["PRIMARY", "SECONDARY", "ACCENT"][c].to_string(), hex.clone(), Srgba::hex(&hex).ok().map(Color::from))
+            let hex = outfit.and_then(|o| wardrobe::colour_hex(o, c));
+            (wardrobe::COLOURS[c].to_string(), hex.unwrap_or("DEFAULT").to_string(), hex.and_then(|h| Srgba::hex(h).ok()).map(Color::from))
         }
         _ => return,
     };

@@ -152,7 +152,8 @@ pub fn held_transform_solved(pose: &crate::fingers::HandPose) -> Transform {
 
 // ------------------------------------------------------------------------------------------- data
 
-/// What a rig wears: a character and its three cloth colours.
+/// What a rig wears: a character, its three cloth colours, and optionally its gloves and boots.
+/// Gloves and boots keep the character's own colour until an outfit sets one.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(default)]
 pub struct OutfitDef {
@@ -160,6 +161,10 @@ pub struct OutfitDef {
     pub primary: String,
     pub secondary: String,
     pub accent: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gloves: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub boots: Option<String>,
 }
 
 impl OutfitDef {
@@ -168,6 +173,8 @@ impl OutfitDef {
             "primary" => parse_hex(&self.primary),
             "secondary" => parse_hex(&self.secondary),
             "accent" => parse_hex(&self.accent),
+            "glove" => self.gloves.as_deref().and_then(parse_hex),
+            "boot" => self.boots.as_deref().and_then(parse_hex),
             _ => None,
         }
     }
@@ -248,7 +255,7 @@ impl Characters {
     /// A character's own outfit in its default colours.
     pub fn default_outfit(&self, id: &str) -> Option<OutfitDef> {
         let c = self.character.get(id)?;
-        Some(OutfitDef { character: id.into(), primary: c.primary.clone(), secondary: c.secondary.clone(), accent: c.accent.clone() })
+        Some(OutfitDef { character: id.into(), primary: c.primary.clone(), secondary: c.secondary.clone(), accent: c.accent.clone(), ..default() })
     }
 
     /// The outfit called `name`: a wardrobe outfit, else a character's default.
@@ -636,7 +643,7 @@ fn dress(
             if let (Ok((mat, handle)), Some(materials)) = (material_names.get(e), materials.as_mut()) {
                 let kind = mat.0.rsplit('.').next().unwrap_or("");
                 if let Some(color) = outfit.tint(kind) {
-                    let key = (handle.id(), ["primary", "secondary", "accent"].into_iter().find(|m| *m == kind).unwrap());
+                    let key = (handle.id(), ["primary", "secondary", "accent", "glove", "boot"].into_iter().find(|m| *m == kind).unwrap());
                     let tinted = tints.entry(key).or_insert_with(|| {
                         let mut m = materials.get(&handle.0).cloned().unwrap_or_default();
                         m.base_color = color;
@@ -786,6 +793,15 @@ mod tests {
         assert_eq!(c.outfit("custom").unwrap().character, "zealot");
         c.custom.insert("bad".into(), OutfitDef { character: "nobody".into(), ..default() });
         assert!(c.outfit("bad").is_none(), "unknown characters fall back");
+    }
+
+    #[test]
+    fn gloves_and_boots_tint_only_when_set() {
+        let o = OutfitDef { gloves: Some("#ff0000".into()), ..default() };
+        assert_eq!(o.tint("glove"), parse_hex("#ff0000"));
+        assert_eq!(o.tint("boot"), None, "unset boots keep the character's colour");
+        let text = toml::to_string(&OutfitDef { character: "runner".into(), ..default() }).unwrap();
+        assert!(!text.contains("gloves") && !text.contains("boots"), "saves without them keep their shape");
     }
 
     #[test]
