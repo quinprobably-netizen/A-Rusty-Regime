@@ -197,10 +197,10 @@ fn spawn_fleet(world: &mut World) {
     let frame = surface.frame(pad);
     let Surface::Sphere(sphere) = &surface else { return };
     let count = world.resource::<Ships>().ship.len().min(BERTHS.len());
-    for spec in 0..count {
+    for (spec, &x) in BERTHS.iter().enumerate().take(count) {
         let rest = world.resource::<Ships>().ship[spec].rest;
-        let deck = if spec == 0 { crate::planet::COURSE_DECK } else { super::berth_deck(sphere, pad, BERTHS[spec]) };
-        let at = origin.world(pad + frame * Vec3::new(BERTHS[spec], deck + rest + 0.05, -2.0));
+        let deck = if spec == 0 { crate::planet::COURSE_DECK } else { super::berth_deck(sphere, pad, x) };
+        let at = origin.world(pad + frame * Vec3::new(x, deck + rest + 0.05, -2.0));
         spawn(world, spec, Transform::from_translation(at).with_rotation(frame));
     }
 }
@@ -243,6 +243,7 @@ pub fn spawn(world: &mut World, spec: usize, transform: Transform) -> Entity {
 
 /// Loads the next pending hull's glb once the previous one is in, so boot never decodes four
 /// models at once. A model that fails to load leaves an invisible ship that still flies.
+#[allow(clippy::type_complexity)]
 fn stream(
     mut commands: Commands,
     server: Res<AssetServer>,
