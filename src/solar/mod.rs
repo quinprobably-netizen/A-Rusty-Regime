@@ -206,20 +206,45 @@ fn spawn_fixtures(world: &mut World) {
     let origin = *world.resource::<Origin>();
     let Surface::Sphere(sphere) = &surface else { return };
     let frame = surface.frame(pad);
+    // The apron: the pad, and a berth for each other ship running west of it (`ship::BERTHS`).
+    // Each top sits a deck's height over the ground, higher where the ground rises; the rest is
+    // buried, whatever the slope.
     let size = Vec3::new(26.0, 14.0, 26.0);
-    // The top sits a deck's height over the ground; the rest is buried, whatever the slope.
-    let transform = Transform::from_translation(origin.world(pad + frame * Vec3::Y * (COURSE_DECK - size.y / 2.0))).with_rotation(frame);
-    let mesh = world.get_resource_mut::<Assets<Mesh>>().map(|mut m| m.add(Cuboid::from_size(size)));
     let material = world.get_resource_mut::<Assets<StandardMaterial>>().map(|mut m| m.add(StandardMaterial { base_color: Color::srgb(0.32, 0.33, 0.35), perceptual_roughness: 0.8, ..default() }));
-    let mut e = world.spawn((Name::new("Pad"), Fixture, RigidBody::Static, Collider::cuboid(size.x, size.y, size.z), transform));
-    if let (Some(mesh), Some(material)) = (mesh, material) {
-        e.insert((Mesh3d(mesh), MeshMaterial3d(material)));
+    for (i, &x) in ship::BERTHS.iter().enumerate() {
+        let size = if i == 0 { size } else { Vec3::new(BERTH_WIDTH, size.y, size.z) };
+        let (x, deck) = if i == 0 { (0.0, COURSE_DECK) } else { (x, berth_deck(sphere, pad, x)) };
+        let transform = Transform::from_translation(origin.world(pad + frame * Vec3::new(x, deck - size.y / 2.0, 0.0))).with_rotation(frame);
+        let mesh = world.get_resource_mut::<Assets<Mesh>>().map(|mut m| m.add(Cuboid::from_size(size)));
+        let mut e = world.spawn((Name::new(if i == 0 { "Pad" } else { "Berth" }), Fixture, RigidBody::Static, Collider::cuboid(size.x, size.y, size.z), transform));
+        if let (Some(mesh), Some(material)) = (mesh, material.clone()) {
+            e.insert((Mesh3d(mesh), MeshMaterial3d(material)));
+        }
     }
     // The course stands 70 m east of the pad.
     let course = sphere.surface_point((pad + frame * Vec3::X * 70.0).normalize());
     for e in spawn_course(world, &surface, &origin, course) {
         world.entity_mut(e).insert(Fixture);
     }
+}
+
+/// How wide each ship's berth is, along the row.
+pub const BERTH_WIDTH: f32 = 18.0;
+
+/// The deck height of a berth `x` metres along the row from the pad, in the pad's frame: a deck
+/// over the pad's ground, or more where the ground under the berth rises above that.
+pub fn berth_deck(sphere: &Sphere, pad: Vec3, x: f32) -> f32 {
+    let surface = Surface::Sphere(Arc::new(sphere.clone()));
+    let frame = surface.frame(pad);
+    let ground = |dx: f32, dz: f32| sphere.height((pad + frame * Vec3::new(dx, 0.0, dz)).normalize());
+    let here = ground(0.0, 0.0);
+    let mut rise = 0.0_f32;
+    for dx in [-BERTH_WIDTH / 2.0, 0.0, BERTH_WIDTH / 2.0] {
+        for dz in [-12.0, 0.0, 12.0] {
+            rise = rise.max(ground(x + dx, dz) - here);
+        }
+    }
+    COURSE_DECK.max(rise + 0.6)
 }
 
 /// One coarse mesh for the whole of `sphere`: every node at `FAR_DEPTH`, merged, in body
@@ -554,7 +579,7 @@ fn dev_start(world: &mut World) {
     let turn = solar.bodies.turn(&id, &anchor, epoch).as_quat();
     let origin = *world.resource::<Origin>();
     let at = origin.world(here.as_vec3());
-    let Ok(ship) = world.query_filtered::<Entity, With<ship::Ship>>().single(world) else { return };
+    let Some(ship) = world.query::<(Entity, &ship::Ship)>().iter(world).find(|(_, s)| s.spec == 0).map(|(e, _)| e) else { return };
     let Ok(player) = world.query_filtered::<Entity, With<Player>>().single(world) else { return };
     let rotation = (turn * rotation).normalize();
     world.entity_mut(ship).insert((Transform::from_translation(at).with_rotation(rotation), Position(at), Rotation(rotation), LinearVelocity(v), crate::planet::bubble::KeepAwake));
@@ -575,12 +600,13 @@ fn flight_text(
     solar: Res<Solar>,
     origin: Res<Origin>,
     player: Single<(&Transform, &Player, Option<&crate::vehicle::Driving>)>,
-    ships: Query<(&Transform, &LinearVelocity), With<ship::Ship>>,
+    ships: Query<(&Transform, &LinearVelocity, &ship::Ship)>,
+    specs: Res<ship::Ships>,
     mut text: Single<&mut Text, With<FlightText>>,
 ) {
     let (tf, p, driving) = *player;
     let flying = driving.and_then(|d| ships.get(d.0).ok());
-    let velocity = flying.map_or(p.velocity, |(_, v)| v.0);
+    let velocity = flying.map_or(p.velocity, |(_, v, _)| v.0);
     let here = origin.body(tf.translation);
     let body = solar.anchor_body();
     let km = |m: f32| if m.abs() >= 10_000.0 { format!("{:.0} km", m / 1000.0) } else if m.abs() >= 1000.0 { format!("{:.1} km", m / 1000.0) } else { format!("{m:.0} m") };
@@ -606,9 +632,9 @@ fn flight_text(
         line.push_str(&format!("\n{name}  {}", km(*d)));
     }
     if driving.is_none() {
-        let near = ships.iter().any(|(s, _)| s.translation.distance(tf.translation) < ship::BOARD_RADIUS);
-        if near {
-            line.push_str("\n[E] board ship");
+        let near = ships.iter().map(|(s, _, ship)| (s.translation.distance(tf.translation), ship.spec)).filter(|(d, _)| *d < ship::BOARD_RADIUS).min_by(|a, b| a.0.total_cmp(&b.0));
+        if let Some((_, spec)) = near {
+            line.push_str(&format!("\n[E] board {}", specs.ship[spec].name));
         }
     } else {
         line.push_str("\n[W/S] thrust  [Space/Ctrl] up/down  [A/D] roll  [Shift] boost  [E] leave");
