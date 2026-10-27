@@ -70,6 +70,10 @@ fn player(app: &mut App) -> (Vec3, Vec3, MoveState) {
     (tf.translation, p.velocity, p.state)
 }
 
+fn player_state(app: &mut App) -> MoveState {
+    player(app).2
+}
+
 fn set_player(app: &mut App, pos: Vec3, vel: Vec3) {
     let mut q = app.world_mut().query::<(&mut Player, &mut Transform)>();
     let (mut p, mut tf) = q.single_mut(app.world_mut()).unwrap();
@@ -2403,8 +2407,9 @@ fn system_app() -> App {
     app
 }
 
+/// The player's ship, the first in `ships.toml`.
 fn ship_entity(app: &mut App) -> Entity {
-    app.world_mut().query_filtered::<Entity, With<Ship>>().single(app.world()).unwrap()
+    app.world_mut().query::<(Entity, &Ship)>().iter(app.world()).find(|(_, s)| s.spec == 0).map(|(e, _)| e).unwrap()
 }
 
 /// Boards the ship, which must be in reach.
@@ -2486,7 +2491,7 @@ fn the_pilot_cannot_leave_a_ship_at_flying_speed() {
     let mut app = system_app();
     run(&mut app, 1.0);
     board(&mut app);
-    let ship = app.world_mut().query_filtered::<Entity, With<Ship>>().single(app.world()).unwrap();
+    let ship = ship_entity(&mut app);
     app.world_mut().entity_mut(ship).insert(LinearVelocity(Vec3::new(0.0, 0.0, -110.0)));
     input(&mut app).interact_pressed = true;
     run(&mut app, 0.1);
@@ -2574,9 +2579,177 @@ fn flying_down_to_ash_hands_off_to_the_moon_and_streams_its_ground() {
 
 #[test]
 fn boosting_is_capped_by_height_over_the_ground() {
-    use solar::ship::speed_cap;
+    let ships = solar::ship::Ships::load();
+    let speed_cap = |clearance: f32, boost: bool| ships.ship[0].speed_cap(clearance, boost);
     assert_eq!(speed_cap(50.0, false), speed_cap(2000.0, false), "cruising speed near the ground");
     assert!(speed_cap(100_000.0, false).is_infinite(), "coasting in space");
     assert!(speed_cap(100.0, true) < speed_cap(1000.0, true) && speed_cap(1000.0, true) < speed_cap(1.0e6, true));
     assert_eq!(speed_cap(1.0e9, true), 6000.0);
+}
+
+// --------------------------------------------------------------------------- the faction ships
+
+#[test]
+fn ships_toml_lists_four_ships_with_models_and_matching_rest_heights() {
+    let ships = solar::ship::Ships::load();
+    assert_eq!(ships.ship.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["kestrel", "litany", "mule", "vantage"]);
+    for s in &ships.ship {
+        assert!(std::path::Path::new(&format!("assets/models/ships/{}.glb", s.id)).exists(), "{} has a model", s.id);
+        assert!((s.bottom() + s.rest).abs() < 0.05, "{}: collider bottom {} vs rest {}", s.id, s.bottom(), s.rest);
+        assert!(s.mass > 0.0 && s.thrust > 0.0 && s.lift > 0.0 && s.cruise > 0.0 && s.boost_max > s.cruise);
+    }
+    let k = &ships.ship[0];
+    assert_eq!((k.mass, k.thrust, k.lift, k.cruise, k.boost_max, k.rest), (6000.0, 30.0, 20.0, 160.0, 6000.0, 1.6));
+}
+
+#[test]
+fn each_ship_caps_speed_by_its_own_numbers() {
+    let ships = solar::ship::Ships::load();
+    let (k, v) = (&ships.ship[0], &ships.ship[3]);
+    assert_eq!(k.speed_cap(100.0, false), 160.0);
+    assert_eq!(v.speed_cap(100.0, false), 190.0);
+    assert_eq!(k.speed_cap(1.0e9, true), 6000.0);
+    assert_eq!(v.speed_cap(1.0e9, true), 6500.0);
+    assert_eq!(k.speed_cap(1.0e5, false), f32::INFINITY);
+}
+
+#[test]
+fn a_ship_without_assets_still_flies() {
+    // Headless apps have no renderer or materials: the Kestrel must still board and move.
+    let mut app = system_app();
+    board(&mut app);
+    let (p0, _) = ship_state(&mut app);
+    input(&mut app).thrust = 1.0;
+    run(&mut app, 2.0);
+    let (p1, _) = ship_state(&mut app);
+    // Sitting on its skids the pad holds it back, so this checks the thrust is plumbed through, not the number.
+    assert!(p0.distance(p1) > 10.0, "moved {} m", p0.distance(p1));
+    let ship = ship_entity(&mut app);
+    assert_eq!(app.world().get::<Ship>(ship).unwrap().spec, 0);
+    assert_eq!(app.world().get::<Mass>(ship).unwrap().0, 6000.0);
+}
+
+#[test]
+fn leaving_the_ship_uses_its_exit_point() {
+    let mut app = system_app();
+    board(&mut app);
+    run(&mut app, 0.5);
+    let ship = ship_entity(&mut app);
+    let tf = *app.world().get::<Transform>(ship).unwrap();
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 0.1);
+    let stood = app.world_mut().query_filtered::<&Transform, With<Player>>().single(app.world()).unwrap().translation;
+    let spec = app.world().resource::<solar::ship::Ships>().ship[0].clone();
+    let exit = Vec3::from(spec.exit);
+    let expect = tf.translation + tf.rotation * exit;
+    assert!(stood.distance(expect) < 1.5, "stood up {} m from the cabin spot", stood.distance(expect));
+    run(&mut app, 1.0);
+    assert_eq!(player_state(&mut app), MoveState::Ground, "standing on the cabin floor");
+    // Walking backwards from the seat's heading goes aft, down the ramp and onto the apron.
+    input(&mut app).movement = Vec2::new(0.0, -1.0);
+    run(&mut app, 4.0);
+    input(&mut app).movement = Vec2::ZERO;
+    run(&mut app, 0.5);
+    let (pos, _, state) = player(&mut app);
+    let local = tf.rotation.inverse() * (pos - tf.translation);
+    assert!(local.z > spec.ramp_foot().z + 1.0, "walked out the back: {local}");
+    assert!(local.y < spec.cabin[0], "down on the apron, below the cabin floor: {local}");
+    assert_eq!(state, MoveState::Ground, "standing on the apron");
+}
+
+#[test]
+fn four_ships_rest_in_a_row_on_the_apron_without_touching() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    let ships = app.world().resource::<solar::ship::Ships>().clone();
+    let mut parked: Vec<(usize, Vec3)> = app.world_mut().query::<(&Ship, &Transform)>().iter(app.world()).map(|(s, tf)| (s.spec, tf.translation)).collect();
+    parked.sort_by_key(|p| p.0);
+    assert_eq!(parked.len(), 4);
+    let origin = *app.world().resource::<Origin>();
+    let pad = app.world().resource::<Solar>().pad;
+    let frame = app.world().resource::<Surface>().frame(pad);
+    let Surface::Sphere(sphere) = app.world().resource::<Surface>().clone() else { panic!("round world") };
+    for (spec, at) in &parked {
+        let local = frame.inverse() * (origin.body(*at) - pad);
+        let deck = if *spec == 0 { crate::planet::COURSE_DECK } else { solar::berth_deck(&sphere, pad, solar::ship::BERTHS[*spec]) };
+        let rest = deck + ships.ship[*spec].rest;
+        assert!((local.y - rest).abs() < 2.0, "{} rests at {} (want {})", ships.ship[*spec].id, local.y, rest);
+    }
+    // Berths along the row never overlap, and no ship's door opens into a neighbour.
+    for a in 0..4 {
+        for b in 0..4 {
+            if a == b {
+                continue;
+            }
+            let (sa, sb) = (&ships.ship[a], &ships.ship[b]);
+            let dx = (parked[a].1 - parked[b].1).length();
+            assert!(dx > sa.half_width() + sb.half_width(), "{} and {} touch", sa.id, sb.id);
+            let foot = (parked[a].1 + frame * sa.ramp_foot()).distance(parked[b].1);
+            assert!(foot > sb.half_width() + 2.0, "{}'s ramp lands beside {}", sa.id, sb.id);
+        }
+    }
+}
+
+#[test]
+fn respawn_follows_the_last_flown_ship() {
+    let mut app = system_app();
+    // Walk to the Litany, board it, leave it: the respawn moves to its door.
+    let litany = app.world_mut().query::<(Entity, &Ship, &Transform)>().iter(app.world()).find(|(_, s, _)| s.spec == 1).map(|(e, _, tf)| (e, *tf)).unwrap();
+    let player = app.world_mut().query_filtered::<Entity, With<Player>>().single(app.world()).unwrap();
+    let near = litany.1.translation + litany.1.rotation * Vec3::new(-4.0, 0.0, 0.0);
+    set_player(&mut app, near, Vec3::ZERO);
+    run(&mut app, 0.5);
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 0.1);
+    assert_eq!(app.world().get::<Driving>(player).map(|d| d.0), Some(litany.0), "flying the Litany");
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 1.0);
+    let spawn = app.world().resource::<controller::WorldBounds>().spawn;
+    let origin = *app.world().resource::<Origin>();
+    let exit = Vec3::from(app.world().resource::<solar::ship::Ships>().ship[1].exit);
+    let expect = origin.body(litany.1.translation + litany.1.rotation * exit);
+    assert!(spawn.distance(expect) < 3.0, "respawn {} m from the Litany's cabin spot", spawn.distance(expect));
+}
+
+
+#[test]
+fn every_cabin_fits_a_standing_player_and_its_ramp_reaches_the_ground() {
+    let ships = solar::ship::Ships::load();
+    for spec in &ships.ship {
+        let exit = Vec3::from(spec.exit);
+        // A 1.8 m, 0.4 m radius capsule standing on the cabin floor: bottom and top sphere centres.
+        for p in [exit + Vec3::Y * -0.45, exit, exit + Vec3::Y * 0.45] {
+            for b in &spec.collider {
+                assert!(!b.touches(p, 0.4), "{}: a standing player at {exit} hits the box at {:?}", spec.id, b.center);
+            }
+        }
+        assert!(exit.y - 0.95 > spec.cabin[0] - 0.05 && exit.y + 0.95 < spec.cabin[1], "{}: exit stands on the floor under the ceiling", spec.id);
+        assert!(spec.cabin[1] - spec.cabin[0] >= 2.2, "{}: cabin {} m tall", spec.id, spec.cabin[1] - spec.cabin[0]);
+        let foot = spec.ramp_foot();
+        assert!((foot.y + spec.rest).abs() < 0.3, "{}: ramp foot at {} vs ground {}", spec.id, foot.y, -spec.rest);
+        // The doorway over the hinge is clear for a standing player.
+        let door = Vec3::from(spec.ramp) + Vec3::new(0.0, 0.95, -0.5);
+        for b in &spec.collider {
+            assert!(!b.touches(door, 0.35), "{}: the doorway is blocked by the box at {:?}", spec.id, b.center);
+        }
+    }
+}
+
+#[test]
+fn a_parked_ship_is_static_until_boarded() {
+    let mut app = system_app();
+    run(&mut app, 2.0);
+    let ship = ship_entity(&mut app);
+    assert_eq!(*app.world().get::<RigidBody>(ship).unwrap(), RigidBody::Static, "parked");
+    board(&mut app);
+    run(&mut app, 0.2);
+    assert_eq!(*app.world().get::<RigidBody>(ship).unwrap(), RigidBody::Dynamic, "woken by its pilot");
+    input(&mut app).lift = 1.0;
+    run(&mut app, 1.0);
+    input(&mut app).lift = -1.0;
+    run(&mut app, 4.0);
+    input(&mut app).lift = 0.0;
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 3.0);
+    assert_eq!(*app.world().get::<RigidBody>(ship).unwrap(), RigidBody::Static, "parked again after landing");
 }

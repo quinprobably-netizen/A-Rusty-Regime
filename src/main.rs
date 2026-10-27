@@ -128,6 +128,7 @@ fn dev_screenshot(
     mut player: Single<(&mut controller::Player, &mut Transform)>,
     heightmap: Option<Res<terrain::Heightmap>>,
     surface: Res<surface::Surface>,
+    origin: Option<Res<surface::Origin>>,
     vehicles: Query<(&Transform, &vehicle::Vehicle, Option<&Children>), Without<controller::Player>>,
 ) {
     use bevy::render::view::screenshot::{Screenshot, save_to_disk};
@@ -156,13 +157,16 @@ fn dev_screenshot(
         if let Some(yaw) = parts.next() {
             view.yaw = yaw.to_radians();
         }
-        // A spot means nothing on a round body: there the player stays where they are.
-        if let (Some(x), Some(z)) = (parts.next(), parts.next())
-            && !matches!(*surface, surface::Surface::Sphere(_))
-        {
+        // On a round body the spot is an offset east and south of where the player stands.
+        if let (Some(x), Some(z)) = (parts.next(), parts.next()) {
             let (p, tf) = &mut *player;
-            let y = heightmap.as_ref().map_or(0.0, |hm| hm.height_at(x, z)) + 1.0;
-            tf.translation = Vec3::new(x, y, z);
+            if matches!(*surface, surface::Surface::Sphere(_)) {
+                let frame = surface.frame(origin.map_or(tf.translation, |o| o.body(tf.translation)));
+                tf.translation += frame * Vec3::new(x, 0.0, z);
+            } else {
+                let y = heightmap.as_ref().map_or(0.0, |hm| hm.height_at(x, z)) + 1.0;
+                tf.translation = Vec3::new(x, y, z);
+            }
             p.prev_pos = tf.translation;
         }
         if let Some(pitch) = parts.next() {
