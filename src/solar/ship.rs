@@ -196,7 +196,7 @@ struct Hull {
 
 /// A hull whose glb has not been loaded yet; ships load one at a time.
 #[derive(Component)]
-struct Pending;
+pub(super) struct Pending;
 
 /// The nose glow, and the ship it belongs to.
 #[derive(Component)]
