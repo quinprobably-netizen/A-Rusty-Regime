@@ -1509,7 +1509,7 @@ fn loot_is_carried_banked_on_extraction_and_lost_on_death() {
 fn save_round_trips_through_a_file() {
     let path = std::env::temp_dir().join(format!("rust-regime-save-{}.toml", std::process::id()));
     let file = SaveFile(Some(path.clone()));
-    let s = Save { banked: 1234, runs: 7, deaths: 2, missions_done: 3, outfit: None, loadout: None };
+    let s = Save { banked: 1234, runs: 7, deaths: 2, missions_done: 3, ..default() };
     file.write(&s);
     assert_eq!(file.load(), s);
     std::fs::remove_file(&path).ok();

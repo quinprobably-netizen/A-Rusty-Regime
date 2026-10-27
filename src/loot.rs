@@ -99,6 +99,9 @@ pub struct Save {
     pub missions_done: usize,
     /// Clothes picked at the camp wardrobe, over the class default.
     pub outfit: Option<crate::character::OutfitDef>,
+    /// The wardrobe's saved looks and which one `outfit` is.
+    pub presets: Vec<crate::character::OutfitDef>,
+    pub preset: usize,
     /// Gunsmith parts fitted to each weapon.
     pub loadout: Option<crate::gunsmith::Loadout>,
 }
