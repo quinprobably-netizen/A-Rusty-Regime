@@ -173,7 +173,6 @@ pub fn spawn(world: &mut World, transform: Transform) -> Entity {
 /// Fills the stick from the keyboard, the mouse and the pad while the player flies, and keeps
 /// the view angles at rest so the mouse (and right stick) is read afresh each frame.
 fn controls(
-    keys: Option<Res<ButtonInput<KeyCode>>>,
     input: Res<PlayerInput>,
     mut controls: ResMut<ShipControls>,
     mut view: ResMut<ViewAngles>,
@@ -186,13 +185,11 @@ fn controls(
     controls.mouse += Vec2::new(view.yaw, view.pitch);
     view.yaw = 0.0;
     view.pitch = 0.0;
-    let Some(keys) = keys else { return };
-    let axis = |plus: KeyCode, minus: KeyCode| keys.pressed(plus) as i32 as f32 - keys.pressed(minus) as i32 as f32;
-    // Pad: RT / LT thrust, left stick up lifts and right rolls right, A boosts.
-    controls.thrust = (axis(KeyCode::KeyW, KeyCode::KeyS) + input.throttle).clamp(-1.0, 1.0);
-    controls.lift = (axis(KeyCode::Space, KeyCode::ControlLeft) + input.movement.y).clamp(-1.0, 1.0);
-    controls.turn.z = (axis(KeyCode::KeyA, KeyCode::KeyD) - input.movement.x).clamp(-1.0, 1.0);
-    controls.boost = keys.pressed(KeyCode::ShiftLeft) || input.jump_held;
+    // The stick comes from the bindings (see `controls`): keys, triggers and the left stick.
+    controls.thrust = input.thrust;
+    controls.lift = input.lift;
+    controls.turn.z = input.roll;
+    controls.boost = input.boost;
 }
 
 /// E boards the nearest ship in reach, or leaves the one being flown: out to its left, moving

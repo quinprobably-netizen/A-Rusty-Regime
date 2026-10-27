@@ -14,7 +14,7 @@ pub struct CameraPlugin;
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_camera)
-            .add_systems(Update, toggle_view.run_if(resource_exists::<ButtonInput<KeyCode>>))
+            .add_systems(Update, toggle_view.run_if(resource_exists::<crate::input::PlayerInput>))
             .add_systems(PostUpdate, follow.before(TransformSystems::Propagate));
     }
 }
@@ -47,8 +47,8 @@ pub fn third_person(tuning: &Tuning, driving: bool, menu: Option<&crate::menu::M
 }
 
 /// T or R3 flips between first and third person, and the settings remember it.
-fn toggle_view(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, menu: Option<Res<crate::menu::Menu>>, mut tuning: ResMut<Tuning>, settings: Option<ResMut<crate::menu::Settings>>) {
-    let pressed = keys.just_pressed(KeyCode::KeyT) || pads.iter().any(|p| p.just_pressed(GamepadButton::RightThumb));
+fn toggle_view(mut input: ResMut<crate::input::PlayerInput>, menu: Option<Res<crate::menu::Menu>>, mut tuning: ResMut<Tuning>, settings: Option<ResMut<crate::menu::Settings>>) {
+    let pressed = std::mem::take(&mut input.view_pressed);
     if !pressed || menu.is_some_and(|m| !m.playing) {
         return;
     }

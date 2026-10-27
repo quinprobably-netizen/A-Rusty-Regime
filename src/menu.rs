@@ -419,30 +419,22 @@ fn main_cursor(panel: Panel) -> usize {
     }
 }
 
-const CONTROLS: &[(&str, &str, &str)] = &[
-    ("Move", "W A S D", "Left stick"),
-    ("Look", "Mouse", "Right stick"),
-    ("Jump / wall jump / double jump", "Space", "A"),
-    ("Crouch / slide", "Ctrl, Shift or C", "B or L3"),
-    ("Fire", "Left mouse", "RT"),
-    ("Aim down sights", "Right mouse", "LT"),
-    ("Grapple", "G or mouse 4", "LB"),
-    ("Reload", "R", "X (tap)"),
-    ("Enter / leave a vehicle", "E", "X (hold)"),
-    ("Last weapon", "Q", "Y"),
-    ("Next / previous weapon", "Wheel", "RB, d-pad right / left"),
-    ("Weapon 1-10", "1 - 9, 0", ""),
-    ("Flashlight", "F", "D-pad up"),
-    ("Inspect weapon", "V", "D-pad down"),
-    ("First / third person", "T", "R3"),
-    ("Drive: gas, brake / reverse", "W, S", "RT, LT (or left stick)"),
-    ("Steer, handbrake", "A D, Space", "Left stick, A"),
-    ("Fly: pitch / yaw, roll", "Mouse, A D", "Right stick, left stick"),
-    ("Fly: thrust, lift, boost", "W S, Space Ctrl, Shift", "RT LT, left stick, A"),
-    ("Respawn", "Backspace", "View / Select"),
-    ("Menu", "Esc", "Start"),
-    ("Reload tuning.toml", "F5", ""),
-];
+/// The Controls screen: every binding, by context, from `controls::BINDINGS`, with F5 on the end.
+fn controls_sheet() -> String {
+    let mut out = format!("{:<34}{:<30}{}\n", "ACTION", "KEYBOARD / MOUSE", "GAMEPAD");
+    // Driving and flying only list what differs from walking: the rest is the same buttons.
+    let foot = crate::controls::rows(crate::controls::Ctx::Foot);
+    for ctx in crate::controls::Ctx::GAME {
+        out.push_str(&format!("\n{}\n", ctx.label().to_uppercase()));
+        for row in crate::controls::rows(ctx) {
+            if ctx == crate::controls::Ctx::Foot || !foot.contains(&row) {
+                out.push_str(&format!("{:<34}{:<30}{}\n", row.0, row.1, row.2));
+            }
+        }
+    }
+    out.push_str(&format!("\n{:<34}{:<30}\n", "Reload tuning.toml", "F5"));
+    out
+}
 
 // -------------------------------------------------------------------------------------- plugin
 
@@ -543,58 +535,22 @@ struct RowId(usize);
 struct Arrow(usize, i32);
 
 fn read_input(
-    keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
-    pads: Query<&Gamepad>,
+    actions: Res<crate::controls::ActionState>,
     rows: Query<(&Interaction, &RowId), Changed<Interaction>>,
     arrows: Query<(&Interaction, &Arrow), Changed<Interaction>>,
-    screen: Res<State<Screen>>,
     mut nav: ResMut<Nav>,
 ) {
+    use crate::controls::Action::*;
     let mut n = Nav::default();
-    // In the game B is crouch, so only Start pauses; in a menu B backs out too.
-    let in_menu = *screen.get() != Screen::Playing;
-    let down = |n: &mut Nav, k: KeyCode, d: i32| if keys.just_pressed(k) { n.moved += d };
-    down(&mut n, KeyCode::ArrowDown, 1);
-    down(&mut n, KeyCode::KeyS, 1);
-    down(&mut n, KeyCode::ArrowUp, -1);
-    down(&mut n, KeyCode::KeyW, -1);
-    if keys.any_just_pressed([KeyCode::ArrowRight, KeyCode::KeyD]) {
-        n.adjust += 1;
-    }
-    if keys.any_just_pressed([KeyCode::ArrowLeft, KeyCode::KeyA]) {
-        n.adjust -= 1;
-    }
-    n.select = keys.any_just_pressed([KeyCode::Enter, KeyCode::Space]);
-    n.back = keys.just_pressed(KeyCode::Escape);
-    if keys.just_pressed(KeyCode::KeyE) {
-        n.weapon += 1;
-    }
-    if keys.just_pressed(KeyCode::KeyQ) {
-        n.weapon -= 1;
-    }
-    for pad in &pads {
-        if pad.just_pressed(GamepadButton::DPadDown) {
-            n.moved += 1;
-        }
-        if pad.just_pressed(GamepadButton::DPadUp) {
-            n.moved -= 1;
-        }
-        if pad.just_pressed(GamepadButton::DPadRight) {
-            n.adjust += 1;
-        }
-        if pad.just_pressed(GamepadButton::DPadLeft) {
-            n.adjust -= 1;
-        }
-        n.select |= pad.just_pressed(GamepadButton::South);
-        n.back |= pad.just_pressed(GamepadButton::Start) || (in_menu && pad.just_pressed(GamepadButton::East));
-        if pad.just_pressed(GamepadButton::RightTrigger) {
-            n.weapon += 1;
-        }
-        if pad.just_pressed(GamepadButton::LeftTrigger) {
-            n.weapon -= 1;
-        }
-    }
+    // Keys and pad come from the bindings (`controls::BINDINGS`): the same buttons the game uses
+    // pause the game and back out of a menu.
+    let step = |plus, minus| actions.pressed(plus) as i32 - actions.pressed(minus) as i32;
+    n.moved = step(Down, Up);
+    n.adjust = step(Right, Left);
+    n.weapon = step(TabNext, TabPrev);
+    n.select = actions.pressed(Select);
+    n.back = actions.pressed(Back) || actions.pressed(Pause);
     for (i, row) in &rows {
         match i {
             Interaction::Hovered => n.hover = Some(row.0),
@@ -976,8 +932,7 @@ fn rebuild(
                 list.spawn((text("* takes effect after a restart.  Saved to settings.toml.", 12.0, DIM), Node { margin: UiRect::top(Val::Px(4.0)), ..default() }));
             }
             if menu.panel == Panel::Controls {
-                let lines: Vec<String> = CONTROLS.iter().map(|(a, k, g)| format!("{a:<32}{k:<20}{g}")).collect();
-                list.spawn((text(format!("{:<32}{:<20}{}\n\n{}", "ACTION", "KEYBOARD / MOUSE", "GAMEPAD", lines.join("\n")), 15.0, WHITE), Node { margin: UiRect::vertical(Val::Px(8.0)), ..default() }));
+                list.spawn((text(controls_sheet(), 14.0, WHITE), Node { margin: UiRect::vertical(Val::Px(8.0)), ..default() }));
             }
         });
 

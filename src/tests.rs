@@ -2093,6 +2093,17 @@ fn a_crosswind_pushes_bullets_sideways() {
 
 // ------------------------------------------------------------------------------------ menus
 
+/// The game's input plugin on bare devices (Bevy's own input plugin would clear a button the test
+/// pressed by hand), so taps and pad presses reach `input::gather` and the menu.
+fn with_input_devices(app: &mut App) {
+    app.add_plugins(crate::input::InputPlugin)
+        .init_resource::<ButtonInput<KeyCode>>()
+        .init_resource::<ButtonInput<MouseButton>>()
+        .init_resource::<bevy::input::mouse::AccumulatedMouseMotion>()
+        .init_resource::<bevy::input::mouse::AccumulatedMouseScroll>()
+        .add_message::<bevy::input::gamepad::GamepadRumbleRequest>();
+}
+
 /// Press and release a key over two frames, like a real tap.
 fn tap(app: &mut App, key: KeyCode) {
     app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(key);
@@ -2107,9 +2118,8 @@ fn tap(app: &mut App, key: KeyCode) {
 fn menus_stop_time_and_esc_pauses() {
     use crate::menu::{MenuPlugin, Screen};
     let mut app = build_app(Tuning::default());
-    app.add_plugins((crate::gunsmith::GunsmithPlugin, MenuPlugin))
-        .init_resource::<ButtonInput<KeyCode>>()
-        .init_resource::<ButtonInput<MouseButton>>();
+    app.add_plugins((crate::gunsmith::GunsmithPlugin, MenuPlugin));
+    with_input_devices(&mut app);
     app.finish();
     app.update();
     assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Title);
@@ -2158,18 +2168,11 @@ fn pad_mappings_join_the_users_sdl_config() {
 fn gamepad_b_crouches_in_game_and_only_start_pauses() {
     use crate::menu::{MenuPlugin, Screen};
     let mut app = build_app(Tuning::default());
-    // The game's input plugin without Bevy's, so a pressed button is not cleared by event processing.
-    app.add_plugins((crate::input::InputPlugin, crate::gunsmith::GunsmithPlugin, MenuPlugin))
-        .init_resource::<ButtonInput<KeyCode>>()
-        .init_resource::<ButtonInput<MouseButton>>()
-        .init_resource::<bevy::input::mouse::AccumulatedMouseMotion>()
-        .init_resource::<bevy::input::mouse::AccumulatedMouseScroll>()
-        .add_message::<bevy::input::gamepad::GamepadRumbleRequest>();
+    app.add_plugins((crate::gunsmith::GunsmithPlugin, MenuPlugin));
+    with_input_devices(&mut app);
     app.finish();
     app.update();
     let pad = app.world_mut().spawn(Gamepad::default()).id();
-    // `input::gather` reads the window's cursor; headless, a bare one stands in.
-    app.world_mut().spawn(bevy::window::CursorOptions::default());
 
     // A picks PLAY on the title screen.
     pad_tap(&mut app, pad, GamepadButton::South);
@@ -2373,9 +2376,8 @@ fn third_person_camera_sits_over_the_shoulder_and_stops_at_walls() {
 fn t_switches_to_third_person_in_game() {
     use crate::menu::{MenuPlugin, Screen};
     let mut app = build_app(Tuning::default());
-    app.add_plugins((crate::gunsmith::GunsmithPlugin, MenuPlugin, crate::camera::CameraPlugin))
-        .init_resource::<ButtonInput<KeyCode>>()
-        .init_resource::<ButtonInput<MouseButton>>();
+    app.add_plugins((crate::gunsmith::GunsmithPlugin, MenuPlugin, crate::camera::CameraPlugin));
+    with_input_devices(&mut app);
     app.finish();
     app.update();
     tap(&mut app, KeyCode::Enter);
@@ -2457,7 +2459,7 @@ fn the_system_starts_on_havens_pad_beside_the_ship() {
 }
 
 #[test]
-fn the_pad_flies_the_ship() {
+fn the_ship_takes_its_stick_from_the_input() {
     let mut app = build_app(Tuning::default());
     drop_flat_floor(&mut app);
     app.add_plugins(solar::SolarPlugin).init_resource::<ButtonInput<KeyCode>>();
@@ -2465,16 +2467,17 @@ fn the_pad_flies_the_ship() {
     app.update();
     run(&mut app, 1.0);
     board(&mut app);
-    // Triggers thrust, the left stick lifts and rolls, A boosts; the keyboard is idle.
+    // What `input::gather` reads from the bindings (see `controls`): thrust, lift, roll left, boost.
     let mut i = input(&mut app);
-    i.throttle = 0.6;
-    i.movement = Vec2::new(0.5, 1.0);
-    i.jump_held = true;
+    i.thrust = 0.6;
+    i.lift = 1.0;
+    i.roll = -0.5;
+    i.boost = true;
     app.update();
     let c = app.world().resource::<ShipControls>();
-    assert!((c.thrust - 0.6).abs() < 1e-5, "RT thrusts: {}", c.thrust);
-    assert!((c.lift - 1.0).abs() < 1e-5, "stick up lifts: {}", c.lift);
-    assert!((c.turn.z + 0.5).abs() < 1e-5, "stick right rolls right: {}", c.turn.z);
+    assert!((c.thrust - 0.6).abs() < 1e-5, "thrust: {}", c.thrust);
+    assert!((c.lift - 1.0).abs() < 1e-5, "lift: {}", c.lift);
+    assert!((c.turn.z + 0.5).abs() < 1e-5, "roll: {}", c.turn.z);
     assert!(c.boost, "A boosts");
 }
 
@@ -2485,20 +2488,20 @@ fn the_ship_lifts_off_hovers_and_lands() {
     board(&mut app);
     let surface = app.world().resource::<Surface>().clone();
     let start = surface.altitude(ship_state(&mut app).0);
-    app.world_mut().resource_mut::<ShipControls>().lift = 1.0;
+    input(&mut app).lift = 1.0;
     run(&mut app, 2.0);
     let lifted = surface.altitude(ship_state(&mut app).0);
     assert!(lifted - start > 15.0, "lifted {} m in 2 s", lifted - start);
-    app.world_mut().resource_mut::<ShipControls>().lift = 0.0;
+    input(&mut app).lift = 0.0;
     run(&mut app, 2.0);
     let settled = surface.altitude(ship_state(&mut app).0);
     run(&mut app, 2.0);
     let held = surface.altitude(ship_state(&mut app).0);
     assert!((held - settled).abs() < 0.5, "hovers in place with no lift: {settled} then {held}");
     // Sinking brings it back down onto the pad, where it stays once the pilot leaves.
-    app.world_mut().resource_mut::<ShipControls>().lift = -1.0;
+    input(&mut app).lift = -1.0;
     run(&mut app, 6.0);
-    app.world_mut().resource_mut::<ShipControls>().lift = 0.0;
+    input(&mut app).lift = 0.0;
     input(&mut app).interact_pressed = true;
     run(&mut app, 2.0);
     let (p, v) = ship_state(&mut app);
