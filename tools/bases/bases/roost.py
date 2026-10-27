@@ -137,6 +137,7 @@ def build():
 SPEC = {
     "build": build,
     "name": "The Roost",
+    "color": (0.3, 1.0, 0.5),
     "faction": "deserters",
     "body": "home",
     "near_pad": (70.0, 85.0),

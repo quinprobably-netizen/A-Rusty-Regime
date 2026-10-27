@@ -292,7 +292,12 @@ link corridors, with an airlock, a radar dish and floodlights. Every base is hol
 walkable (floors, walls, roofs and stairs are collision boxes; the fittings are not), lit
 inside by its own lamps, and stands on a buried foundation slab with a landing pad in front
 of its door (the Roost uses the apron). Only the world you are on has its base spawned; the
-flight readout names it and how far it is. `RUST_REGIME_AT=<base>,<altitude>` (`roost`,
+flight readout names it and how far it is.
+**Waypoints** mark them from anywhere: a diamond in the faction's colour (Deserters green,
+Regime red, Scrappers yellow, PMC blue; your parked Kestrel white) with the name and the
+distance, clamped to the screen edge when it is off-screen or behind you, and a tall beam of
+light over each base on the world you are on. A base on another world is marked at that
+world's centre. Markers hide within 30 m and under the menus. `RUST_REGIME_AT=<base>,<altitude>` (`roost`,
 `reliquary`, `yard`, `outpost`) starts you flying over its pad.
 
 Everything is in `assets/system.toml`: a star, Haven and its low-gravity moon Ash, and

@@ -117,6 +117,7 @@ _NAVE_WALL = [box(n, c, s) for n, c, s in (
 SPEC = {
     "build": build,
     "name": "The Reliquary",
+    "color": (1.0, 0.2, 0.2),
     "faction": "regime",
     "body": "bastion",
     "lat": 18.0,

@@ -365,12 +365,12 @@ def write_toml(path, specs):
         "# the base has its own; `near_pad` places a base in Haven's pad frame (x, z), otherwise `lat`",
         "# and `lon` (degrees) are snapped to the flattest ground near there on `body`; `yaw` turns the",
         "# base on its site (degrees, 0 = door to the south). `door` is a",
-        "# point in the doorway, for the tests. Hulls are hollow: the boxes are the floors, walls, roofs",
+        "# point in the doorway, for the tests. `color` is the faction's waypoint and beam colour (rgb). Hulls are hollow: the boxes are the floors, walls, roofs",
         "# and stairs (`rot` in degrees) the player walks between; fittings do not collide.",
         "",
     ]
     for bid, s in specs:
-        lines += [f"[[base]]", f'id = "{bid}"', f'name = "{s["name"]}"', f'faction = "{s["faction"]}"', f'body = "{s["body"]}"']
+        lines += [f"[[base]]", f'id = "{bid}"', f'name = "{s["name"]}"', f'faction = "{s["faction"]}"', f'body = "{s["body"]}"', f"color = [{_fmt(s['color'])}]"]
         if "near_pad" in s:
             lines.append(f"near_pad = [{_fmt(s['near_pad'])}]")
         else:

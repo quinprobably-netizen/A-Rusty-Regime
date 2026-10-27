@@ -2835,3 +2835,28 @@ fn the_roost_stands_north_of_the_apron_and_bastions_base_replaces_it_after_a_han
     assert!((base.rotation * Vec3::Y).dot(here.normalize()) > 0.999, "stands upright");
 }
 
+
+// ------------------------------------------------------------------------------- waypoints
+
+#[test]
+fn every_base_and_the_ship_get_a_waypoint_in_the_faction_colour() {
+    let mut app = system_app();
+    run(&mut app, 0.2);
+    let bases = app.world().resource::<solar::base::Bases>().clone();
+    let mut pins: Vec<String> = Vec::new();
+    for (target, text) in app.world_mut().query::<(&solar::waypoint::Target, &Children)>().iter(app.world()).map(|(t, c)| (t.clone(), c.to_vec())) {
+        match target {
+            solar::waypoint::Target::Base(i) => pins.push(bases.base[i].id.clone()),
+            solar::waypoint::Target::Ship => pins.push("ship".into()),
+        }
+        assert_eq!(text.len(), 2, "a diamond and a label");
+    }
+    pins.sort();
+    assert_eq!(pins, ["outpost", "reliquary", "roost", "ship", "yard"]);
+    // Four factions, four different colours, none of them white (that is the ship's).
+    let mut colours: Vec<[u32; 3]> = bases.base.iter().map(|b| b.color.map(|c| (c * 100.0) as u32)).collect();
+    colours.sort();
+    colours.dedup();
+    assert_eq!(colours.len(), 4);
+    assert!(bases.base.iter().all(|b| b.color != [1.0; 3]));
+}

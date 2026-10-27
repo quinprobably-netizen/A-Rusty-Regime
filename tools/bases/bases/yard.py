@@ -164,6 +164,7 @@ def _containers():
 SPEC = {
     "build": build,
     "name": "The Yard",
+    "color": (1.0, 0.85, 0.1),
     "faction": "scrappers",
     "body": "cinder",
     "lat": -8.0,
