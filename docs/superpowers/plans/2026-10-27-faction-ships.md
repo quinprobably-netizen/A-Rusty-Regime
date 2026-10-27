@@ -282,3 +282,49 @@ fn respawn_follows_the_last_flown_ship() {
 - [ ] **Step 1: Build the release binary and take one in-game shot** of the apron from the east looking west over the player's spawn: `xvfb-run -a env BEVY_ASSET_ROOT=$PWD RUST_REGIME_SCREENSHOT=screenshots/ships/apron.png RUST_REGIME_SCREENSHOT_VIEW="slot,yaw,x,z,pitch" WGPU_BACKEND=vulkan VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json target/release/rust-regime` (yaw 90 looks toward −X, pitch −10). Expected: a PNG with four ships visible and no missing-hull gaps.
 - [ ] **Step 2: Run** `cargo test --release` and `cargo clippy --release -- -D warnings` — expected: pass, no warnings.
 - [ ] **Step 3: Commit** README and the screenshot; push `claude/project-thread-iubf0p`; open a draft PR titled "Four faction ships" with the four look-dev renders and the apron shot; report in the thread with the shots and wait for Q's merge.
+
+---
+
+## Round 2: detail and walkable interiors
+
+Spec: the "Round 2" section of the design doc.
+
+### Task 9: Kit for hollow hulls and interiors
+
+**Files:** Modify `tools/ships/kit.py`.
+
+**Interfaces (produced):**
+- `TRIS_MAX = 30000`.
+- `cabin(ship, c, s, material, wall=0.12, opening=None)`: a hollow box (outer block minus inner block, walls `wall` thick) with, when `opening=(width, height)` is given, a hole in the back (−Y) face for the ramp. Adds it to the ship; returns the outer object.
+- `ramp(ship, hinge, width, length, material, thick=0.08, angle=0.0)`: a plate hanging from `hinge` (Blender coords, the top edge's centre) down and aft, with chevron stripes and tread bars; registered as `ramp` (a separate mesh group so the game can swing it); a `ramp` empty at the hinge is its parent. Returns the object.
+- `seat(name, c, facing, material="black")`, `console(name, c, s, material="gunmetal", screens=2)` (screens in group `lights` as `blue_light`), `crate(name, c, s, material)`, `locker(name, c, s, material)`, `light_strip(name, p0, p1, material="lamp")` (group `lights`), `bunk`, `rack`.
+- `Ship.finish` exports five groups at most: `hull`, `glass`, `lights`, `ramp`, `interior` (interior is its own mesh so its wear bake scale can differ later). `MESHES_MAX = 6`.
+- `check` also requires a `ramp` node and reports the interior clear height from the spec: `spec["cabin"] = (floor_z, ceiling_z, half_width)` must give ceiling − floor ≥ 2.2 and half_width ≥ 0.9.
+
+Steps: write the helpers; run `tools/ships/build.sh kestrel --no-bake` after Task 10 to exercise them; commit with Task 10.
+
+### Task 10: Kestrel detail pass and cabin
+
+Rewrite `tools/ships/ships/kestrel.py`: fuselage 2.8 wide × 2.7 tall × 9.5 long, cabin floor at z = −0.75, ceiling at 1.45, inner half width 1.25; rear ramp 1.6 wide × 2.6 long hinged at (0, −5.2, −0.75); pilot seat and console forward under the canopy, two jump seats a side, weapon rack, two crates, canvas roll inside, a light strip; exterior: hinges, latches, nav lights, missile pods under each wing, wing fences, antenna array, cable runs, more plates and seams, chevrons at the ramp. `SPEC["cabin"] = (-0.75, 1.45, 1.25)`, `rest` 1.6. Check, preview, commit "Ships: Kestrel detail pass and cabin".
+
+### Task 11: Litany, Mule, Vantage detail passes and cabins
+
+Same pattern. Litany: nave floor z = −1.2, ceiling 1.3, pews, altar console, candle lights (`gold_light`), gold ribs outside, braziers on the buttresses, rear ramp under the trefoil. Mule: hold floor z = −1.3, ceiling 1.9, crates and tanks inside, chains (`cyl` links), workbench, pilot seat in the cab, side bay door with a ramp on the left (the tanks move to the roof) or a rear ramp between the engines; winch, tyre bumpers, ladders outside. Vantage: hull 3.0 wide × 2.6 tall × 13 long, cabin floor z = −0.9, ceiling 1.3, pilot and co-pilot seats, lockers, white panels, blue strips; belly ramp between the engines. One commit per ship.
+
+### Task 12: Runtime: hollow colliders, ramp, static parking, exit inside
+
+**Files:** `assets/ships.toml`, `src/solar/ship.rs`, `src/solar/mod.rs` (`RUST_REGIME_AT`), `src/tests.rs`.
+
+- `ShipBox { center, size, #[serde(default)] rot: [f32; 3] }`; `ShipSpec::collider` applies `Quat::from_euler(EulerRot::XYZ, …)` in degrees.
+- `ShipSpec` gains `ramp: [f32; 3]` (hinge in the ship frame) and `ramp_len: f32` (for the test), and `cabin: [f32; 2]` (floor y, ceiling y) for the clearance test.
+- `Ship` gains nothing; a `Ramp` marker goes on the glb's `ramp` node in `dress`. System `swing` (Update): the ramp node's rotation eases to open (hanging down to the ground: rotation about X by the spec's `ramp_angle`, default −70°) when the ship has no pilot, and to closed (0°) when it does.
+- `park`: a parked ship (no pilot, < 0.5 m/s, `RigidBody::Dynamic`) gets `RigidBody::Static`; `board` inserts `RigidBody::Dynamic` when a pilot takes it; `RUST_REGIME_AT` inserts it too.
+- Tests:
+  - `every_cabin_fits_a_standing_player`: for each spec, the capsule (radius 0.4, height 1.8) standing on `exit` (feet at `exit.y − 0.9`) intersects no box (point-vs-OBB with the capsule's radius as margin, sampled at feet, middle and head), and the ramp foot (`hinge + ramp_len` along the open direction) is within 0.3 m of `−rest`.
+  - `a_parked_ship_is_static_until_boarded`: after 2 s the Kestrel has `RigidBody::Static`; `board` → `Dynamic`; leave at rest → static again within 2 s.
+  - `leaving_the_ship_uses_its_exit_point` now also walks the player aft (`input.movement = (0, -1)` for 3 s) and asserts they end up outside the hull's footprint below the cabin floor height, still `Ground`.
+  - The row test's door check becomes: the ramp foot of each ship clears every other ship's boxes by 2 m.
+
+### Task 13: Shots and PR update
+
+Rebuild, run the suite, take two in-game shots (from the spawn as before, and one with `RUST_REGIME_SCREENSHOT_VIEW` yaw 180 after the game places the player at the respawn inside the Kestrel: that is the cabin interior), push to the PR branch, update the PR body.

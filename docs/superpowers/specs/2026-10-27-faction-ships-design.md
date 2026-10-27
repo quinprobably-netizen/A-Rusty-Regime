@@ -93,3 +93,36 @@ nose), and `light.<n>` for emissive running lights (PMC only). Seat, exit and co
 
 Ships parked on their own worlds (needs far-ship stowing across frame handoffs), ship weapons,
 interiors, a hangar menu, damage. Each is its own thread when wanted.
+
+## Round 2 (Q, 2026-10-27): more detail and walkable interiors
+
+Q asked for more detailed hulls and interiors you can walk through on foot.
+
+- **Cabins.** Every ship is hollow: a cabin at least 1.8 m wide and 2.2 m tall inside (the player
+  is a 1.8 m, 0.4 m radius capsule with a 0.4 m step) with a floor, walls, ceiling and a rear
+  ramp that reaches the ground at under 25°. Fuselages grow to fit: Kestrel 2.8 × 2.7 m,
+  Vantage 3.0 × 2.6 m; the Litany and Mule were already tall enough. The ramp is a `ramp` node
+  in the glb, hinged at its top edge: the game lays it open when the ship is parked and swings it
+  shut while flying. Fittings per ship: a pilot's seat and console with lit screens, crew seats
+  or pews, racks, crates, lockers, a ceiling light strip (group `lights`). Faction dressing
+  carries inside (gold and candles in the Litany, chains and tools in the Mule, white panels in
+  the Vantage, tape and canvas in the Kestrel).
+- **Colliders.** `ShipBox` gains an optional `rot: [x, y, z]` in degrees, so a ramp slopes.
+  Interiors are built from boxes: floor, two walls, ceiling, front bulkhead, ramp. The walkable
+  volume is clear of collision boxes.
+- **Boarding and leaving.** Unchanged: E within `BOARD_RADIUS` of a ship flies it from the seat.
+  Leaving puts the player on the cabin floor behind the seat (`exit` is now inside the hull), and
+  they walk out down the ramp. The respawn is that same cabin spot: you wake up in your ship.
+- **Parked ships are static.** A ship with no pilot moving under 0.5 m/s becomes
+  `RigidBody::Static` (so walking in it cannot nudge it and it never jitters); boarding makes it
+  `Dynamic` again. `RUST_REGIME_AT` boards through the same path.
+- **Detail pass.** Exterior parts roughly double: hinges and latches on every plate, nav lights,
+  antenna arrays, wing fences and hardpoints (missile pods on the Kestrel, braziers on the
+  Litany, a winch and tyre bumpers on the Mule, sensor blisters on the Vantage), cable runs,
+  stencils, chevrons at the ramps. Budget per ship rises to 30 k triangles (still one 1024²
+  texture); the A580 is nowhere near that limit.
+- **Tests.** Interior clearance: for every ship, a 1.8 m capsule standing on the exit point
+  touches no collision box, and the ramp's foot is within 0.3 m of the ground. Parking: a ship
+  is static two seconds after the pilot leaves it at rest, dynamic again once boarded. Leaving
+  leaves the player standing (`Ground`) on the cabin floor, and walking aft takes them out the
+  ramp onto the apron without a jump.
