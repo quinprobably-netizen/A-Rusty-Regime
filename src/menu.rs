@@ -313,20 +313,17 @@ struct MapDef {
     desc: &'static str,
 }
 
+/// The island, arena and moon are still reachable with `RUST_REGIME_LEVEL`, just not from the menu.
 const MAPS: &[MapDef] = &[
-    MapDef { level: "island", mode: "", name: "ISLAND", desc: "4 km open island: sites, caches, extraction, missions" },
-    MapDef { level: "island", mode: "6v6", name: "ISLAND  6V6", desc: "You and five bots against six at the fort" },
-    MapDef { level: "arena", mode: "", name: "ARENA", desc: "The old walled parkour arena" },
     MapDef { level: "system", mode: "", name: "SOLAR SYSTEM", desc: "Haven, its moon Ash and your ship: fly between worlds" },
-    MapDef { level: "moon", mode: "", name: "MOON", desc: "Debug round world with a parkour course" },
 ];
 
-/// The [`MAPS`] entry this run was started with. An unknown level is the island, as in `main`.
+/// The [`MAPS`] entry this run was started with. An unknown level is the solar system, as in `main`.
 fn current_map() -> usize {
     let level = std::env::var("RUST_REGIME_LEVEL").ok();
     let level = match level.as_deref() {
-        Some(l @ ("arena" | "moon" | "system")) => l,
-        _ => "island",
+        Some(l @ ("island" | "arena" | "moon")) => l,
+        _ => "system",
     };
     let mode = if std::env::var("RUST_REGIME_MODE").is_ok_and(|m| m == "6v6") { "6v6" } else { "" };
     MAPS.iter().position(|m| m.level == level && m.mode == mode).unwrap_or(0)
@@ -1139,7 +1136,7 @@ mod tests {
         assert_eq!(rows(Panel::Main, Screen::Title, [false; 4])[0], Row::Action("PLAY", Action::Play));
         assert_eq!(rows(Panel::Main, Screen::Paused, [false; 4])[0], Row::Action("RESUME", Action::Resume));
         assert_eq!(selectable(&rows(Panel::Maps, Screen::Title, [false; 4])).count(), MAPS.len() + 1);
-        assert!(MAPS.iter().any(|m| m.level == "island" && m.mode.is_empty()) && MAPS[0].mode.is_empty(), "the island leads");
+        assert!(MAPS.iter().any(|m| m.level == "system" && m.mode.is_empty()) && MAPS[0].mode.is_empty(), "the solar system leads");
         assert_eq!(selectable(&rows(Panel::Gunsmith, Screen::Paused, [true, false, false, false])).count(), 1 + 4 + 1 + 1, "a tune row under the fitted optic");
     }
 }

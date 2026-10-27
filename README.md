@@ -173,10 +173,10 @@ zooms in and tightens the spread.
 All numbers live in `tuning.toml`.
 
 ## Island
-The default level is a 4 km seeded island (`[island]` in `tuning.toml`: seed, size,
-cell size, peak height, water level). Fall in the water and you respawn on the
-spawn pad. `RUST_REGIME_LEVEL=arena` runs the original arena below, which the
-tests also use.
+`RUST_REGIME_LEVEL=island` runs a 4 km seeded island (`[island]` in `tuning.toml`: seed,
+size, cell size, peak height, water level), now off the menu and no longer the default
+(the solar system is). Fall in the water and you respawn on the spawn pad.
+`RUST_REGIME_LEVEL=arena` runs the original arena below, which the tests also use.
 
 Six sites sit in the island's core, each a parkour toy first and a fight second:
 base camp (spawn, no enemies, the physics playground), the radio tower on the
@@ -222,7 +222,7 @@ drive a Humvee to the ruins, reach the lighthouse top. Soldiers now chase
 the last place they saw you and close to `soldier.hold` meters.
 
 ### 6v6 (optional)
-`RUST_REGIME_MODE=6v6` starts you at the fort gate with five blue bots
+`RUST_REGIME_LEVEL=island RUST_REGIME_MODE=6v6` starts you at the fort gate with five blue bots
 against six red bots. Bots fight each other and you; first team to
 `match.kills_to_win` kills wins and the scores reset. There is no netcode:
 this is the bot mode the open-world design called for, and the spec leaves
