@@ -8,6 +8,7 @@
 //! re-expresses the player and the ship in the new body's frame, drops the old ground and streams
 //! the new one, so the handoff is continuous in position and velocity.
 
+pub mod base;
 pub mod orbit;
 pub mod ship;
 
@@ -120,6 +121,7 @@ impl Plugin for SolarPlugin {
             .insert_resource(Solar { bodies, spheres, anchor: "home".into(), epoch, revealed: true, pad, star_color: system.star.color });
         add_streaming(app);
         ship::build(app);
+        base::build(app);
         // The clock moves on with the physics step, so between steps every position and the epoch
         // agree: a handoff converts positions at the instant they hold.
         app.add_systems(FixedUpdate, gravitate.before(ControllerSet))
@@ -139,7 +141,11 @@ fn kill_altitude(sphere: &Sphere) -> f32 {
 /// 3 m. Deterministic, so the pad is always in the same place.
 pub fn landing_site(sphere: &Sphere) -> Vec3 {
     let home = sphere.body.home.clone().unwrap_or(crate::system::Home { lat: 0.0, lon: 0.0, core: 0.0, continent: 0.0 });
-    let centre = lat_lon_dir(home.lat, home.lon);
+    flat_site(sphere, lat_lon_dir(home.lat, home.lon))
+}
+
+/// The flattest dry ground near the direction `centre`, by the same search.
+pub fn flat_site(sphere: &Sphere, centre: Vec3) -> Vec3 {
     let surface = Surface::Sphere(Arc::new(sphere.clone()));
     let frame = surface.frame(centre * sphere.sea_radius());
     let at = |x: f32, z: f32| (centre * sphere.sea_radius() + frame * Vec3::new(x, 0.0, z)).normalize();
@@ -165,7 +171,7 @@ pub fn landing_site(sphere: &Sphere) -> Vec3 {
 }
 
 /// Same convention as the debug moon: +Y north, longitude 0 at +X growing east toward -Z.
-fn lat_lon_dir(lat: f32, lon: f32) -> Vec3 {
+pub fn lat_lon_dir(lat: f32, lon: f32) -> Vec3 {
     let (lat, lon) = (lat.to_radians(), lon.to_radians());
     Vec3::new(lat.cos() * lon.cos(), lat.sin(), -lat.cos() * lon.sin())
 }
@@ -195,8 +201,10 @@ fn tick_epoch(time: Res<Time>, mut solar: ResMut<Solar>) {
     solar.epoch += time.delta_secs_f64();
 }
 
-/// The pad and the course on Haven, in the anchor's frame and around the origin of the moment.
+/// The anchor world's fixtures, in its frame and around the origin of the moment: its faction
+/// base, and on Haven the pad, the berths and the course.
 fn spawn_fixtures(world: &mut World) {
+    base::spawn_bases(world);
     let solar = world.resource::<Solar>();
     if solar.anchor != "home" {
         return;
@@ -539,31 +547,44 @@ pub fn switch_anchor(world: &mut World) {
     let mut solar = world.resource_mut::<Solar>();
     solar.anchor = new.clone();
     solar.revealed = false;
-    if new == "home" {
-        spawn_fixtures(world);
-    }
+    spawn_fixtures(world);
 }
 
-/// Dev aid: `RUST_REGIME_AT=<body>,<altitude m>[,<speed m/s>]` starts flying the ship that high
-/// over the sunlit side of a body, so screenshots can be taken anywhere in the system: nose level
-/// from low down and pointing at the body from high up, or with a speed, diving 30° at it.
+/// Dev aid: `RUST_REGIME_AT=<body or base>,<altitude m>[,<speed m/s>]` starts flying the ship
+/// that high over the sunlit side of a body, or over a faction base, so screenshots can be taken
+/// anywhere in the system: nose level from low down and pointing at the body from high up, or
+/// with a speed, diving 30° at it.
 fn dev_start(world: &mut World) {
     let spec = std::env::var("RUST_REGIME_AT").unwrap_or_default();
     let mut parts = spec.split(',');
-    let id = parts.next().unwrap_or("home").trim().to_string();
+    let mut id = parts.next().unwrap_or("home").trim().to_string();
     let altitude: f32 = parts.next().and_then(|a| a.trim().parse().ok()).unwrap_or(500.0);
     let speed: Option<f32> = parts.next().and_then(|a| a.trim().parse().ok());
     let solar = world.resource::<Solar>();
+    let base = world.resource::<base::Bases>().base.iter().find(|b| b.id == id).cloned();
+    if let Some(b) = &base {
+        id = b.body.clone();
+    }
     if !solar.bodies.bodies.contains_key(&id) {
-        warn!("RUST_REGIME_AT: no body {id}");
+        warn!("RUST_REGIME_AT: no body or base {id}");
         return;
     }
     let (epoch, anchor, sphere) = (solar.epoch, solar.anchor.clone(), solar.spheres[&id].clone());
-    // Over the ground the star is 55° up from.
-    let (star, _) = solar.bodies.convert(STAR, &id, epoch, DVec3::ZERO, DVec3::ZERO);
-    let sun = star.normalize().as_vec3();
-    let side = sun.cross(Vec3::Y).normalize_or(Vec3::X);
-    let dir = (Quat::from_axis_angle(side, 35f32.to_radians()) * sun).normalize();
+    let dir = match &base {
+        // Over the base's landing pad.
+        Some(b) => {
+            let (ground, frame, _) = base::site(b, &sphere, solar.pad);
+            let pad = b.pad.map_or(Vec3::ZERO, |[x, z]| Vec3::new(x, 0.0, z));
+            (ground + frame * pad).normalize()
+        }
+        // Over the ground the star is 55° up from.
+        None => {
+            let (star, _) = solar.bodies.convert(STAR, &id, epoch, DVec3::ZERO, DVec3::ZERO);
+            let sun = star.normalize().as_vec3();
+            let side = sun.cross(Vec3::Y).normalize_or(Vec3::X);
+            (Quat::from_axis_angle(side, 35f32.to_radians()) * sun).normalize()
+        }
+    };
     let p = sphere.surface_point(dir) + dir * altitude;
     let surface = Surface::Sphere(sphere.clone());
     let level = surface.frame(p);
@@ -602,6 +623,8 @@ fn flight_text(
     player: Single<(&Transform, &Player, Option<&crate::vehicle::Driving>)>,
     ships: Query<(&Transform, &LinearVelocity, &ship::Ship)>,
     specs: Res<ship::Ships>,
+    bases: Query<(&Transform, &base::Base)>,
+    base_specs: Res<base::Bases>,
     mut text: Single<&mut Text, With<FlightText>>,
 ) {
     let (tf, p, driving) = *player;
@@ -617,6 +640,9 @@ fn flight_text(
         let altitude = here.length() - (body.radius + body.sea_level) - ground.max(0.0);
         format!("{}   ALT {}   {}/s   g {:.1}", body.name.to_uppercase(), km(altitude), km(velocity.length()), body.gravity)
     };
+    for (at, base) in &bases {
+        line.push_str(&format!("\n{}  {}", base_specs.base[base.spec].name, km(at.translation.distance(tf.translation))));
+    }
     let mut others: Vec<(f32, String)> = solar
         .bodies
         .ids()

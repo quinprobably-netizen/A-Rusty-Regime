@@ -277,6 +277,24 @@ each) from `tools/ships/ships/<id>.py`; the game finds each engine's `exhaust.<n
 the `heat` node and the `ramp` hinge by name, and the collision boxes in `ships.toml` are
 the floor, walls, ceiling and open ramp you walk between.
 
+Each faction has a base on its world, from `assets/bases.toml` and
+`assets/models/bases/<id>.glb` (built like the ships: `tools/bases/build.sh [ids]
+[--no-bake] [--preview] [--check] [--toml]`, each under 90 k triangles with one 2048² baked
+texture, and `--toml` rewrites `bases.toml` from the SPEC in `tools/bases/bases/<id>.py`,
+which is the single source of truth for a base's site and collision boxes). The Deserters'
+**Roost** stands on the flat south-east of Haven's apron past the course: a two-storey hangar
+with a mezzanine catwalk, a roof deck with a sandbag nest and an outside switchback stair.
+The Regime's **Reliquary** on Bastion is a slate basilica up a flight of steps: nave, side
+chapels, bell tower and spire, pews and an altar inside. The Scrappers' **Yard** on Cinder
+is a fort of welded containers round a workshop shed, with a gantry crane and a lookout
+derrick. The PMC's **Site Vantage** on Frost is three white hab modules on jacks joined by
+link corridors, with an airlock, a radar dish and floodlights. Every base is hollow and
+walkable (floors, walls, roofs and stairs are collision boxes; the fittings are not), lit
+inside by its own lamps, and stands on a buried foundation slab with a landing pad in front
+of its door (the Roost uses the apron). Only the world you are on has its base spawned; the
+flight readout names it and how far it is. `RUST_REGIME_AT=<base>,<altitude>` (`roost`,
+`reliquary`, `yard`, `outpost`) starts you flying over its pad.
+
 Everything is in `assets/system.toml`: a star, Haven and its low-gravity moon Ash, and
 the three faction worlds, Bastion (Regime: heavy, slate, thin pale air), Cinder
 (Scrappers: rust desert, dusty orange sky) and Frost (PMC: airless ice). They orbit and
@@ -286,7 +304,7 @@ influence you are in; flying into another one hands the ship over to its frame w
 same path and speed, its ground streams in, and your old world shrinks to a coarse mesh in
 the sky. The top left reads where you are, your height, speed and gravity, and how far
 every other world is. `RUST_REGIME_AT=<world>,<altitude>[,<speed>]` starts you flying over
-any world, for screenshots (`home`, `ash`, `bastion`, `cinder`, `frost`).
+any world, for screenshots (`home`, `ash`, `bastion`, `cinder`, `frost`), or over a base.
 
 Not in yet: the island's sites, soldiers and missions on Haven, swimming and buoyancy
 (the seas are only drawn) and Coriolis drift.

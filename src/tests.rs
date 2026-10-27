@@ -2753,3 +2753,85 @@ fn a_parked_ship_is_static_until_boarded() {
     run(&mut app, 3.0);
     assert_eq!(*app.world().get::<RigidBody>(ship).unwrap(), RigidBody::Static, "parked again after landing");
 }
+
+// --------------------------------------------------------------------------- the faction bases
+
+#[test]
+fn bases_toml_lists_four_bases_on_four_worlds_with_models_and_clear_doorways() {
+    let bases = solar::base::Bases::load();
+    assert_eq!(bases.base.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["roost", "reliquary", "yard", "outpost"]);
+    assert_eq!(bases.base.iter().map(|b| b.body.as_str()).collect::<Vec<_>>(), ["home", "bastion", "cinder", "frost"]);
+    let bodies = solar::orbit::Bodies::new(&crate::system::System::load());
+    assert_eq!(bases.base.iter().map(|b| b.faction.as_str()).collect::<Vec<_>>(), ["deserters", "regime", "scrappers", "pmc"]);
+    for b in &bases.base {
+        assert!(bodies.bodies.contains_key(&b.body), "{}: {} is a world", b.id, b.body);
+        assert!(std::path::Path::new(&format!("assets/models/bases/{}.glb", b.id)).exists(), "{} has a model", b.id);
+        assert!(!b.collider.is_empty() && b.footprint.iter().all(|f| *f > 0.0));
+        assert!(b.near_pad.is_some() || b.pad.is_some(), "{}: a pad to land on", b.id);
+        // A standing player fits through the door and a metre inside it, with a floor under them.
+        let door = Vec3::from(b.door);
+        for p in [door, door + Vec3::NEG_Z] {
+            for bx in &b.collider {
+                assert!(!bx.touches(p, 0.35), "{}: the doorway at {p} is blocked by the box at {:?}", b.id, bx.center);
+            }
+            assert!(b.floor_under(p, 2.0).is_some(), "{}: no floor under {p}", b.id);
+        }
+    }
+}
+
+/// The base and foundation fixtures standing on the anchor: (base id, how many slabs).
+fn standing(app: &mut App) -> (Vec<String>, usize) {
+    let specs = app.world().resource::<solar::base::Bases>().clone();
+    let ids: Vec<String> = app.world_mut().query::<&solar::base::Base>().iter(app.world()).map(|b| specs.base[b.spec].id.clone()).collect();
+    let slabs = app.world_mut().query_filtered::<&Name, With<solar::Fixture>>().iter(app.world()).filter(|n| n.as_str() == "Foundation" || n.as_str() == "Pad").count();
+    (ids, slabs)
+}
+
+#[test]
+fn the_roost_stands_north_of_the_apron_and_bastions_base_replaces_it_after_a_handoff() {
+    let mut app = system_app();
+    run(&mut app, 0.5);
+    let (ids, slabs) = standing(&mut app);
+    assert_eq!(ids, ["roost"], "Haven's base");
+    assert_eq!(slabs, 2, "Haven's pad and the Roost's foundation");
+    let origin = *app.world().resource::<Origin>();
+    let pad = app.world().resource::<Solar>().pad;
+    let frame = app.world().resource::<Surface>().frame(pad);
+    let at = app.world_mut().query::<(&Transform, &solar::base::Base)>().single(app.world()).map(|(tf, _)| tf.translation).unwrap();
+    let local = frame.inverse() * (origin.body(at) - pad);
+    assert!((local.x - 70.0).abs() < 0.5 && (local.z - 85.0).abs() < 0.5, "south-east of the pad, at {local}");
+    assert!(local.y.abs() < 30.0, "on the ground near the pad's height, {}", local.y);
+    let (_, base) = app.world_mut().query::<(&Transform, &solar::base::Base)>().single(app.world()).map(|(tf, b)| (*tf, b.spec)).unwrap();
+    let door = app.world().resource::<solar::base::Bases>().base[base].door;
+    let base_tf = app.world_mut().query::<(&Transform, &solar::base::Base)>().single(app.world()).map(|(tf, _)| *tf).unwrap();
+    let door_local = frame.inverse() * (origin.body(base_tf.translation + base_tf.rotation * Vec3::from(door)) - pad);
+    assert!(door_local.z < local.z - 3.0, "the door faces the pad: door at z {} vs centre {}", door_local.z, local.z);
+    let Surface::Sphere(sphere) = app.world().resource::<Surface>().clone() else { panic!("round world") };
+    let ground = sphere.height(origin.body(at).normalize());
+    let altitude = app.world().resource::<Surface>().altitude(origin.body(at));
+    assert!(altitude > ground && altitude - ground < 15.0, "the deck sits just over the ground: {altitude} vs {ground}");
+    // Fly to Bastion: the Roost and the apron go, the Reliquary and its pad stand there.
+    board(&mut app);
+    let over = Vec3::Y * 8000.0;
+    let (p, v) = {
+        let solar = app.world().resource::<Solar>();
+        let (p, v) = solar.bodies.convert("bastion", "home", solar.epoch, over.as_dvec3(), bevy::math::DVec3::ZERO);
+        (p.as_vec3(), v.as_vec3())
+    };
+    put_ship(&mut app, p, v);
+    run(&mut app, 0.3);
+    assert_eq!(app.world().resource::<Solar>().anchor, "bastion");
+    let (ids, slabs) = standing(&mut app);
+    assert_eq!(ids, ["reliquary"], "Bastion's base");
+    assert_eq!(slabs, 2, "the Reliquary's foundation and pad");
+    assert!(app.world_mut().query_filtered::<&Name, With<solar::Fixture>>().iter(app.world()).all(|n| n.as_str() != "Berth"), "Haven's berths went");
+    let base = app.world_mut().query::<(&Transform, &solar::base::Base)>().single(app.world()).map(|(tf, _)| *tf).unwrap();
+    let origin = *app.world().resource::<Origin>();
+    let Surface::Sphere(sphere) = app.world().resource::<Surface>().clone() else { panic!("round world") };
+    let here = origin.body(base.translation);
+    let ground = sphere.height(here.normalize());
+    let altitude = app.world().resource::<Surface>().altitude(here);
+    assert!(altitude > ground && altitude - ground < 20.0, "on Bastion's ground: {altitude} vs {ground}");
+    assert!((base.rotation * Vec3::Y).dot(here.normalize()) > 0.999, "stands upright");
+}
+
