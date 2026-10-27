@@ -7,6 +7,7 @@ mod camera;
 mod controller;
 mod health;
 mod hud;
+mod controls;
 mod input;
 mod island;
 mod level;

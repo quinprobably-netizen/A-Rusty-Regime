@@ -23,31 +23,58 @@ First build takes a while. Linux needs `libasound2-dev libudev-dev libwayland-de
 `RUST_REGIME_SCREENSHOT=shot.png cargo run --release` saves a frame and quits (handy with Xvfb + lavapipe on a box with no GPU).
 
 ## Controls
-| Action | Keyboard / mouse | Gamepad (Titanfall 2 style) |
+<!-- controls:start -->
+**On foot**
+
+| Action | Keyboard / mouse | Gamepad |
 |---|---|---|
-| Move | WASD | Left stick (analog) |
-| Look | Mouse (click to lock) | Right stick |
-| Menu / pause | Esc | Start |
-| Jump / wall jump / double jump | Space | A / Cross |
-| Crouch / slide | Ctrl, Shift or C | B / Circle or L3 |
+| Move / steer | W, A, S, D | Left stick |
+| Jump / wall jump / double jump | Space | A |
+| Crouch / slide | Ctrl, Shift, C | B, L3 |
 | Fire | Left mouse | RT |
 | Aim down sights | Right mouse | LT |
-| Grapple (fire, press again to let go) | G or mouse 4 | LB |
-| Reload | R | Tap X / Square |
-| Enter / leave a vehicle | E | Hold X / Square |
-| Last weapon | Q | Y / Triangle |
-| Next / previous weapon | Wheel down / up | RB, d-pad right / left |
-| Weapon 1-10 | 1 - 9, 0 | |
+| Reload | R | X (tap) |
+| Enter / leave a vehicle or ship | E | X (hold) |
+| Grapple | G, Mouse 4 | LB |
+| Last weapon | Q | Y |
+| Next weapon | Wheel down | RB, D-pad right |
+| Previous weapon | Wheel up | D-pad left |
+| Weapon 1-10 | 1 - 9, 0 |  |
 | Flashlight | F | D-pad up |
 | Inspect weapon | V | D-pad down |
 | First / third person | T | R3 |
-| Wardrobe (at the camp locker) | E, then arrows, 1 2 3 | |
-| Drive (gas, brake / reverse, steer) | WASD | RT, LT, left stick |
-| Handbrake | Space | A / Cross |
-| Fly: pitch / yaw, roll | Mouse, A D | Right stick, left stick left / right |
-| Fly: thrust, lift, boost | W S, Space Ctrl, Shift | RT LT, left stick up / down, A |
-| Respawn | Backspace | View / Select |
-| Reload `tuning.toml` | F5 | |
+| Respawn | Backspace | View |
+| Menu | Escape | Start |
+
+**Driving**
+
+| Action | Keyboard / mouse | Gamepad |
+|---|---|---|
+| Move / steer | W, A, S, D | Left stick |
+| Gas |  | RT |
+| Brake / reverse |  | LT |
+| Handbrake | Space | A |
+| Enter / leave a vehicle or ship | E | X (hold) |
+| Flashlight | F | D-pad up |
+| First / third person | T | R3 |
+| Respawn | Backspace | View |
+| Menu | Escape | Start |
+
+**Flying**
+
+| Action | Keyboard / mouse | Gamepad |
+|---|---|---|
+| Thrust / reverse | W, S | RT, LT |
+| Lift / sink | Space, Ctrl | Left stick up / down |
+| Roll | A, D | Left stick left / right |
+| Boost | Shift | A |
+| Enter / leave a vehicle or ship | E | X (hold) |
+| First / third person | T | R3 |
+| Respawn | Backspace | View |
+| Menu | Escape | Start |
+
+**Menus** follow the same buttons: arrows or WASD (d-pad) move, Enter or Space (A) select, Esc (B or Start) backs out, Q / E (LB / RB) change weapon in the gunsmith.
+<!-- controls:end -->
 
 ## Menus
 The game boots to a title screen over the live island; Esc pauses (time stops, the cursor comes

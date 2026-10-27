@@ -1,9 +1,11 @@
+use bevy::ecs::system::SystemParam;
 use bevy::input::gamepad::{GamepadRumbleIntensity, GamepadRumbleRequest};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions};
 use std::time::Duration;
 
+use crate::controls::{Action, ActionState, Ctx, Devices, Timers};
 use crate::tuning::Tuning;
 
 /// Device-agnostic input, written every frame and read by the fixed-tick
@@ -38,12 +40,17 @@ pub struct PlayerInput {
     pub ability_pressed: bool,
     /// Toggle the flashlight (F / d-pad up), latched.
     pub flashlight_pressed: bool,
-    /// Analog gas minus brake from the triggers (RT - LT), -1..1; only vehicles read it.
+    /// Gas minus brake from the triggers (RT - LT), -1..1; only vehicles read it.
     pub throttle: f32,
+    pub handbrake: bool,
+    /// Flip first / third person (T / R3), latched.
+    pub view_pressed: bool,
+    /// The ship's stick, -1..1 each, while flying: thrust, lift, roll left.
+    pub thrust: f32,
+    pub lift: f32,
+    pub roll: f32,
+    pub boost: bool,
 }
-
-/// How long X must be held to use (enter or leave a vehicle) instead of reloading.
-pub const HOLD_TO_USE: f32 = 0.3;
 
 /// SDL mappings newer than the table gilrs ships: the 8BitDo Ultimate 2 over Bluetooth, USB
 /// and the 2.4G dongle (from SDL_GameControllerDB, zlib licence, see CREDITS.md). Without
@@ -104,6 +111,7 @@ pub struct InputPlugin;
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerInput>()
+            .init_resource::<ActionState>()
             .init_resource::<ViewAngles>()
             .add_message::<Rumble>()
             .add_systems(PreUpdate, gather.after(bevy::input::InputSystems))
@@ -125,128 +133,74 @@ fn radial_deadzone(v: Vec2, dz: f32) -> Vec2 {
     }
 }
 
+/// The mouse and its cursor.
+#[derive(SystemParam)]
+struct Pointer<'w, 's> {
+    buttons: Res<'w, ButtonInput<MouseButton>>,
+    motion: Res<'w, AccumulatedMouseMotion>,
+    scroll: Res<'w, AccumulatedMouseScroll>,
+    cursors: Query<'w, 's, &'static CursorOptions>,
+}
+
+/// Where the player is: in a menu, flying the ship, driving, or on foot.
+fn context(screen: Option<&State<crate::menu::Screen>>, driving: &Query<&crate::vehicle::Driving, With<crate::controller::Player>>, ships: &Query<(), With<crate::solar::ship::Ship>>) -> Ctx {
+    if screen.is_some_and(|s| *s.get() != crate::menu::Screen::Playing) {
+        return Ctx::Menu;
+    }
+    match driving.single() {
+        Ok(d) if ships.contains(d.0) => Ctx::Ship,
+        Ok(_) => Ctx::Vehicle,
+        Err(_) => Ctx::Foot,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn gather(
     keys: Res<ButtonInput<KeyCode>>,
-    mouse: Res<ButtonInput<MouseButton>>,
-    motion: Res<AccumulatedMouseMotion>,
-    scroll: Res<AccumulatedMouseScroll>,
-    cursor: Single<&CursorOptions>,
+    pointer: Pointer,
     gamepads: Query<&Gamepad>,
     tuning: Res<Tuning>,
     time: Res<Time>,
     mut input: ResMut<PlayerInput>,
     mut view: ResMut<ViewAngles>,
+    mut state: ResMut<ActionState>,
+    mut timers: Local<Timers>,
     aim: Option<Res<crate::weapon::Aim>>,
     scoped: Option<Res<crate::scope::Scoped>>,
     screen: Option<Res<State<crate::menu::Screen>>>,
-    mut x_held: Local<f32>,
+    driving: Query<&crate::vehicle::Driving, With<crate::controller::Player>>,
+    ships: Query<(), With<crate::solar::ship::Ship>>,
 ) {
-    // A menu is up: nothing reaches the player, and a held key is not a latched press later.
-    if screen.is_some_and(|s| *s.get() != crate::menu::Screen::Playing) {
-        *input = PlayerInput::default();
-        *x_held = 0.0;
-        return;
-    }
     let t = &*tuning;
     let dt = time.delta_secs();
+    let mouse_live = pointer.cursors.iter().any(|c| c.grab_mode != CursorGrabMode::None);
+    let pads: Vec<&Gamepad> = gamepads.iter().collect();
 
-    // Keyboard + mouse
-    let mut movement = Vec2::ZERO;
-    if keys.pressed(KeyCode::KeyW) { movement.y += 1.0; }
-    if keys.pressed(KeyCode::KeyS) { movement.y -= 1.0; }
-    if keys.pressed(KeyCode::KeyD) { movement.x += 1.0; }
-    if keys.pressed(KeyCode::KeyA) { movement.x -= 1.0; }
-    let mut jump_held = keys.pressed(KeyCode::Space);
-    let mut jump_pressed = keys.just_pressed(KeyCode::Space);
-    let mut crouch_held = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ShiftLeft, KeyCode::KeyC]);
-    let mut fire_held = false;
-    let mut aim_held = false;
-    let mut fire_pressed = false;
-    let mut reset = keys.just_pressed(KeyCode::Backspace);
-    let mut reload = keys.just_pressed(KeyCode::KeyR);
-    let mut weapon_select = None;
-    let digits = [
-        KeyCode::Digit1,
-        KeyCode::Digit2,
-        KeyCode::Digit3,
-        KeyCode::Digit4,
-        KeyCode::Digit5,
-        KeyCode::Digit6,
-        KeyCode::Digit7,
-        KeyCode::Digit8,
-        KeyCode::Digit9,
-        KeyCode::Digit0,
-    ];
-    for (i, key) in digits.into_iter().enumerate() {
-        if keys.just_pressed(key) {
-            weapon_select = Some(i);
-        }
+    let ctx = context(screen.as_deref(), &driving, &ships);
+    crate::controls::read(&mut state, &mut timers, ctx, &Devices { keys: &keys, mouse: &pointer.buttons, scroll: &pointer.scroll, mouse_live, pads: &pads, dead_zone: t.stick_deadzone, dt });
+
+    // A menu is up: nothing reaches the player, and a held key is not a latched press later.
+    if ctx == Ctx::Menu {
+        *input = PlayerInput::default();
+        return;
     }
-    let mut weapon_step = 0;
-    let mut throttle = 0.0;
-    let mut inspect = keys.just_pressed(KeyCode::KeyV);
-    let mut flashlight = keys.just_pressed(KeyCode::KeyF);
-    let mut weapon_last = keys.just_pressed(KeyCode::KeyQ);
-    let mut interact = keys.just_pressed(KeyCode::KeyE);
-    let mut ability = keys.just_pressed(KeyCode::KeyG) || mouse.just_pressed(MouseButton::Back);
+    let held = |a: Action| state.held(a);
+    let pressed = |a: Action| state.pressed(a);
 
+    // Looking: the mouse while the cursor is locked, and the right stick (every pad drives the
+    // same player).
     let mut look = Vec2::ZERO;
-    if cursor.grab_mode != CursorGrabMode::None {
-        look += motion.delta * t.mouse_sensitivity;
-        fire_held |= mouse.pressed(MouseButton::Left);
-        aim_held |= mouse.pressed(MouseButton::Right);
-        fire_pressed |= mouse.just_pressed(MouseButton::Left);
-        // Wheel up = previous weapon, wheel down = next (Source convention).
-        if scroll.delta.y > 0.0 {
-            weapon_step -= 1;
-        } else if scroll.delta.y < 0.0 {
-            weapon_step += 1;
-        }
+    if mouse_live {
+        look += pointer.motion.delta * t.mouse_sensitivity;
     }
-
-    // Gamepads: every connected pad drives the same player.
-    for pad in &gamepads {
-        let stick = radial_deadzone(pad.left_stick(), t.stick_deadzone);
-        movement += stick;
-
+    for pad in &pads {
         let r = radial_deadzone(pad.right_stick(), t.stick_deadzone);
         // Response curve: fine aim near center, fast turns at full tilt.
         let curved = r.normalize_or_zero() * r.length().powf(t.stick_look_curve);
         let invert = if t.invert_y { -1.0 } else { 1.0 };
         look.x += curved.x * t.stick_yaw_speed * dt;
         look.y -= curved.y * t.stick_pitch_speed * dt * invert;
-
-        // Titanfall 2 style: A jump, B / L3 crouch and slide, X reload (hold to use), Y swap,
-        // LT aim, RT fire, LB grapple, RB next weapon. R3 is the view toggle (see camera).
-        jump_held |= pad.pressed(GamepadButton::South);
-        jump_pressed |= pad.just_pressed(GamepadButton::South);
-        crouch_held |= pad.any_pressed([GamepadButton::East, GamepadButton::LeftThumb]);
-        fire_held |= pad.pressed(GamepadButton::RightTrigger2);
-        aim_held |= pad.pressed(GamepadButton::LeftTrigger2);
-        fire_pressed |= pad.just_pressed(GamepadButton::RightTrigger2);
-        throttle += pad.get(GamepadButton::RightTrigger2).unwrap_or(0.0) - pad.get(GamepadButton::LeftTrigger2).unwrap_or(0.0);
-        ability |= pad.just_pressed(GamepadButton::LeftTrigger);
-        if pad.any_just_pressed([GamepadButton::RightTrigger, GamepadButton::DPadRight]) {
-            weapon_step += 1;
-        }
-        if pad.just_pressed(GamepadButton::DPadLeft) {
-            weapon_step -= 1;
-        }
-        weapon_last |= pad.just_pressed(GamepadButton::North);
-        flashlight |= pad.just_pressed(GamepadButton::DPadUp);
-        inspect |= pad.just_pressed(GamepadButton::DPadDown);
-        reset |= pad.just_pressed(GamepadButton::Select);
     }
-
-    // X: a tap reloads on release, a hold uses once it has been down long enough.
-    if gamepads.iter().any(|p| p.pressed(GamepadButton::West)) {
-        interact |= *x_held < HOLD_TO_USE && *x_held + dt >= HOLD_TO_USE;
-        *x_held += dt;
-    } else {
-        reload |= *x_held > 0.0 && *x_held < HOLD_TO_USE;
-        *x_held = 0.0;
-    }
-
     // Aiming down sights narrows the view (or a scope magnifies it), so the mouse turns it less.
     if let Some(aim) = aim.as_ref() {
         look *= crate::scope::look_scale(aim.level, t.ads_fov, scoped.as_ref().and_then(|s| s.0));
@@ -254,25 +208,31 @@ fn gather(
     view.yaw -= look.x;
     view.pitch = (view.pitch - look.y).clamp(-1.54, 1.54);
 
-    input.movement = movement.clamp_length_max(1.0);
-    input.jump_held = jump_held;
-    input.jump_pressed |= jump_pressed;
-    input.crouch_held = crouch_held;
-    input.fire_held = fire_held;
-    input.aim_held = aim_held;
-    input.fire_pressed |= fire_pressed;
-    input.reset_pressed |= reset;
-    input.reload_pressed |= reload;
-    input.inspect_pressed |= inspect;
-    if weapon_select.is_some() {
-        input.weapon_select = weapon_select;
+    input.movement = state.movement;
+    input.jump_held = held(Action::Jump);
+    input.jump_pressed |= pressed(Action::Jump);
+    input.crouch_held = held(Action::Crouch);
+    input.fire_held = held(Action::Fire);
+    input.aim_held = held(Action::Aim);
+    input.fire_pressed |= pressed(Action::Fire);
+    input.reset_pressed |= pressed(Action::Respawn);
+    input.reload_pressed |= pressed(Action::Reload);
+    input.inspect_pressed |= pressed(Action::Inspect);
+    if let Some(slot) = (0..10u8).find(|i| pressed(Action::Slot(*i))) {
+        input.weapon_select = Some(slot as usize);
     }
-    input.weapon_step += weapon_step;
-    input.weapon_last |= weapon_last;
-    input.interact_pressed |= interact;
-    input.ability_pressed |= ability;
-    input.flashlight_pressed |= flashlight;
-    input.throttle = throttle.clamp(-1.0, 1.0);
+    input.weapon_step += pressed(Action::NextWeapon) as i32 - pressed(Action::PrevWeapon) as i32;
+    input.weapon_last |= pressed(Action::LastWeapon);
+    input.interact_pressed |= pressed(Action::Use);
+    input.ability_pressed |= pressed(Action::Ability);
+    input.flashlight_pressed |= pressed(Action::Flashlight);
+    input.view_pressed |= pressed(Action::ToggleView);
+    input.throttle = state.value(Action::Gas) - state.value(Action::Brake);
+    input.handbrake = held(Action::Handbrake);
+    input.thrust = state.value(Action::Thrust);
+    input.lift = state.value(Action::Lift);
+    input.roll = state.value(Action::Roll);
+    input.boost = held(Action::Boost);
 }
 
 fn grab_cursor(
