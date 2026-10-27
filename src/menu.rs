@@ -282,6 +282,8 @@ enum Action {
     Controls,
     Quit,
     Back,
+    /// A random look in the wardrobe.
+    Randomize,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -295,10 +297,10 @@ enum Row {
     Slot(usize),
     /// The tuning slider under a fitted part.
     Tune(usize),
-    /// The wardrobe's character picker.
-    Character,
-    /// A wardrobe colour (primary, secondary, accent).
-    Colour(usize),
+    /// The wardrobe's preset picker.
+    Preset,
+    /// A wardrobe slot (an entry of `wardrobe::SLOTS`).
+    Look(usize),
     /// An entry of [`MAPS`].
     Map(usize),
 }
@@ -395,8 +397,9 @@ fn rows(panel: Panel, screen: Screen, tuned: [bool; 4]) -> Vec<Row> {
             rows.push(Row::Action("BACK", Action::Back));
         }
         Panel::Wardrobe => {
-            rows.push(Row::Character);
-            rows.extend((0..3).map(Row::Colour));
+            rows.push(Row::Preset);
+            rows.extend((0..wardrobe::SLOTS.len()).map(Row::Look));
+            rows.push(Row::Action("RANDOMISE", Action::Randomize));
             rows.push(Row::Action("BACK", Action::Back));
         }
     }
@@ -670,6 +673,19 @@ fn act(
                         menu.cursor = current_map();
                     }
                     Action::Wardrobe => open(&mut menu, Panel::Wardrobe),
+                    Action::Randomize => {
+                        if let Some(mut outfit) = closet.outfit()
+                            && let Some(w) = closet.wardrobe.as_mut()
+                        {
+                            let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_millis() as u64);
+                            wardrobe::randomize(&mut outfit, seed);
+                            w.set(outfit.clone());
+                            if let (Some(mut save), Some(file)) = (save, file) {
+                                wardrobe::persist(&mut save, &outfit);
+                                file.write(&save);
+                            }
+                        }
+                    }
                     Action::Settings => open(&mut menu, Panel::Settings),
                     Action::Controls => open(&mut menu, Panel::Controls),
                 }
@@ -713,19 +729,24 @@ fn act(
                 }
             }
         }
-        Row::Character | Row::Colour(_) => {
+        Row::Preset | Row::Look(_) => {
             if step != 0
                 && let Some(mut outfit) = closet.outfit()
                 && let Some(characters) = closet.characters.as_deref()
                 && let Some(w) = closet.wardrobe.as_mut()
             {
+                let mut save = save;
                 match row {
-                    Row::Colour(c) => wardrobe::cycle_colour(&mut outfit, c),
-                    _ => wardrobe::cycle_character(characters, &mut outfit, step),
+                    Row::Look(i) => wardrobe::SLOTS[i].cycle(&mut outfit, characters, step),
+                    _ => {
+                        if let Some(save) = save.as_mut() {
+                            outfit = wardrobe::switch_preset(save, outfit, step);
+                        }
+                    }
                 }
                 w.set(outfit.clone());
                 if let (Some(mut save), Some(file)) = (save, file) {
-                    save.outfit = Some(outfit);
+                    wardrobe::persist(&mut save, &outfit);
                     file.write(&save);
                 }
             }
@@ -821,6 +842,7 @@ fn rebuild(
     arsenal: Res<Arsenal>,
     tuning: Res<Tuning>,
     closet: Closet,
+    save: Option<Res<Save>>,
 ) {
     let wardrobe_changed = closet.wardrobe.as_ref().is_some_and(|w| w.is_changed());
     let gun_changed = menu.panel == Panel::Gunsmith && arsenal.is_changed();
@@ -870,17 +892,24 @@ fn rebuild(
         };
         p.spawn(Node { position_type: PositionType::Absolute, left: Val::Px(LEFT), top: Val::Px(top), bottom: Val::Px(44.0), width: Val::Px(width), flex_direction: FlexDirection::Column, row_gap: Val::Px(2.0), overflow: Overflow::clip_y(), ..default() }).with_children(|list| {
             if menu.panel == Panel::Wardrobe {
-                list.spawn(Node { display: Display::Grid, grid_template_columns: RepeatedGridTrack::px(3, 196.0), row_gap: Val::Px(8.0), column_gap: Val::Px(8.0), ..default() }).with_children(|grid| {
+                let preset = save.as_ref().map_or(0, |s| s.preset);
+                list.spawn(Node { display: Display::Grid, grid_template_columns: RepeatedGridTrack::px(4, 146.0), row_gap: Val::Px(6.0), column_gap: Val::Px(6.0), ..default() }).with_children(|grid| {
                     let mut index = 0;
                     for row in &rows {
-                        if let Row::Character | Row::Colour(_) = row {
-                            tile(grid, *row, index, index == menu.cursor, outfit.as_ref(), closet.characters.as_deref());
+                        if let Row::Preset | Row::Look(_) = row {
+                            tile(grid, *row, index, index == menu.cursor, outfit.as_ref(), closet.characters.as_deref(), preset);
                             index += 1;
                         }
                     }
                 });
-                list.spawn(Node { height: Val::Px(12.0), ..default() });
-                action_row(list, "BACK", rows.len() - 1, menu.cursor == rows.len() - 1, 22.0);
+                list.spawn(Node { height: Val::Px(10.0), ..default() });
+                let mut index = selectable(&rows).filter(|r| matches!(r, Row::Preset | Row::Look(_))).count();
+                for row in &rows {
+                    if let Row::Action(label, _) = row {
+                        action_row(list, label, index, menu.cursor == index, 22.0);
+                        index += 1;
+                    }
+                }
                 return;
             }
             let mut index = 0;
@@ -925,7 +954,7 @@ fn rebuild(
                         value_row(list, m.name, if i == current_map() { "LOADED" } else { "" }, None, Some(m.desc), index, index == menu.cursor, false);
                         index += 1;
                     }
-                    Row::Character | Row::Colour(_) => {}
+                    Row::Preset | Row::Look(_) => {}
                 }
             }
             if menu.panel == Panel::Settings {
@@ -960,7 +989,7 @@ fn rebuild(
                 Panel::Main => &[("ENTER / A", "SELECT"), ("W S", "MOVE")],
                 Panel::Settings => &[("A D", "ADJUST"), ("ENTER / A", "TOGGLE"), ("ESC / B", "BACK")],
                 Panel::Gunsmith => &[("Q E / LB RB", "WEAPON"), ("A D", "PART / TUNE"), ("ESC / B", "BACK")],
-                Panel::Wardrobe => &[("A D", "STYLE"), ("ENTER / A", "NEXT"), ("ESC / B", "BACK")],
+                Panel::Wardrobe => &[("W S", "SLOT"), ("A D", "CHANGE"), ("ESC / B", "BACK")],
                 Panel::Controls => &[("ESC / B", "BACK")],
                 Panel::Maps => &[("ENTER / A", "PLAY"), ("ESC / B", "BACK")],
             };
@@ -1026,26 +1055,24 @@ fn arrow(p: &mut ChildSpawnerCommands, index: usize, dir: i32, selected: bool) {
         .with_child(text(if dir < 0 { "<" } else { ">" }, 16.0, if selected { AMBER } else { DIM }));
 }
 
-/// A wardrobe tile: the character worn, or a colour swatch.
-fn tile(p: &mut ChildSpawnerCommands, row: Row, index: usize, selected: bool, outfit: Option<&OutfitDef>, characters: Option<&Characters>) {
+/// A wardrobe tile: the preset in use, or one slot's value (with a swatch when it is a colour).
+fn tile(p: &mut ChildSpawnerCommands, row: Row, index: usize, selected: bool, outfit: Option<&OutfitDef>, characters: Option<&Characters>, preset: usize) {
     let (name, worn, swatch) = match row {
-        Row::Character => {
-            let worn = match (outfit, characters) {
-                (Some(o), Some(c)) => c.label(&o.character),
-                _ => "none".into(),
+        Row::Preset => ("PRESET".to_string(), format!("{} / {}", preset + 1, wardrobe::PRESETS), None),
+        Row::Look(i) => {
+            let slot = wardrobe::SLOTS[i];
+            let (worn, swatch) = match (outfit, characters) {
+                (Some(o), Some(c)) => (slot.value(o, c), slot.swatch(o)),
+                _ => ("none".into(), None),
             };
-            ("CHARACTER".to_string(), worn.to_uppercase(), None)
-        }
-        Row::Colour(c) => {
-            let hex = outfit.map(|o| [&o.primary, &o.secondary, &o.accent][c].clone()).unwrap_or_default();
-            (["PRIMARY", "SECONDARY", "ACCENT"][c].to_string(), hex.clone(), Srgba::hex(&hex).ok().map(Color::from))
+            (slot.label().to_string(), worn, swatch)
         }
         _ => return,
     };
     p.spawn((
         Button,
         RowId(index),
-        Node { height: Val::Px(74.0), padding: UiRect::all(Val::Px(10.0)), flex_direction: FlexDirection::Column, justify_content: JustifyContent::SpaceBetween, border: UiRect::all(Val::Px(1.0)), ..default() },
+        Node { height: Val::Px(64.0), padding: UiRect::all(Val::Px(8.0)), flex_direction: FlexDirection::Column, justify_content: JustifyContent::SpaceBetween, border: UiRect::all(Val::Px(1.0)), overflow: Overflow::clip(), ..default() },
         BorderColor::all(if selected { AMBER } else { FAINT }),
         BackgroundColor(if selected { Color::srgba(1.0, 0.72, 0.25, 0.12) } else { PANEL }),
     ))

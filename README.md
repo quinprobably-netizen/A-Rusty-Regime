@@ -80,7 +80,7 @@ First build takes a while. Linux needs `libasound2-dev libudev-dev libwayland-de
 The game boots to a title screen over the live island; Esc pauses (time stops, the cursor comes
 back). Both lists lead to the same screens: **Gunsmith** (four attachment slots per hitscan gun,
 parts change spread, recoil, rate, velocity and damage and show on the viewmodel; stat bars compare
-the bare gun), **Wardrobe** (pick a character and its three colours, shown from the front), **Settings** (mouse sensitivity, invert Y, FOV, five volumes, sky, bloom, ambient
+the bare gun), **Wardrobe** (character, head, colours, camo, skin, gloves, boots, webbing, metal, lights, visor, wear and three presets, shown on a mannequin), **Settings** (mouse sensitivity, invert Y, FOV, five volumes, sky, bloom, ambient
 occlusion, anti-aliasing, shadow distance, grass, trees; saved to `settings.toml`, which lays over
 `tuning.toml` so F5 keeps your choices), **Maps** (island, island 6v6, arena, solar system, moon: picking another map restarts the game straight into it, no env vars needed) and **Controls**. Navigate with W/S or arrows, adjust with
 A/D, Enter picks, Esc backs out; the d-pad, A and B do the same on a pad; the mouse works too.
@@ -124,8 +124,12 @@ third-person screenshots.
 `assets/characters.toml` holds each character's faction, default colours and the weapon bots
 wearing it carry, which factions each soldier team fields (team 0 is your side: Deserters; team 1
 the Regime, Scrappers and PMC), and the classes (character, ability, health). Edit it and press F5.
-The locker at the base camp opens the wardrobe: left/right picks the character, 1/2/3 cycle its
-colours, E saves it to `save.toml`. Your body stands under the camera, so you see your legs when
+The locker at the base camp opens the wardrobe: up/down picks a slot, left/right changes it, R rolls
+a random look, Tab switches between three saved presets, E saves to `save.toml`. The slots are the
+character, a borrowed head (any other character's helmet or hood), the three cloth colours, a camo
+print over the main cloth (woodland, digital, tiger, hex, splinter), skin tone, gloves, boots,
+webbing, metal finish, the lights' colour (or off), visor tint and a wear level from clean to
+battered. Every slot defaults to the character's own look, so old saves are unchanged. Your body stands under the camera, so you see your legs when
 you look down and your shadow on the ground; head and arms are drawn only into the shadow map.
 In first person a second copy of your character shows just its arms, with both hands placed on
 the current weapon every frame (two-bone IK on hand points in `character::hands`), so the arms

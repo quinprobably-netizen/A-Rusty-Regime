@@ -152,7 +152,9 @@ pub fn held_transform_solved(pose: &crate::fingers::HandPose) -> Transform {
 
 // ------------------------------------------------------------------------------------------- data
 
-/// What a rig wears: a character and its three cloth colours.
+/// What a rig wears: a character, its three cloth colours, and the optional extras the wardrobe
+/// offers. Every optional field keeps the character's own look until an outfit sets it, so an
+/// outfit saved before a field existed reads back unchanged.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(default)]
 pub struct OutfitDef {
@@ -160,16 +162,149 @@ pub struct OutfitDef {
     pub primary: String,
     pub secondary: String,
     pub accent: String,
+    /// Another character whose head (helmet, hood, mask) is worn instead of this one's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub head: Option<String>,
+    /// A `camo::PATTERNS` entry printed over the primary and secondary cloth.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub camo: Option<String>,
+    /// Skin tone; replaces the painted skin (pores and such stay in the normal map).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skin: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gloves: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub boots: Option<String>,
+    /// Straps, slings and pouches.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub webbing: Option<String>,
+    /// Buckles, plates and tools: gunmetal, steel, brass.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metal: Option<String>,
+    /// The glowing bits (visor strips, lights); `off` darkens them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub glow: Option<String>,
+    /// Visors and lenses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub glass: Option<String>,
+    /// 0 clean to 3 battered: darker, duller cloth and scuffed metal.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub wear: u8,
+}
+
+fn is_zero(n: &u8) -> bool {
+    *n == 0
+}
+
+/// Most wear a character can show.
+pub const WEAR_MAX: u8 = 3;
+
+/// What an outfit field means for a material: material names end in a kind (`runner.knit.primary`
+/// is `primary`), and each kind that the wardrobe can touch belongs to one of these.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Surface {
+    Cloth,
+    Skin,
+    Metal,
+    Glow,
+    Glass,
 }
 
 impl OutfitDef {
-    pub fn tint(&self, material: &str) -> Option<Color> {
-        match material {
-            "primary" => parse_hex(&self.primary),
-            "secondary" => parse_hex(&self.secondary),
-            "accent" => parse_hex(&self.accent),
+    /// The colour the outfit asks for on material kind `kind`, if it sets one.
+    pub fn tint(&self, kind: &str) -> Option<Color> {
+        let hex = match kind {
+            "primary" => Some(&self.primary),
+            "secondary" => Some(&self.secondary),
+            "accent" => Some(&self.accent),
+            "skin" | "zealot_skin" => self.skin.as_ref(),
+            "glove" => self.gloves.as_ref(),
+            "boot" | "scrap_boot" => self.boots.as_ref(),
+            "webbing" => self.webbing.as_ref(),
+            "gunmetal" | "steel" | "brass" | "scrap_copper" => self.metal.as_ref(),
+            k if k.starts_with("glow_") => self.glow.as_ref(),
+            "glass" | "scrap_lens" => self.glass.as_ref(),
             _ => None,
+        }?;
+        parse_hex(hex)
+    }
+
+    fn surface(kind: &str) -> Option<Surface> {
+        Some(match kind {
+            "primary" | "secondary" | "accent" | "glove" | "boot" | "scrap_boot" | "webbing" => Surface::Cloth,
+            "skin" | "zealot_skin" => Surface::Skin,
+            "gunmetal" | "steel" | "brass" | "scrap_copper" => Surface::Metal,
+            "glass" | "scrap_lens" => Surface::Glass,
+            k if k.starts_with("glow_") => Surface::Glow,
+            _ => return None,
+        })
+    }
+
+    /// Whether this outfit prints camo on cloth of kind `kind`.
+    pub fn camo_on(&self, kind: &str) -> bool {
+        matches!(kind, "primary" | "secondary") && crate::camo::draws(self.camo.as_deref())
+    }
+
+    /// Whether the outfit changes a material of kind `kind` at all (so the model's own is kept otherwise).
+    pub fn touches(&self, kind: &str) -> bool {
+        let wear = self.wear > 0 && matches!(Self::surface(kind), Some(Surface::Cloth | Surface::Metal));
+        self.tint(kind).is_some() || self.camo_on(kind) || wear || (kind.starts_with("glow_") && self.glow.as_deref() == Some("off"))
+    }
+
+    /// `base` (the model's material of kind `kind`) as this outfit wants it: tinted, printed with
+    /// `camo` where it goes, worn down.
+    pub fn finish(&self, kind: &str, base: &StandardMaterial, camo: Option<Handle<Image>>) -> StandardMaterial {
+        let mut m = base.clone();
+        let surface = Self::surface(kind);
+        if let Some(c) = self.tint(kind) {
+            m.base_color = c;
+            match surface {
+                // Painted skin is a colour already: show the tone itself over the pore detail.
+                Some(Surface::Skin) => m.base_color_texture = None,
+                Some(Surface::Glow) => m.emissive = c.to_linear() * 2.0,
+                _ => {}
+            }
         }
+        if kind.starts_with("glow_") && self.glow.as_deref() == Some("off") {
+            m.base_color = Color::srgb(0.12, 0.12, 0.13);
+            m.emissive = LinearRgba::BLACK;
+        }
+        if self.camo_on(kind) {
+            m.base_color_texture = camo;
+            m.base_color = Color::WHITE;
+        }
+        if self.wear > 0 {
+            let w = self.wear as f32 / WEAR_MAX as f32;
+            match surface {
+                Some(Surface::Cloth) => {
+                    let mut c = m.base_color.to_linear();
+                    let grey = (c.red + c.green + c.blue) / 3.0;
+                    for ch in [&mut c.red, &mut c.green, &mut c.blue] {
+                        *ch = (*ch * (1.0 - 0.3 * w) + grey * 0.3 * w) * (1.0 - 0.35 * w);
+                    }
+                    m.base_color = c.into();
+                    m.perceptual_roughness = (m.perceptual_roughness + 0.25 * w).min(1.0);
+                }
+                Some(Surface::Metal) => {
+                    m.perceptual_roughness = (m.perceptual_roughness + 0.4 * w).min(1.0);
+                    m.base_color = (m.base_color.to_linear() * (1.0 - 0.2 * w)).with_alpha(1.0).into();
+                }
+                _ => {}
+            }
+        }
+        m
+    }
+
+    /// Normalise what the wardrobe can produce: a head of one's own is no head swap, `none` camo is
+    /// no camo.
+    pub fn tidy(&mut self) {
+        if self.head.as_deref() == Some(self.character.as_str()) {
+            self.head = None;
+        }
+        if self.camo.as_deref() == Some("none") {
+            self.camo = None;
+        }
+        self.wear = self.wear.min(WEAR_MAX);
     }
 }
 
@@ -248,7 +383,7 @@ impl Characters {
     /// A character's own outfit in its default colours.
     pub fn default_outfit(&self, id: &str) -> Option<OutfitDef> {
         let c = self.character.get(id)?;
-        Some(OutfitDef { character: id.into(), primary: c.primary.clone(), secondary: c.secondary.clone(), accent: c.accent.clone() })
+        Some(OutfitDef { character: id.into(), primary: c.primary.clone(), secondary: c.secondary.clone(), accent: c.accent.clone(), ..default() })
     }
 
     /// The outfit called `name`: a wardrobe outfit, else a character's default.
@@ -371,6 +506,10 @@ pub struct Rig {
     /// The character whose scene is spawned, and that scene's entity.
     character: Option<String>,
     model: Option<Entity>,
+    /// A second character spawned for its head alone (the outfit's `head`), its scene and player.
+    head: Option<String>,
+    head_model: Option<Entity>,
+    head_player: Option<Entity>,
     pose: Option<Pose>,
     /// The last `RigPose::shots` seen, so each new one kicks once.
     shots: u32,
@@ -382,7 +521,7 @@ pub struct Rig {
 
 impl Rig {
     pub fn new(outfit: &str) -> Self {
-        Self { outfit: outfit.into(), team: None, weapon: None, character: None, model: None, pose: None, shots: 0, player: None, held: None, dressed: false }
+        Self { outfit: outfit.into(), team: None, weapon: None, character: None, model: None, head: None, head_model: None, head_player: None, pose: None, shots: 0, player: None, held: None, dressed: false }
     }
 
     /// Wearing its outfit, and holding its weapon if it has one.
@@ -504,7 +643,7 @@ fn stream(server: Res<AssetServer>, assets: Option<ResMut<CharacterAssets>>, mut
     if busy || assets.queue.is_empty() {
         return;
     }
-    let wanted = |id: &&str| rigs.iter().any(|(e, r)| outfit_of(&data, r, e).is_some_and(|o| o.character == *id));
+    let wanted = |id: &&str| rigs.iter().any(|(e, r)| outfit_of(&data, r, e).is_some_and(|o| o.character == *id || o.head.as_deref() == Some(*id)));
     let Some(at) = assets.queue.iter().position(wanted) else { return };
     let id = assets.queue.remove(at);
     let path = model_path(id);
@@ -547,27 +686,38 @@ fn on_ready(
 ) {
     let Ok(parent) = models.get(ready.entity) else { return };
     let (Ok((mut rig, arms_only)), Some(assets)) = (rigs.get_mut(parent.parent()), assets) else { return };
-    if rig.model != Some(ready.entity) {
+    let is_head = rig.head_model == Some(ready.entity);
+    if rig.model != Some(ready.entity) && !is_head {
         return;
     }
-    let Some(model) = rig.character.as_deref().and_then(|c| assets.models.get(c)) else { return };
+    let character = if is_head { rig.head.as_deref() } else { rig.character.as_deref() };
+    let Some(model) = character.and_then(|c| assets.models.get(c)) else { return };
+    let mut player = None;
     for e in children.iter_descendants(ready.entity) {
         if players.contains(e) {
-            rig.player = Some(e);
+            player = Some(e);
             if !arms_only {
                 commands.entity(e).insert((AnimationGraphHandle(model.graph.clone()), AnimationTransitions::new()));
             }
         }
     }
-    if rig.player.is_none() {
-        rig.player = Some(ready.entity);
+    let player = player.unwrap_or(ready.entity);
+    if is_head {
+        rig.head_player = Some(player);
+    } else {
+        rig.player = Some(player);
     }
+    // Restart the pose so a new part starts its clip in step with the rest.
     rig.pose = None;
     rig.dressed = false;
 }
 
-/// Spawn the outfit's character, show its meshes, tint the cloth. Runs once per rig and again after
-/// F5 or a wardrobe change.
+/// Camo textures made so far, by pattern and the two colours printed; a texture is 256 KB.
+#[derive(Default)]
+struct CamoCache(HashMap<(String, String, String), Handle<Image>>);
+
+/// Spawn the outfit's character (and the one lending its head), show their meshes, tint the cloth.
+/// Runs once per rig and again after F5 or a wardrobe change.
 #[allow(clippy::too_many_arguments)]
 fn dress(
     mut commands: Commands,
@@ -578,6 +728,8 @@ fn dress(
     names: Query<&Name>,
     material_names: Query<(&GltfMaterialName, &MeshMaterial3d<StandardMaterial>)>,
     mut materials: Option<ResMut<Assets<StandardMaterial>>>,
+    mut images: Option<ResMut<Assets<Image>>>,
+    mut camos: Local<CamoCache>,
 ) {
     let Some(assets) = assets else { return };
     for (entity, mut rig, first_person, arms_only) in &mut rigs {
@@ -611,38 +763,73 @@ fn dress(
             rig.held = None;
             continue;
         }
+        // The borrowed head: another character's scene, of which only `mesh.head` shows. The
+        // first-person arms have no head to swap.
+        let head = outfit.head.clone().filter(|h| !arms_only && *h != outfit.character && CHARACTERS.contains(&h.as_str()));
+        if rig.head != head {
+            if let Some(old) = rig.head_model.take() {
+                commands.entity(old).despawn();
+            }
+            rig.head_player = None;
+            rig.head = None;
+            if let Some(h) = &head {
+                let Some(model) = assets.models.get(h.as_str()) else { continue };
+                let child = commands.spawn((RigModel, WorldAssetRoot(model.scene.clone()), Transform::default(), Visibility::default(), ChildOf(entity))).id();
+                rig.head_model = Some(child);
+                rig.head = head.clone();
+                continue;
+            }
+        }
         let (Some(root), Some(_)) = (rig.model, rig.player) else { continue };
+        if rig.head_model.is_some() && rig.head_player.is_none() {
+            continue;
+        }
         rig.dressed = true;
-        let mut tints: HashMap<(AssetId<StandardMaterial>, &str), Handle<StandardMaterial>> = HashMap::new();
-        for e in children.iter_descendants(root) {
-            if let Ok(name) = names.get(e)
-                && MESHES.contains(&name.as_str())
-            {
-                let shown = !arms_only || name.as_str() == "mesh.arms";
-                commands.entity(e).insert(if shown { Visibility::Inherited } else { Visibility::Hidden });
-                // The player's own model only casts shadows: its shoulders and chest filled the view.
-                let hidden_in_fp = first_person;
-                for d in std::iter::once(e).chain(children.iter_descendants(e)) {
-                    if hidden_in_fp {
-                        commands.entity(d).insert(RenderLayers::layer(SHADOW_ONLY_LAYER));
-                    }
-                    if arms_only {
-                        // The arms are posed by hand every frame, away from the mesh's own bounds;
-                        // the body's own arms cast the shadow.
-                        commands.entity(d).insert((NoFrustumCulling, bevy::light::NotShadowCaster));
+        let camo = match (&outfit.camo, images.as_mut()) {
+            (Some(p), Some(images)) if crate::camo::draws(Some(p)) => {
+                let key = (p.clone(), outfit.primary.clone(), outfit.secondary.clone());
+                camos.0.get(&key).cloned().or_else(|| {
+                    let img = crate::camo::image(p, parse_hex(&outfit.primary)?, parse_hex(&outfit.secondary)?)?;
+                    let handle = images.add(img);
+                    camos.0.insert(key, handle.clone());
+                    Some(handle)
+                })
+            }
+            _ => None,
+        };
+        let mut finished: HashMap<(AssetId<StandardMaterial>, String), Handle<StandardMaterial>> = HashMap::new();
+        let parts = std::iter::once((root, false)).chain(rig.head_model.map(|h| (h, true)));
+        for (root, borrowed_head) in parts {
+            for e in children.iter_descendants(root) {
+                if let Ok(name) = names.get(e)
+                    && MESHES.contains(&name.as_str())
+                {
+                    let is_head = name.as_str() == "mesh.head";
+                    let shown = if borrowed_head { is_head } else { (!arms_only || name.as_str() == "mesh.arms") && !(is_head && rig.head_model.is_some()) };
+                    commands.entity(e).insert(if shown { Visibility::Inherited } else { Visibility::Hidden });
+                    // The player's own model only casts shadows: its shoulders and chest filled the view.
+                    let hidden_in_fp = first_person;
+                    for d in std::iter::once(e).chain(children.iter_descendants(e)) {
+                        if hidden_in_fp {
+                            commands.entity(d).insert(RenderLayers::layer(SHADOW_ONLY_LAYER));
+                        }
+                        if arms_only {
+                            // The arms are posed by hand every frame, away from the mesh's own bounds;
+                            // the body's own arms cast the shadow.
+                            commands.entity(d).insert((NoFrustumCulling, bevy::light::NotShadowCaster));
+                        }
                     }
                 }
-            }
-            if let (Ok((mat, handle)), Some(materials)) = (material_names.get(e), materials.as_mut()) {
-                let kind = mat.0.rsplit('.').next().unwrap_or("");
-                if let Some(color) = outfit.tint(kind) {
-                    let key = (handle.id(), ["primary", "secondary", "accent"].into_iter().find(|m| *m == kind).unwrap());
-                    let tinted = tints.entry(key).or_insert_with(|| {
-                        let mut m = materials.get(&handle.0).cloned().unwrap_or_default();
-                        m.base_color = color;
-                        materials.add(m)
-                    });
-                    commands.entity(e).insert(MeshMaterial3d(tinted.clone()));
+                if let (Ok((mat, handle)), Some(materials)) = (material_names.get(e), materials.as_mut()) {
+                    let kind = mat.0.rsplit('.').next().unwrap_or("");
+                    if outfit.touches(kind) {
+                        let key = (handle.id(), kind.to_string());
+                        let done = finished.entry(key).or_insert_with(|| {
+                            let base = materials.get(&handle.0).cloned().unwrap_or_default();
+                            materials.add(outfit.finish(kind, &base, camo.clone()))
+                        });
+                        commands.entity(e).insert(MeshMaterial3d(done.clone()));
+                    }
                 }
             }
         }
@@ -705,33 +892,44 @@ fn animate(
     let Some(assets) = assets else { return };
     for (mut rig, want) in &mut rigs {
         let Some(e) = rig.player else { continue };
-        let Some(model) = rig.character.as_deref().and_then(|c| assets.models.get(c)) else { continue };
-        let Ok((mut anim, mut transitions)) = anims.get_mut(e) else { continue };
-        let node = model.nodes[want.pose.index()];
-        if rig.pose != Some(want.pose) {
-            rig.pose = Some(want.pose);
-            let a = transitions.play(&mut anim, node, Duration::from_millis(150));
-            a.replay();
-            if want.pose.loops() {
-                a.repeat();
+        // A borrowed head is a second player on the same clips; both get every change in the same
+        // frame so they stay in step.
+        let parts = [(Some(e), rig.character.clone()), (rig.head_player, rig.head.clone())];
+        let changed = rig.pose != Some(want.pose);
+        let fired = want.shots != rig.shots;
+        for (e, character) in parts {
+            let (Some(e), Some(model)) = (e, character.as_deref().and_then(|c| assets.models.get(c))) else { continue };
+            let Ok((mut anim, mut transitions)) = anims.get_mut(e) else { continue };
+            let node = model.nodes[want.pose.index()];
+            if changed {
+                let a = transitions.play(&mut anim, node, Duration::from_millis(150));
+                a.replay();
+                if want.pose.loops() {
+                    a.repeat();
+                }
+            }
+            if let Some(a) = anim.animation_mut(node) {
+                a.set_speed(want.rate);
+            }
+            // Overlays: the reload runs once over the weapon's reload time, the recoil once per shot.
+            if want.reload > 0.0 && !anim.is_playing_animation(model.reload) {
+                anim.start(model.reload).set_weight(RELOAD_WEIGHT).set_speed(RELOAD_SECS / want.reload);
+            }
+            if anim.animation(model.reload).is_some_and(|a| a.is_finished()) || (want.reload <= 0.0 && anim.is_playing_animation(model.reload)) {
+                anim.stop(model.reload);
+            }
+            if fired {
+                anim.start(model.fire).replay();
+            }
+            if anim.animation(model.fire).is_some_and(|a| a.is_finished()) {
+                anim.stop(model.fire);
             }
         }
-        if let Some(a) = anim.animation_mut(node) {
-            a.set_speed(want.rate);
+        if changed && anims.contains(e) {
+            rig.pose = Some(want.pose);
         }
-        // Overlays: the reload runs once over the weapon's reload time, the recoil once per shot.
-        if want.reload > 0.0 && !anim.is_playing_animation(model.reload) {
-            anim.start(model.reload).set_weight(RELOAD_WEIGHT).set_speed(RELOAD_SECS / want.reload);
-        }
-        if anim.animation(model.reload).is_some_and(|a| a.is_finished()) || (want.reload <= 0.0 && anim.is_playing_animation(model.reload)) {
-            anim.stop(model.reload);
-        }
-        if want.shots != rig.shots {
+        if fired {
             rig.shots = want.shots;
-            anim.start(model.fire).replay();
-        }
-        if anim.animation(model.fire).is_some_and(|a| a.is_finished()) {
-            anim.stop(model.fire);
         }
     }
 }
@@ -786,6 +984,40 @@ mod tests {
         assert_eq!(c.outfit("custom").unwrap().character, "zealot");
         c.custom.insert("bad".into(), OutfitDef { character: "nobody".into(), ..default() });
         assert!(c.outfit("bad").is_none(), "unknown characters fall back");
+    }
+
+    #[test]
+    fn optional_slots_tint_only_when_set_and_save_only_when_set() {
+        let o = OutfitDef { gloves: Some("#ff0000".into()), glow: Some("#00ff00".into()), ..default() };
+        assert_eq!(o.tint("glove"), parse_hex("#ff0000"));
+        assert_eq!(o.tint("glow_amber"), parse_hex("#00ff00"), "every glow kind follows the glow slot");
+        assert_eq!(o.tint("boot"), None, "unset boots keep the character's colour");
+        assert!(!o.touches("boot") && o.touches("glove") && !o.touches("rubber"));
+        let text = toml::to_string(&OutfitDef { character: "runner".into(), ..default() }).unwrap();
+        assert_eq!(text.trim(), "character = \"runner\"\nprimary = \"\"\nsecondary = \"\"\naccent = \"\"", "old saves keep their shape");
+        let back: OutfitDef = toml::from_str("character = \"ghost\"\nprimary = \"#101010\"").unwrap();
+        assert_eq!((back.head, back.wear), (None, 0));
+    }
+
+    #[test]
+    fn finish_prints_camo_tones_skin_and_wear() {
+        let base = StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.5, ..default() };
+        let mut o = OutfitDef { character: "runner".into(), primary: "#ff0000".into(), secondary: "#00ff00".into(), camo: Some("hex".into()), skin: Some("#c68b63".into()), wear: 2, ..default() };
+        let tex = Handle::<Image>::default();
+        assert!(o.camo_on("primary") && !o.camo_on("accent"));
+        let m = o.finish("primary", &base, Some(tex.clone()));
+        assert_eq!(m.base_color_texture, Some(tex), "camo replaces the painted cloth");
+        assert!(m.base_color.to_linear().red < 1.0, "wear dulls it");
+        assert!(m.perceptual_roughness > 0.5);
+        let m = o.finish("skin", &base, None);
+        assert_eq!((m.base_color, m.base_color_texture), (parse_hex("#c68b63").unwrap(), None));
+        o.glow = Some("off".into());
+        assert!(o.touches("glow_red"));
+        assert_eq!(o.finish("glow_red", &base, None).emissive, LinearRgba::BLACK);
+        o.head = Some("runner".into());
+        o.camo = Some("none".into());
+        o.tidy();
+        assert_eq!((o.head, o.camo), (None, None), "own head and no camo are the defaults");
     }
 
     #[test]

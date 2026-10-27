@@ -1,6 +1,7 @@
 mod abilities;
 mod arms;
 mod body;
+mod camo;
 mod character;
 mod dressing;
 mod camera;
