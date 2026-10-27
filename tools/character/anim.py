@@ -190,11 +190,14 @@ def pose_matrix(pose, b):
 
 
 class Ctx:
-    """One character: its rest skeleton, proportions and two-hand carries (see `carries_from`)."""
+    """One character: its rest skeleton, proportions, and how it holds its gun: `grips`, the
+    character's solved palm frames on its carry weapon (the `<weapon>.R` / `.L` entries of its
+    grips.toml, see `hold`), or, from older glbs, the baked two-hand carries (`carries_from`)."""
 
-    def __init__(self, rest, carries):
+    def __init__(self, rest, carries=None, grips=None):
         self.rest = rest
-        self.carries = carries
+        self.carries = carries or {}
+        self.grips = grips
         self.hip_z = rest.bones["hips"][2][2]
         foot = rest.bones["foot.L"][2][2]
         self.leg = self.hip_z - foot  # hip joint to ankle
@@ -204,6 +207,60 @@ class Ctx:
 # ---------------------------------------------------------------------------------------------- carries
 
 CARRY_BASES = ("ready", "run", "sprint", "crouch", "slide")
+
+# Where the held gun sits in each two-hand carry, in rest space (X left, -Y forward, Z up) turned
+# with the chest: the trigger relative to the chest's head (metres at 1.80 m, scaled by `Ctx.k`),
+# the barrel's direction, and the cant (degrees, + rolls the gun's top toward the support side).
+# A compressed ready across the chest: the gun high in front of the chest rig (its pouches stand
+# 25-30 cm out from the spine), the muzzle forward, down and well across to the left, so a rifle's
+# stock (30 cm behind the trigger) sits in front of the right shoulder and the support hand stays
+# within the arm's reach. The old carries aimed the palm instead of the gun, and with the solved
+# diagonal grip the stock ended up inside the torso.
+GUN_CARRIES = {
+    "ready": ((-0.08, -0.31, -0.02), (0.55, -0.60, -0.58), 10),
+    "run": ((-0.08, -0.30, 0.00), (0.52, -0.62, -0.59), 10),
+    "sprint": ((-0.08, -0.29, 0.00), (0.50, -0.56, -0.66), 12),
+    "crouch": ((-0.08, -0.31, -0.03), (0.55, -0.62, -0.56), 10),
+    "slide": ((-0.08, -0.31, -0.02), (0.55, -0.60, -0.58), 10),
+}
+# Where the elbows go for each side's hold on the gun: the trigger elbow back and out so the stock
+# passes in front of the upper arm, the support elbow out, forward and down so the forearm crosses
+# in front of the chest rig rather than through it.
+GUN_POLES = {"R": (-0.7, 0.5, -0.5), "L": (0.8, -0.6, -0.5)}
+
+
+def gun_frame(ctx, pose, carry):
+    """Where `carry` puts the gun in `pose`: (rotation whose columns are the gun's right, up and
+    back, i.e. its glTF weapon axes; the trigger's position), armature space."""
+    at, fwd, cant = GUN_CARRIES[carry]
+    G, H = ctx.rest.fk(pose)
+    turn = G["chest"] @ ctx.rest.F("chest").T  # the chest off its rest
+    f = turn @ (np.asarray(fwd, float) / np.linalg.norm(fwd))
+    up = turn @ np.array([0, 0, 1.0])
+    up = up - f * (up @ f)
+    up /= np.linalg.norm(up)
+    up = axis_angle(f, -cant) @ up
+    return np.column_stack([np.cross(f, up), up, -f]), H["chest"] + turn @ (np.asarray(at, float) * ctx.k)
+
+
+def palm_on_gun(grip, R, T):
+    """A solved palm frame (`at`, `rot` in weapon space, as grips.py writes and the game reads) on a
+    gun at rotation `R`, trigger `T`: (position, rotation) of the palm frame in armature space."""
+    x, y, z, w = grip["rot"]
+    return T + R @ np.asarray(grip["at"], float), R @ from_quat((w, x, y, z))
+
+
+def hold_gun(ctx, pose, carry):
+    """Both arms on the gun where `carry` puts it, each palm where the character's solved grip sits
+    on that gun. Arms the pose sets itself stay (a planted hand, a reach)."""
+    R, T = gun_frame(ctx, pose, carry)
+    for side in ("R", "L"):
+        grip = ctx.grips.get(side)
+        if grip is None or "upper_arm." + side in pose:
+            continue
+        at, rot = palm_on_gun(grip, R, T)
+        reach(ctx, pose, side, at, rot, twist=0.5, pole=GUN_POLES[side])
+    return pose
 
 
 def carries_from(rest, poses):
@@ -222,8 +279,14 @@ def carries_from(rest, poses):
 
 
 def hold(ctx, poses, carry, steady=None):
-    """Put the carry's arms into every pose of a clip (bones a pose sets itself stay). The gun keeps
-    its solved aim against the clip's average chest and rides the chest's sway around it."""
+    """Put the carry's arms into every pose of a clip (bones a pose sets itself stay). With the
+    character's grips known, both arms are solved on the gun frame by frame (`hold_gun`), so the
+    gun rides the chest exactly; a baked carry instead keeps its solved aim against the clip's
+    average chest and rides the chest's sway around it."""
+    if ctx.grips is not None:
+        for p in poses:
+            hold_gun(ctx, p, carry)
+        return poses
     c = ctx.carries.get(carry)
     if c is None:
         return poses
@@ -482,9 +545,11 @@ def palm_frame(fingers, palm_out):
     return np.column_stack([np.cross(y, z), y, z])
 
 
-def reach(ctx, pose, side, palm_at, palm_rot):
-    """Bend one arm (two-bone IK, the elbow out and down) so its palm frame (`prop_hand.<side>`)
-    lands at `palm_at` turned to `palm_rot`, as far as the arm reaches."""
+def reach(ctx, pose, side, palm_at, palm_rot, twist=0.0, pole=None):
+    """Bend one arm (two-bone IK, the elbow toward `pole`: by default out and down) so its palm frame
+    (`prop_hand.<side>`) lands at `palm_at` turned to `palm_rot`, as far as the arm reaches. `twist`
+    is the share of the wrist's twist about the forearm's axis the forearm takes, so the wrist
+    doesn't pinch. `pole` is in armature space, as given."""
     rest = ctx.rest
     ua, fa, hd, pr = "upper_arm." + side, "forearm." + side, "hand." + side, "prop_hand." + side
     for b in (ua, fa, hd):
@@ -500,7 +565,7 @@ def reach(ctx, pose, side, palm_at, palm_rot):
     dist = max(1e-4, min(np.linalg.norm(d), (l1 + l2) * 0.999))
     dn = d / np.linalg.norm(d)
     sign = 1 if side == "L" else -1
-    pole = np.array([0.7 * sign, 0.3, -1.0])
+    pole = np.array(pole if pole is not None else (0.7 * sign, 0.3, -1.0), float)
     pole = pole - dn * (pole @ dn)
     pole /= np.linalg.norm(pole)
     a = math.acos(max(-1.0, min(1.0, (l1 * l1 + dist * dist - l2 * l2) / (2 * l1 * dist))))
@@ -516,6 +581,11 @@ def reach(ctx, pose, side, palm_at, palm_rot):
     G[ua] = aim(ua, sh, elbow)
     pose[ua] = rest.local(ua, G)
     G[fa] = aim(fa, elbow, w)
+    if twist:
+        # The hand's turn about its own Y against its rest under the forearm; part of it goes into
+        # the forearm as pronation.
+        q = to_quat(rest.F(hd).T @ rest.F(fa) @ G[fa].T @ hand_G)
+        G[fa] = G[fa] @ ry(2 * math.atan2(q[2], q[0]) * twist)
     pose[fa] = rest.local(fa, G)
     G[hd] = hand_G
     pose[hd] = rest.local(hd, G)
@@ -536,8 +606,15 @@ SUPPORT_ROT = from_euler((-124.6, 43.8, -105.3))
 
 
 def support(ctx, pose):
-    """Put the left palm on the handguard of whatever the right hand holds."""
+    """Put the left palm on the handguard of whatever the right hand holds: where the character's
+    solved support grip sits against its trigger grip, or the rifle-sized default."""
     at, rot = right_palm(ctx, pose)
+    if ctx.grips and "L" in ctx.grips:
+        # The gun from the right palm, then the left palm on that gun.
+        x, y, z, w = ctx.grips["R"]["rot"]
+        R = rot @ from_quat((w, x, y, z)).T
+        l_at, l_rot = palm_on_gun(ctx.grips["L"], R, at - R @ np.asarray(ctx.grips["R"]["at"], float))
+        return reach(ctx, pose, "L", l_at, l_rot, twist=0.5)
     return reach(ctx, pose, "L", at + rot @ SUPPORT_AT, rot @ SUPPORT_ROT)
 
 

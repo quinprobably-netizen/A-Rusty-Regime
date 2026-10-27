@@ -236,11 +236,36 @@ class Glb:
         write(self.path, j, out)
 
 
+def carry_weapon(cid):
+    """The two-handed weapon the character's carries hold: its loadout from assets/characters.toml,
+    or the rifle when that is held in one hand (as real.carry_weapon)."""
+    import tomllib
+    with open(os.path.join(os.path.dirname(OUT), "..", "characters.toml"), "rb") as f:
+        chars = tomllib.load(f).get("character", {})
+    w = chars.get(cid, {}).get("loadout", "rifle")
+    return w if w not in ("pistol", "revolver", "fist") else "rifle"
+
+
+def grips(path):
+    """The character's solved palm frames on its carry weapon ({"R": .., "L": ..}, each `at`, `rot`),
+    from its grips.toml beside the glb; None when the character has none yet."""
+    import tomllib
+    gp = path[:-4] + ".grips.toml"
+    if not os.path.exists(gp):
+        return None
+    with open(gp, "rb") as f:
+        poses = tomllib.load(f)
+    weapon = carry_weapon(os.path.basename(path)[:-4])
+    out = {side: poses[k] for side in ("R", "L") if (k := f"{weapon}.{side}") in poses}
+    return out if "R" in out else None
+
+
 def patch(path):
     g = Glb(path)
     rest = g.rest()
-    carries = g.carries(rest)
-    ctx = anim.Ctx(rest, carries)
+    held = grips(path)
+    carries = g.carries(rest) if held is None else g.j.get("extras", {}).get("carries", {})
+    ctx = anim.Ctx(rest, carries, held)
     clips = anim.build(ctx)
     assert list(clips) == anim.CLIP_NAMES, list(clips)
     g.replace_animations(clips, carries)

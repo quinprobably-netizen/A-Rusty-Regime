@@ -117,6 +117,9 @@ sprint, jump, fall and the backward death are CMU motion capture (`cmu.py` cut t
 `tools/character/mocap/`) retargeted onto each character's own skeleton; crouch, crouch walk, slide,
 wall runs, mantle, grapple, double jump, the forward death and the car and bike seats are
 hand-keyed; `reload` (arms only) and `fire` (added recoil) play over whatever the body does.
+In every clip both arms are solved frame by frame onto the gun (`anim.GUN_CARRIES` says where
+the gun sits against the chest in each carry; the character's own `<id>.grips.toml` says where
+its palms sit on that gun), so the third-person weapon stays out of the torso.
 `python3 tools/character/glbanim.py [ids]` rewrites the clips in the glbs in seconds (a full build
 runs it too). In game, `RUST_REGIME_SCREENSHOT_POSE=<clip>` holds the player's body in a clip for
 third-person screenshots.
