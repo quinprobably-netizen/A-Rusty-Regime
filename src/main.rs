@@ -86,26 +86,27 @@ fn main() {
     }
 }
 
-/// Anything but the arena, the debug moon and the solar system is the island, which builds on a loading screen.
+/// Only the island builds on a loading screen; the solar system, the arena and the debug moon start ready.
 fn is_island() -> bool {
-    !matches!(std::env::var("RUST_REGIME_LEVEL").as_deref(), Ok("arena" | "moon" | "system"))
+    std::env::var("RUST_REGIME_LEVEL").is_ok_and(|l| l == "island")
 }
 
-/// `RUST_REGIME_LEVEL=arena` runs the old walled arena, `RUST_REGIME_LEVEL=moon` the debug moon,
-/// `RUST_REGIME_LEVEL=system` the solar system; anything else is the island.
+/// The solar system is the default. `RUST_REGIME_LEVEL=island` runs the 4 km island,
+/// `RUST_REGIME_LEVEL=arena` the old walled arena, `RUST_REGIME_LEVEL=moon` the debug moon.
 fn level_plugin() -> bevy::app::PluginGroupBuilder {
     use bevy::app::PluginGroup;
     struct Level(Option<String>);
     impl PluginGroup for Level {
         fn build(self) -> bevy::app::PluginGroupBuilder {
             let group = bevy::app::PluginGroupBuilder::start::<Self>();
+            let island = self.0.as_deref() == Some("island");
             let group = match self.0.as_deref() {
                 Some("arena") => group.add(level::LevelPlugin),
                 Some("moon") => group.add(planet::PlanetPlugin { body: "moon".into() }),
-                Some("system") => group.add(solar::SolarPlugin),
-                _ => group.add(terrain::TerrainPlugin).add(look::LookPlugin).add(veg::VegPlugin).add(world::WorldPlugin),
+                Some("island") => group.add(terrain::TerrainPlugin).add(look::LookPlugin).add(veg::VegPlugin).add(world::WorldPlugin),
+                _ => group.add(solar::SolarPlugin),
             };
-            if std::env::var("RUST_REGIME_MODE").is_ok_and(|m| m == "6v6") { group.add(bots::MatchPlugin) } else { group }
+            if island && std::env::var("RUST_REGIME_MODE").is_ok_and(|m| m == "6v6") { group.add(bots::MatchPlugin) } else { group }
         }
     }
     Level(std::env::var("RUST_REGIME_LEVEL").ok()).build()
