@@ -277,6 +277,7 @@ fn animate(
     mut models: Query<(&WeaponModel, &mut Visibility)>,
     aim: Option<Res<crate::weapon::Aim>>,
     menu: Option<Res<crate::menu::Menu>>,
+    driving: Query<(), With<crate::vehicle::Driving>>,
     real: Res<Time<Real>>,
 ) {
     let dt = time.delta_secs();
@@ -286,8 +287,8 @@ fn animate(
     let want = if showcase == crate::menu::Showcase::Gun { 1.0 } else { 0.0 };
     vm.showcase += (want - vm.showcase) * (1.0 - (-8.0 * real.delta_secs()).exp());
     vm.spin += real.delta_secs();
-    // Out of sight on the title and pause screens and in third person, unless the gunsmith is showing it.
-    let in_game = menu.as_ref().is_none_or(|m| m.playing) && !tuning.third_person;
+    // Out of sight on the title and pause screens, in third person and while driving, unless the gunsmith is showing it.
+    let in_game = menu.as_ref().is_none_or(|m| m.playing) && !tuning.third_person && driving.is_empty();
     let want_vis = if in_game || showcase == crate::menu::Showcase::Gun { Visibility::Inherited } else { Visibility::Hidden };
     if **vis != want_vis {
         **vis = want_vis;

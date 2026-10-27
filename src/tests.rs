@@ -1402,6 +1402,23 @@ fn nothing_spawns_before_the_loading_screen_lets_go() {
     assert_eq!(app.world_mut().query_filtered::<Entity, With<Player>>().iter(app.world()).count(), 1);
 }
 
+/// The first-person guns must stay hidden for the whole time the player is in a vehicle.
+#[test]
+fn viewmodel_stays_hidden_while_driving() {
+    let mut app = island_app();
+    wait_for_world(&mut app);
+    run(&mut app, 0.5);
+    let visible = |app: &mut App| app.world_mut().query_filtered::<&Visibility, With<crate::viewmodel::ViewModel>>().single(app.world()).map(|v| *v != Visibility::Hidden).unwrap();
+    assert!(visible(&mut app), "the guns show on foot");
+    let vehicle = app.world_mut().query_filtered::<Entity, With<Vehicle>>().iter(app.world()).next().expect("the island has vehicles");
+    let player = app.world_mut().query_filtered::<Entity, With<Player>>().single(app.world()).unwrap();
+    app.world_mut().entity_mut(player).insert(Driving(vehicle));
+    for _ in 0..30 {
+        app.update();
+        assert!(!visible(&mut app), "the guns showed while driving");
+    }
+}
+
 #[test]
 fn vehicles_park_on_the_island() {
     let mut app = island_app();

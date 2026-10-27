@@ -540,10 +540,9 @@ fn wheel_visuals(time: Res<Time>, tuning: Res<Tuning>, vehicles: Query<&Vehicle>
     }
 }
 
-fn hide_while_driving(
-    driving: Query<(), With<Driving>>,
-    mut hidden: Query<&mut Visibility, Or<(With<crate::body::Body>, With<crate::viewmodel::ViewModel>)>>,
-) {
+/// The body hides while anyone drives. The viewmodel's visibility belongs to `viewmodel::animate`, which also
+/// hides it while driving; two systems writing it would fight each other every frame.
+fn hide_while_driving(driving: Query<(), With<Driving>>, mut hidden: Query<&mut Visibility, With<crate::body::Body>>) {
     let want = if driving.is_empty() { Visibility::Inherited } else { Visibility::Hidden };
     for mut vis in &mut hidden {
         if *vis != want {
