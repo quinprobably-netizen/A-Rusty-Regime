@@ -106,11 +106,13 @@ impl ShipSpec {
     }
 
     /// The lowest collider face, below the centre (negative).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn bottom(&self) -> f32 {
         self.collider.iter().map(|b| b.center[1] - b.size[1] / 2.0).fold(f32::MAX, f32::min)
     }
 
     /// Half the ship's width over all its boxes.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn half_width(&self) -> f32 {
         self.collider.iter().map(|b| b.center[0].abs() + b.size[0] / 2.0).fold(0.0, f32::max)
     }

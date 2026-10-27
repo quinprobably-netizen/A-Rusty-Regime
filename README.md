@@ -259,6 +259,18 @@ again steps out, anywhere, even in mid-air. Flight assist holds you up and level
 below 3 km, so landing is sinking onto flat ground. Boosting is capped by your height
 over the ground and reaches 6 km/s in space; thick air drags and heats the nose.
 
+Four ships stand on the apron, one per faction, each with its own handling from
+`assets/ships.toml`: the Deserters' **Kestrel** (yours, nearest the spawn: a patched
+gunship, the all-rounder), the Regime's **Litany** (a 22 m spire-finned cathedral: fast
+in a straight line, slow to turn), the Scrappers' **Mule** (a welded hauler with twice the
+lift and half the speed) and the PMC's **Vantage** (a faceted interceptor: light and
+quick). Walk up to any of them and E boards it; the respawn follows the ship you last
+flew. Their hulls are built in code with headless Blender like the weapons:
+`tools/ships/build.sh [ids] [--no-bake] [--preview] [--check]` writes
+`assets/models/ships/<id>.glb` (under 12 k triangles and one 1024² baked texture each)
+from `tools/ships/ships/<id>.py`; the game finds each engine's `exhaust.<n>` node and the
+`heat` node by name.
+
 Everything is in `assets/system.toml`: a star, Haven and its low-gravity moon Ash, and
 the three faction worlds, Bastion (Regime: heavy, slate, thin pale air), Cinder
 (Scrappers: rust desert, dusty orange sky) and Frost (PMC: airless ice). They orbit and
