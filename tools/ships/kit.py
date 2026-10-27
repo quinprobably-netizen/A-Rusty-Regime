@@ -26,12 +26,12 @@ def _weapons_kit():
 
 wk = _weapons_kit()
 import bpy  # noqa: E402
-from mathutils import Vector  # noqa: E402
+from mathutils import Matrix, Vector  # noqa: E402
 
 block, cut, cyl, join, label, plan, prism, tube, unite = wk.block, wk.cut, wk.cyl, wk.join, wk.label, wk.plan, wk.prism, wk.tube, wk.unite
 
-TRIS_MAX = 12000
-MESHES_MAX = 4
+TRIS_MAX = 30000
+MESHES_MAX = 6
 
 
 def srgb(hex_color, metallic=0.0, roughness=0.55, wear=0.5, lighten=1.25):
@@ -51,6 +51,9 @@ wk.PALETTE.update({
     "white": ((0.80, 0.81, 0.82), (0.6, 0.6, 0.62), 0.0, 0.35, 0.4, 0),
     "blue_light": ((0.3, 0.6, 1.0), (0.3, 0.6, 1.0), 0.0, 0.3, 0.0, 6.0),
     "gold_light": ((1.0, 0.75, 0.3), (1.0, 0.75, 0.3), 0.0, 0.3, 0.0, 4.0),
+    "red_light": ((1.0, 0.08, 0.05), (1.0, 0.08, 0.05), 0.0, 0.3, 0.0, 6.0),
+    "green_light": ((0.1, 1.0, 0.3), (0.1, 1.0, 0.3), 0.0, 0.3, 0.0, 6.0),
+    "screen": ((0.35, 0.9, 0.6), (0.35, 0.9, 0.6), 0.0, 0.3, 0.0, 3.0),
     "deserter_dark": srgb("#141413", metallic=0.3, roughness=0.6, lighten=2.5),
     "deserter_pale": srgb("#F0EEE6", roughness=0.45, lighten=0.85),
     "deserter_orange": srgb("#D97757", roughness=0.5),
@@ -89,7 +92,15 @@ class Ship:
         for group, members in groups.items():
             for o in members:
                 wk.apply_modifiers(o)
-            objs.append(join(members, group))
+            o = join(members, group)
+            if group == "ramp":
+                hinge = next(e for e in self.nodes if e.name == "ramp")
+                bpy.context.view_layer.update()
+                mw = o.matrix_world.copy()
+                o.parent = hinge
+                bpy.context.view_layer.update()
+                o.matrix_world = mw
+            objs.append(o)
         self.objects = objs
         if bake:
             wk.TEX = 1024
@@ -300,4 +311,140 @@ def check(path, spec):
             problems.append(f"{what} {got:.2f} m, want {want}")
     if abs(lo[1] + spec["rest"]) > 0.05:
         problems.append(f"lowest point {lo[1]:.2f}, want {-spec['rest']}")
+    if "cabin" in spec:
+        floor, ceiling, half = spec["cabin"]
+        if ceiling - floor < 2.2:
+            problems.append(f"cabin only {ceiling - floor:.2f} m tall, want 2.2")
+        if half < 0.9:
+            problems.append(f"cabin only {2 * half:.2f} m wide, want 1.8")
+        if "ramp" not in names:
+            problems.append("missing node ramp")
     return problems, {"tris": tris, "size": tuple(round(s, 2) for s in size), "kb": os.path.getsize(path) // 1024}
+
+
+# ------------------------------------------------------------------------------------ interiors
+
+def cabin(ship, c, s, material, wall=0.12, opening=None, bevel=0.06, segs=3):
+    """A hollow box: the outer block minus a cavity `wall` thick, with, when `opening=(w, h)` is
+    given, a doorway that wide and tall cut in the back (-Y) face from the floor up."""
+    outer = block("cabin", c, s, material, bevel=bevel, segs=segs)
+    inner = block("cavity", c, (s[0] - 2 * wall, s[1] - 2 * wall, s[2] - 2 * wall), material, bevel=0)
+    cutters = [inner]
+    if opening:
+        w, h = opening
+        floor = c[2] - s[2] / 2 + wall
+        cutters.append(block("door", (c[0], c[1] - s[1] / 2, floor + h / 2 + 0.01), (w, wall * 4, h), material, bevel=0))
+    outer = cut(outer, *cutters)
+    ship.add(outer)
+    return outer
+
+
+def ramp(ship, hinge, width, length, drop, material="gunmetal", thick=0.08):
+    """A boarding ramp hinged at its top edge (`hinge`, Blender coords, the cabin's floor edge at
+    the back), lying open: `length` aft and `drop` down to the ground. The plate, its tread bars
+    and chevrons go in the `ramp` group under a `ramp` empty at the hinge, so the game can swing
+    it shut in flight. Returns the slope in degrees."""
+    import math as m
+    slope = m.degrees(m.atan2(drop, m.sqrt(max(1e-6, length * length - drop * drop))))
+    run = m.sqrt(max(1e-6, length * length - drop * drop))
+    hx, hy, hz = hinge
+    e = ship.node("ramp", hinge)
+    e.empty_display_size = 0.3
+    # Build flat along -Y, then tilt about X by the slope (nose-down toward the ground).
+    parts = [block("plate", (hx, hy - length / 2, hz - thick / 2), (width, length, thick), material, bevel=0.015)]
+    n = max(3, int(length / 0.35))
+    for i in range(n):
+        y = hy - (i + 0.5) * length / n
+        parts.append(block("tread", (hx, y, hz + 0.015), (width - 0.2, 0.05, 0.03), "black", bevel=0))
+    for sx in (-1, 1):
+        parts.append(block("chev", (hx + sx * (width / 2 - 0.08), hy - length / 2, hz + 0.005), (0.1, length - 0.1, 0.012), "hazard", bevel=0))
+    rot = Matrix.Rotation(m.radians(-slope), 4, "X")
+    for o in parts:
+        o.data.transform(Matrix.Translation((-hx, -hy, -hz)))
+        o.data.transform(rot)
+        o.data.transform(Matrix.Translation((hx, hy, hz)))
+        ship.add(o, "ramp")
+    return slope
+
+
+def seat(name, c, facing=1, material="black", frame="gunmetal", w=0.55):
+    """A crew seat at `c` (the cushion's centre), facing +Y (`facing=1`) or -Y."""
+    x, y, z = c
+    parts = [block(name, (x, y, z), (w, 0.5, 0.12), material, bevel=0.03),
+             block("back", (x, y - facing * 0.26, z + 0.35), (w, 0.08, 0.7), material, bevel=0.03),
+             block("ped", (x, y, z - 0.22), (0.14, 0.14, 0.4), frame, bevel=0.01),
+             block("foot", (x, y, z - 0.42), (0.4, 0.4, 0.04), frame, bevel=0.01)]
+    return join(parts, name)
+
+
+def console(ship, c, s, material="gunmetal", screens=2, screen_mat="blue_light", facing=-1):
+    """A sloped console with lit screens on its face toward `facing` (+1 = toward the nose)."""
+    x, y, z = c
+    ship.add(block("console", c, s, material, bevel=0.02, taper=(1.0, 0.7)))
+    sw = (s[0] - 0.1 * (screens + 1)) / screens
+    for i in range(screens):
+        sx = x - s[0] / 2 + 0.1 + sw / 2 + i * (sw + 0.1)
+        ship.add(block("screen", (sx, y - facing * s[1] * 0.28, z + s[2] * 0.42), (sw, 0.02, s[2] * 0.5), screen_mat, bevel=0), "lights")
+    return None
+
+
+def crate(name, c, s, material="olive"):
+    x, y, z = c
+    parts = [block(name, c, s, material, bevel=0.02)]
+    for sx in (-1, 1):
+        parts.append(block("band", (x + sx * (s[0] / 2 - 0.08), y, z), (0.05, s[1] + 0.02, s[2] + 0.02), "black", bevel=0))
+    return join(parts, name)
+
+
+def locker(name, c, s, material="grey", doors=2):
+    x, y, z = c
+    parts = [block(name, c, s, material, bevel=0.015)]
+    dw = s[0] / doors
+    for i in range(doors):
+        dx = x - s[0] / 2 + dw * (i + 0.5)
+        parts.append(block("handle", (dx + dw * 0.3, y - s[1] / 2 - 0.02, z), (0.03, 0.04, 0.18), "steel", bevel=0))
+        parts.append(block("vent", (dx, y - s[1] / 2 - 0.005, z + s[2] * 0.3), (dw * 0.5, 0.01, 0.12), "black", bevel=0))
+    return join(parts, name)
+
+
+def light_strip(ship, p0, p1, w=0.12, material="lamp"):
+    """A ceiling light strip from p0 to p1 (same z), in the lights group."""
+    x0, y0, z0 = p0
+    x1, y1, z1 = p1
+    ship.add(block("strip", ((x0 + x1) / 2, (y0 + y1) / 2, z0), (abs(x1 - x0) + w, abs(y1 - y0) + w, 0.03), material, bevel=0), "lights")
+
+
+def handrail(name, p0, p1, r=0.025, material="steel", posts=2):
+    """A rail from p0 to p1 with posts down 0.9 m."""
+    parts = [cyl(name, p0, p1, r, material, segs=8, bevel=0)]
+    a, b = Vector(p0), Vector(p1)
+    for i in range(posts):
+        p = a.lerp(b, (i + 0.5) / posts)
+        parts.append(cyl("post", p, p - Vector((0, 0, 0.9)), r, material, segs=8, bevel=0))
+    return join(parts, name)
+
+
+def hinge(name, c, axis="y", length=0.3, r=0.035, material="steel"):
+    """A barrel hinge with two knuckles along `axis`."""
+    a = {"x": Vector((1, 0, 0)), "y": Vector((0, 1, 0)), "z": Vector((0, 0, 1))}[axis]
+    c = Vector(c)
+    parts = [cyl(name, c - a * length / 2, c + a * length / 2, r, material, segs=10, bevel=0)]
+    for k in (-1, 1):
+        parts.append(block("leaf", tuple(c + a * k * length * 0.3), (r * 2.4, r * 2.4, r * 2.4), material, bevel=0))
+    return join(parts, name)
+
+
+def nav_light(ship, name, c, material, r=0.07):
+    ship.add(sphere("nav", c, r, material, segs=10), "lights")
+    ship.node(name, c)
+
+
+def chain(name, p0, p1, links=8, r=0.03, material="steel"):
+    """A hanging chain: alternating short cylinders along p0->p1."""
+    a, b = Vector(p0), Vector(p1)
+    parts = []
+    for i in range(links):
+        q0 = a.lerp(b, i / links)
+        q1 = a.lerp(b, (i + 0.8) / links)
+        parts.append(cyl(name, q0, q1, r if i % 2 else r * 0.7, material, segs=6, bevel=0))
+    return join(parts, name)

@@ -2599,7 +2599,7 @@ fn ships_toml_lists_four_ships_with_models_and_matching_rest_heights() {
         assert!(s.mass > 0.0 && s.thrust > 0.0 && s.lift > 0.0 && s.cruise > 0.0 && s.boost_max > s.cruise);
     }
     let k = &ships.ship[0];
-    assert_eq!((k.mass, k.thrust, k.lift, k.cruise, k.boost_max, k.rest), (6000.0, 30.0, 20.0, 160.0, 6000.0, 1.45));
+    assert_eq!((k.mass, k.thrust, k.lift, k.cruise, k.boost_max, k.rest), (6000.0, 30.0, 20.0, 160.0, 6000.0, 1.6));
 }
 
 #[test]
@@ -2638,13 +2638,23 @@ fn leaving_the_ship_uses_its_exit_point() {
     let tf = *app.world().get::<Transform>(ship).unwrap();
     input(&mut app).interact_pressed = true;
     run(&mut app, 0.1);
-    let player = app.world_mut().query_filtered::<&Transform, With<Player>>().single(app.world()).unwrap().translation;
-    let exit = Vec3::from(app.world().resource::<solar::ship::Ships>().ship[0].exit.clone());
-    assert!(exit.x < -6.0, "the exit clears the 11 m wing");
+    let stood = app.world_mut().query_filtered::<&Transform, With<Player>>().single(app.world()).unwrap().translation;
+    let spec = app.world().resource::<solar::ship::Ships>().ship[0].clone();
+    let exit = Vec3::from(spec.exit);
     let expect = tf.translation + tf.rotation * exit;
-    assert!(player.distance(expect) < 1.5, "stepped out {} m from the exit", player.distance(expect));
+    assert!(stood.distance(expect) < 1.5, "stood up {} m from the cabin spot", stood.distance(expect));
     run(&mut app, 1.0);
-    assert_eq!(player_state(&mut app), MoveState::Ground, "standing on the apron beside it");
+    assert_eq!(player_state(&mut app), MoveState::Ground, "standing on the cabin floor");
+    // Walking backwards from the seat's heading goes aft, down the ramp and onto the apron.
+    input(&mut app).movement = Vec2::new(0.0, -1.0);
+    run(&mut app, 4.0);
+    input(&mut app).movement = Vec2::ZERO;
+    run(&mut app, 0.5);
+    let (pos, _, state) = player(&mut app);
+    let local = tf.rotation.inverse() * (pos - tf.translation);
+    assert!(local.z > spec.ramp_foot().z + 1.0, "walked out the back: {local}");
+    assert!(local.y < spec.cabin[0], "down on the apron, below the cabin floor: {local}");
+    assert_eq!(state, MoveState::Ground, "standing on the apron");
 }
 
 #[test]
@@ -2674,8 +2684,8 @@ fn four_ships_rest_in_a_row_on_the_apron_without_touching() {
             let (sa, sb) = (&ships.ship[a], &ships.ship[b]);
             let dx = (parked[a].1 - parked[b].1).length();
             assert!(dx > sa.half_width() + sb.half_width(), "{} and {} touch", sa.id, sb.id);
-            let door = (parked[a].1 + frame * Vec3::from(sa.exit)).distance(parked[b].1);
-            assert!(door > sb.half_width() + 2.0, "{}'s door opens beside {}", sa.id, sb.id);
+            let foot = (parked[a].1 + frame * sa.ramp_foot()).distance(parked[b].1);
+            assert!(foot > sb.half_width() + 2.0, "{}'s ramp lands beside {}", sa.id, sb.id);
         }
     }
 }
@@ -2697,6 +2707,49 @@ fn respawn_follows_the_last_flown_ship() {
     let spawn = app.world().resource::<controller::WorldBounds>().spawn;
     let origin = *app.world().resource::<Origin>();
     let exit = Vec3::from(app.world().resource::<solar::ship::Ships>().ship[1].exit);
-    let expect = origin.body(litany.1.translation + litany.1.rotation * Vec3::new(exit.x, 0.0, exit.z));
-    assert!(spawn.distance(expect) < 3.0, "respawn {} m from the Litany's door", spawn.distance(expect));
+    let expect = origin.body(litany.1.translation + litany.1.rotation * exit);
+    assert!(spawn.distance(expect) < 3.0, "respawn {} m from the Litany's cabin spot", spawn.distance(expect));
+}
+
+
+#[test]
+fn every_cabin_fits_a_standing_player_and_its_ramp_reaches_the_ground() {
+    let ships = solar::ship::Ships::load();
+    for spec in &ships.ship {
+        let exit = Vec3::from(spec.exit);
+        // A 1.8 m, 0.4 m radius capsule standing on the cabin floor: bottom and top sphere centres.
+        for p in [exit + Vec3::Y * -0.45, exit, exit + Vec3::Y * 0.45] {
+            for b in &spec.collider {
+                assert!(!b.touches(p, 0.4), "{}: a standing player at {exit} hits the box at {:?}", spec.id, b.center);
+            }
+        }
+        assert!(exit.y - 0.95 > spec.cabin[0] - 0.05 && exit.y + 0.95 < spec.cabin[1], "{}: exit stands on the floor under the ceiling", spec.id);
+        assert!(spec.cabin[1] - spec.cabin[0] >= 2.2, "{}: cabin {} m tall", spec.id, spec.cabin[1] - spec.cabin[0]);
+        let foot = spec.ramp_foot();
+        assert!((foot.y + spec.rest).abs() < 0.3, "{}: ramp foot at {} vs ground {}", spec.id, foot.y, -spec.rest);
+        // The doorway over the hinge is clear for a standing player.
+        let door = Vec3::from(spec.ramp) + Vec3::new(0.0, 0.95, -0.5);
+        for b in &spec.collider {
+            assert!(!b.touches(door, 0.35), "{}: the doorway is blocked by the box at {:?}", spec.id, b.center);
+        }
+    }
+}
+
+#[test]
+fn a_parked_ship_is_static_until_boarded() {
+    let mut app = system_app();
+    run(&mut app, 2.0);
+    let ship = ship_entity(&mut app);
+    assert_eq!(*app.world().get::<RigidBody>(ship).unwrap(), RigidBody::Static, "parked");
+    board(&mut app);
+    run(&mut app, 0.2);
+    assert_eq!(*app.world().get::<RigidBody>(ship).unwrap(), RigidBody::Dynamic, "woken by its pilot");
+    input(&mut app).lift = 1.0;
+    run(&mut app, 1.0);
+    input(&mut app).lift = -1.0;
+    run(&mut app, 4.0);
+    input(&mut app).lift = 0.0;
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 3.0);
+    assert_eq!(*app.world().get::<RigidBody>(ship).unwrap(), RigidBody::Static, "parked again after landing");
 }

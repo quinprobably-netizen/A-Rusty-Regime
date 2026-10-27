@@ -42,6 +42,23 @@ pub const BERTHS: [f32; 4] = [-1.0, -19.0, -37.0, -55.0];
 pub struct ShipBox {
     pub center: [f32; 3],
     pub size: [f32; 3],
+    /// Euler angles about X, Y and Z, degrees; the open ramp slopes.
+    #[serde(default)]
+    pub rot: [f32; 3],
+}
+
+impl ShipBox {
+    pub fn rotation(&self) -> Quat {
+        Quat::from_euler(EulerRot::XYZ, self.rot[0].to_radians(), self.rot[1].to_radians(), self.rot[2].to_radians())
+    }
+
+    /// Whether a sphere of `margin` at `p` (ship frame) touches this box.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn touches(&self, p: Vec3, margin: f32) -> bool {
+        let local = self.rotation().inverse() * (p - Vec3::from(self.center));
+        let half = Vec3::from(self.size) / 2.0 + Vec3::splat(margin);
+        local.abs().cmple(half).all()
+    }
 }
 
 /// One ship's numbers from `assets/ships.toml`.
@@ -68,6 +85,15 @@ pub struct ShipSpec {
     pub cam: [f32; 2],
     /// Radius of each engine's exhaust glow.
     pub engine_r: f32,
+    /// Cabin floor and ceiling heights.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub cabin: [f32; 2],
+    /// The boarding ramp: its hinge, its length and how steeply it slopes when open, degrees.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub ramp: [f32; 3],
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub ramp_len: f32,
+    pub ramp_slope: f32,
     pub collider: Vec<ShipBox>,
 }
 
@@ -102,7 +128,19 @@ impl ShipSpec {
     }
 
     pub fn collider(&self) -> Collider {
-        Collider::compound(self.collider.iter().map(|b| (Vec3::from(b.center), Quat::IDENTITY, Collider::cuboid(b.size[0], b.size[1], b.size[2]))).collect())
+        Collider::compound(self.collider.iter().map(|b| (Vec3::from(b.center), b.rotation(), Collider::cuboid(b.size[0], b.size[1], b.size[2]))).collect())
+    }
+
+    /// Where the open ramp meets the ground, in the ship's frame.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn ramp_foot(&self) -> Vec3 {
+        let a = self.ramp_slope.to_radians();
+        Vec3::from(self.ramp) + self.ramp_len * Vec3::new(0.0, -a.sin(), a.cos())
+    }
+
+    /// The turn that swings the open ramp up shut against the doorway.
+    pub fn ramp_shut(&self) -> Quat {
+        Quat::from_rotation_x(-(90.0 + self.ramp_slope).to_radians())
     }
 
     /// The lowest collider face, below the centre (negative).
@@ -164,6 +202,14 @@ struct Pending;
 #[derive(Component)]
 struct HeatGlow(Entity);
 
+/// The boarding ramp's hinge node: down while the ship is parked, up while it flies.
+#[derive(Component)]
+struct Ramp {
+    ship: Entity,
+    open: Quat,
+    shut: Quat,
+}
+
 /// What a ship's engines and nose glow in: its own materials, so every ship glows on its own.
 #[derive(Component)]
 struct ShipLook {
@@ -182,7 +228,7 @@ pub fn build(app: &mut App) {
     app.init_resource::<ShipControls>()
         .insert_resource(Ships::load())
         .add_systems(Startup, spawn_fleet.after(crate::planet::seed_ground))
-        .add_systems(Update, (controls, glow, stream))
+        .add_systems(Update, (controls, glow, stream, swing))
         .add_systems(PostUpdate, ease.before(TransformSystems::Propagate))
         .add_systems(FixedUpdate, (board.before(VehicleSet), fly.after(board).before(ControllerSet)))
         .add_systems(FixedPostUpdate, (remember.after(rebase).before(PhysicsSystems::First), measure.after(PhysicsSystems::Last), seat.after(PhysicsSystems::Last), park.after(PhysicsSystems::Last)))
@@ -278,6 +324,7 @@ fn dress(
     ships: Res<Ships>,
     children: Query<&Children>,
     names: Query<&Name>,
+    transforms: Query<&Transform>,
 ) {
     let Ok((parent, hull)) = hulls.get(ready.entity) else { return };
     let Some(meshes) = meshes else { return };
@@ -294,6 +341,21 @@ fn dress(
             commands.entity(e).with_child((Exhaust, Mesh3d(meshes.disc.clone()), MeshMaterial3d(look.exhaust.clone()), Transform::from_rotation(x90).with_scale(Vec3::new(r, 1.0, r)), bevy::light::NotShadowCaster));
         } else if name.as_str() == "heat" {
             commands.entity(e).with_child((HeatGlow(parent.parent()), Mesh3d(meshes.nose.clone()), MeshMaterial3d(look.heat.clone()), Transform::from_scale(Vec3::new(2.0, 1.6, 4.0) * hull_scale), Visibility::Hidden, bevy::light::NotShadowCaster));
+        } else if name.as_str() == "ramp" {
+            let open = transforms.get(e).map_or(Quat::IDENTITY, |t| t.rotation);
+            commands.entity(e).insert(Ramp { ship: parent.parent(), open, shut: open * spec.ramp_shut() });
+        }
+    }
+}
+
+/// Ramps swing shut when a pilot takes the ship and drop open again once it is parked.
+fn swing(time: Res<Time>, ships: Query<&Ship>, mut ramps: Query<(&Ramp, &mut Transform)>) {
+    let k = 1.0 - (-3.0 * time.delta_secs()).exp();
+    for (ramp, mut tf) in &mut ramps {
+        let Ok(ship) = ships.get(ramp.ship) else { continue };
+        let target = if ship.pilot.is_some() { ramp.shut } else { ramp.open };
+        if tf.rotation.angle_between(target) > 1e-3 {
+            tf.rotation = tf.rotation.slerp(target, k);
         }
     }
 }
@@ -368,7 +430,8 @@ pub fn board(
                 input.interact_pressed = false;
                 ships.get_mut(se).unwrap().1.pilot = Some(pe);
                 commands.entity(pe).insert((Driving(se), ColliderDisabled));
-                commands.entity(se).insert(KeepAwake);
+                // A parked ship is static; the pilot wakes it.
+                commands.entity(se).insert((KeepAwake, RigidBody::Dynamic));
             }
         }
     }
@@ -520,16 +583,22 @@ fn seat(specs: Res<Ships>, ships: Query<(&Ship, &Position, &Rotation)>, mut play
     }
 }
 
-/// The ship the player last flew, once parked, is where they come back after a fall or a
-/// reset: beside it, at its door. Before any flight that is the first ship.
-fn park(specs: Res<Ships>, ships: Query<(&Ship, &Transform, &LinearVelocity)>, origin: Res<Origin>, mut bounds: ResMut<WorldBounds>) {
+/// A ship with no pilot that has come to rest turns static, so walking about inside it cannot
+/// nudge it and it never jitters on its gear; boarding wakes it. The ship the player last flew,
+/// once parked, is where they come back after a fall or a reset: on its cabin floor. Before any
+/// flight that is the first ship.
+fn park(mut commands: Commands, specs: Res<Ships>, ships: Query<(Entity, &Ship, &Transform, &LinearVelocity, &RigidBody)>, origin: Res<Origin>, mut bounds: ResMut<WorldBounds>) {
+    for (e, ship, _, v, body) in &ships {
+        if ship.pilot.is_none() && *body == RigidBody::Dynamic && v.0.length() < 0.5 {
+            commands.entity(e).insert(RigidBody::Static);
+        }
+    }
     let newest = ships
         .iter()
-        .filter(|(s, _, v)| s.pilot.is_none() && v.0.length() < 0.5)
-        .max_by(|a, b| a.0.landed_at.total_cmp(&b.0.landed_at).then(b.0.spec.cmp(&a.0.spec)));
-    if let Some((ship, tf, _)) = newest {
-        let exit = Vec3::from(specs.ship[ship.spec].exit);
-        let spawn = origin.body(tf.translation + tf.rotation * Vec3::new(exit.x, 0.0, exit.z));
+        .filter(|(_, s, _, v, _)| s.pilot.is_none() && v.0.length() < 0.5)
+        .max_by(|a, b| a.1.landed_at.total_cmp(&b.1.landed_at).then(b.1.spec.cmp(&a.1.spec)));
+    if let Some((_, ship, tf, _, _)) = newest {
+        let spawn = origin.body(tf.translation + tf.rotation * Vec3::from(specs.ship[ship.spec].exit));
         if spawn.distance(bounds.spawn) > 0.5 {
             bounds.spawn = spawn;
         }

@@ -2,33 +2,52 @@
 # (built by tools/ships). Frame: +X right, +Y up, -Z nose; metres, kilograms, m/s and m/s².
 # `rest` is the distance from the ship's centre down to the bottom of its landing gear and must
 # match the lowest collider face. `rates` are pitch, yaw and roll at full stick, rad/s. `engine_r`
-# sizes the exhaust glow discs. The first ship is the player's and stands nearest the spawn.
+# sizes the exhaust glow discs. Hulls are hollow: the boxes are floor, ceiling, walls, bulkheads
+# and the open ramp (`rot` in degrees), and the player walks the space between them. `exit` is
+# the cabin floor spot the pilot stands up on; it is also where you respawn. `cabin` is the floor
+# and ceiling height, `ramp` the hinge, `ramp_len` and `ramp_slope` the open ramp (the game swings
+# it shut in flight). The first ship is the player's and stands nearest the spawn.
 
 [[ship]]
 id = "kestrel"
 name = "Kestrel"
-faction = "deserters"
 mass = 6000
 thrust = 30
 lift = 20
 rates = [1.6, 1.1, 2.2]
 cruise = 160
 boost_max = 6000
-rest = 1.45
-seat = [0.0, 0.4, -2.0]
-exit = [-6.5, -0.4, 0.0]
-cam = [20, 5]
+rest = 1.6
+seat = [0.0, 0.37, -2.6]
+exit = [0.0, 0.07, 0.0]
+cam = [22, 6]
 engine_r = 0.6
+cabin = [-0.88, 1.58]
+ramp = [0.0, -0.88, 5.3]
+ramp_len = 2.6
+ramp_slope = 16.1
 collider = [
-    { center = [0.0, 0.0, 0.0], size = [2.4, 1.6, 10.0] },
-    { center = [0.0, -0.2, 1.0], size = [11.0, 0.3, 3.5] },
-    { center = [0.0, -1.3, 0.5], size = [3.2, 0.3, 6.0] },
+    { center = [0.0, -0.94, 0.5], size = [2.8, 0.12, 9.5] },     # floor
+    { center = [0.0, 1.64, 0.5], size = [2.8, 0.12, 9.5] },      # ceiling
+    { center = [-1.34, 0.35, 0.5], size = [0.12, 2.7, 9.5] },    # walls
+    { center = [1.34, 0.35, 0.5], size = [0.12, 2.7, 9.5] },
+    { center = [0.0, 0.35, -4.19], size = [2.8, 2.7, 0.12] },    # bulkhead
+    { center = [0.0, 0.35, -5.7], size = [2.6, 2.7, 3.0] },      # nose
+    { center = [-1.1, 0.35, 5.19], size = [0.6, 2.7, 0.12] },    # tail wall either side of the door
+    { center = [1.1, 0.35, 5.19], size = [0.6, 2.7, 0.12] },
+    { center = [0.0, 1.56, 5.19], size = [2.8, 0.28, 0.12] },    # lintel
+    { center = [-3.7, 0.3, 1.5], size = [4.6, 0.28, 3.6] },      # wings, outside the cabin walls
+    { center = [3.7, 0.3, 1.5], size = [4.6, 0.28, 3.6] },
+    { center = [-2.1, -0.4, 3.4], size = [1.3, 1.3, 4.8] },      # engine pods
+    { center = [2.1, -0.4, 3.4], size = [1.3, 1.3, 4.8] },
+    { center = [-1.3, -1.49, 0.2], size = [0.22, 0.22, 7.1] },   # skids
+    { center = [1.3, -1.49, 0.2], size = [0.22, 0.22, 7.1] },
+    { center = [0.0, -1.24, 6.55], size = [1.6, 0.08, 2.6], rot = [16.1, 0.0, 0.0] },  # ramp, open
 ]
 
 [[ship]]
 id = "litany"
 name = "Litany"
-faction = "regime"
 mass = 14000
 thrust = 38
 lift = 16
@@ -36,21 +55,40 @@ rates = [0.9, 0.6, 1.0]
 cruise = 140
 boost_max = 7500
 rest = 2.2
-seat = [0.0, 1.0, -6.0]
-exit = [-3.5, -1.0, 0.0]
+seat = [0.0, -0.23, -5.2]
+exit = [0.0, -0.53, -1.0]
 cam = [30, 8]
 engine_r = 1.0
+cabin = [-1.48, 1.48]
+ramp = [0.0, -1.48, 9.05]
+ramp_len = 3.2
+ramp_slope = 13.0
 collider = [
-    { center = [0.0, 0.0, 0.0], size = [3.0, 3.2, 18.0] },
-    { center = [0.0, 3.5, 2.0], size = [0.6, 6.6, 8.0] },
-    { center = [0.0, -0.6, 5.0], size = [9.0, 0.3, 3.0] },
-    { center = [0.0, -1.85, 0.0], size = [2.4, 0.7, 11.0] },
+    { center = [0.0, -1.54, 0.0], size = [3.0, 0.12, 18.0] },
+    { center = [0.0, 1.54, 0.0], size = [3.0, 0.12, 18.0] },
+    { center = [-1.44, 0.0, 0.0], size = [0.12, 3.2, 18.0] },
+    { center = [1.44, 0.0, 0.0], size = [0.12, 3.2, 18.0] },
+    { center = [0.0, 0.0, -8.94], size = [3.0, 3.2, 0.12] },
+    { center = [0.0, 0.0, -10.1], size = [1.4, 3.2, 2.4] },
+    { center = [-1.15, 0.0, 8.94], size = [0.7, 3.2, 0.12] },
+    { center = [1.15, 0.0, 8.94], size = [0.7, 3.2, 0.12] },
+    { center = [0.0, 1.31, 8.94], size = [3.0, 0.58, 0.12] },
+    { center = [0.0, 4.15, 3.25], size = [0.6, 5.3, 8.5] },      # spire
+    { center = [-3.0, -0.6, 5.0], size = [3.0, 0.3, 3.0] },      # stabilisers
+    { center = [3.0, -0.6, 5.0], size = [3.0, 0.3, 3.0] },
+    { center = [-2.0, -0.4, 8.75], size = [1.9, 1.9, 4.5] },     # engines
+    { center = [2.0, -0.4, 8.75], size = [1.9, 1.9, 4.5] },
+    { center = [0.0, 2.3, 8.75], size = [1.9, 1.9, 4.5] },
+    { center = [-1.1, -1.9, -5.0], size = [0.7, 0.6, 0.7] },     # feet
+    { center = [1.1, -1.9, -5.0], size = [0.7, 0.6, 0.7] },
+    { center = [-1.1, -1.9, 6.0], size = [0.7, 0.6, 0.7] },
+    { center = [1.1, -1.9, 6.0], size = [0.7, 0.6, 0.7] },
+    { center = [0.0, -1.84, 10.61], size = [1.6, 0.08, 3.2], rot = [13.0, 0.0, 0.0] },
 ]
 
 [[ship]]
 id = "mule"
 name = "Mule"
-faction = "scrappers"
 mass = 11000
 thrust = 22
 lift = 30
@@ -58,36 +96,73 @@ rates = [1.1, 0.8, 1.2]
 cruise = 120
 boost_max = 4500
 rest = 1.9
-seat = [0.0, 1.2, -3.5]
-exit = [-5.0, -0.8, -1.0]
-cam = [24, 7]
+seat = [0.0, -0.11, -3.6]
+exit = [0.0, -0.41, 0.0]
+cam = [26, 7]
 engine_r = 1.1
+cabin = [-1.36, 1.96]
+ramp = [0.0, -1.36, 5.55]
+ramp_len = 3.0
+ramp_slope = 10.4
 collider = [
-    { center = [0.0, 0.3, 0.0], size = [6.0, 3.6, 11.0] },
-    { center = [3.4, 0.0, -0.5], size = [2.0, 2.4, 12.5] },
-    { center = [0.0, 2.6, 1.0], size = [3.6, 1.4, 6.0] },
-    { center = [0.0, -0.7, 2.0], size = [13.0, 0.3, 2.6] },
-    { center = [0.0, -1.7, -0.5], size = [4.9, 0.4, 10.0] },
+    { center = [0.0, -1.43, 0.0], size = [6.0, 0.14, 11.0] },
+    { center = [0.0, 2.03, 0.0], size = [6.0, 0.14, 11.0] },
+    { center = [-2.93, 0.3, 0.0], size = [0.14, 3.6, 11.0] },
+    { center = [2.93, 0.3, 0.0], size = [0.14, 3.6, 11.0] },
+    { center = [0.0, 0.3, -5.43], size = [6.0, 3.6, 0.14] },
+    { center = [0.0, 0.9, -6.6], size = [4.2, 2.6, 3.0] },       # cab
+    { center = [-2.0, 0.3, 5.43], size = [2.0, 3.6, 0.14] },
+    { center = [2.0, 0.3, 5.43], size = [2.0, 3.6, 0.14] },
+    { center = [0.0, 1.77, 5.43], size = [6.0, 0.66, 0.14] },
+    { center = [3.4, 0.0, -0.5], size = [2.0, 2.4, 12.5] },      # side bay
+    { center = [-4.75, -0.7, 2.0], size = [3.5, 0.3, 2.6] },     # outriggers
+    { center = [4.75, -0.7, 2.0], size = [3.5, 0.3, 2.6] },
+    { center = [2.6, 0.0, 6.15], size = [2.4, 2.4, 4.3] },       # engines
+    { center = [-2.4, -0.3, 5.5], size = [1.4, 1.4, 4.1] },
+    { center = [0.0, 2.6, 1.0], size = [3.6, 1.4, 6.0] },        # roof kit
+    { center = [-2.3, -1.77, -0.5], size = [0.26, 0.26, 10.2] }, # skids
+    { center = [2.3, -1.77, -0.5], size = [0.26, 0.26, 10.2] },
+    { center = [0.0, -1.63, 7.03], size = [2.0, 0.1, 3.0], rot = [10.4, 0.0, 0.0] },
 ]
 
 [[ship]]
 id = "vantage"
 name = "Vantage"
-faction = "pmc"
 mass = 4000
 thrust = 36
 lift = 18
 rates = [2.4, 1.6, 3.2]
 cruise = 190
 boost_max = 6500
-rest = 1.1
-seat = [0.0, 0.5, -1.5]
-exit = [-3.5, -0.15, -2.5]
+rest = 1.9
+seat = [0.5, 0.15, -1.4]
+exit = [0.0, -0.15, 1.0]
 cam = [18, 4]
 engine_r = 0.35
+cabin = [-1.1, 1.3]
+ramp = [0.0, -1.1, 5.55]
+ramp_len = 2.6
+ramp_slope = 17.9
 collider = [
-    { center = [0.0, 0.0, 0.0], size = [2.6, 1.9, 12.0] },
-    { center = [0.0, -0.15, 1.5], size = [10.0, 0.26, 5.0] },
-    { center = [0.0, 1.3, 4.6], size = [2.2, 2.0, 2.4] },
-    { center = [0.0, -0.9, -0.3], size = [2.0, 0.4, 6.0] },
+    { center = [0.0, -1.15, 1.0], size = [3.0, 0.1, 9.0] },
+    { center = [0.0, 1.35, 1.0], size = [3.0, 0.1, 9.0] },
+    { center = [-1.45, 0.1, 1.0], size = [0.1, 2.6, 9.0] },
+    { center = [1.45, 0.1, 1.0], size = [0.1, 2.6, 9.0] },
+    { center = [0.0, 0.1, -3.45], size = [3.0, 2.6, 0.1] },
+    { center = [0.0, 0.1, -5.25], size = [2.8, 2.6, 3.5] },      # nose
+    { center = [-1.15, 0.1, 5.45], size = [0.7, 2.6, 0.1] },
+    { center = [1.15, 0.1, 5.45], size = [0.7, 2.6, 0.1] },
+    { center = [0.0, 1.3, 5.45], size = [3.0, 0.2, 0.1] },
+    { center = [0.0, 1.6, 1.0], size = [3.0, 0.5, 8.6] },        # decks
+    { center = [0.0, -1.4, 1.2], size = [3.0, 0.5, 8.8] },
+    { center = [-3.5, 0.2, 1.75], size = [4.0, 0.26, 5.5] },     # wings
+    { center = [3.5, 0.2, 1.75], size = [4.0, 0.26, 5.5] },
+    { center = [-1.1, 2.55, 4.2], size = [0.12, 1.7, 2.4] },     # fins
+    { center = [1.1, 2.55, 4.2], size = [0.12, 1.7, 2.4] },
+    { center = [-1.9, -0.1, 5.2], size = [1.4, 0.9, 2.8] },      # engines
+    { center = [1.9, -0.1, 5.2], size = [1.4, 0.9, 2.8] },
+    { center = [0.0, -1.7, -3.4], size = [0.5, 0.4, 0.5] },      # feet
+    { center = [-1.0, -1.7, 2.6], size = [0.5, 0.4, 0.5] },
+    { center = [1.0, -1.7, 2.6], size = [0.5, 0.4, 0.5] },
+    { center = [0.0, -1.5, 6.79], size = [1.6, 0.08, 2.6], rot = [17.9, 0.0, 0.0] },
 ]

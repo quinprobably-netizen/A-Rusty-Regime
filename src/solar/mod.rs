@@ -582,7 +582,7 @@ fn dev_start(world: &mut World) {
     let Some(ship) = world.query::<(Entity, &ship::Ship)>().iter(world).find(|(_, s)| s.spec == 0).map(|(e, _)| e) else { return };
     let Ok(player) = world.query_filtered::<Entity, With<Player>>().single(world) else { return };
     let rotation = (turn * rotation).normalize();
-    world.entity_mut(ship).insert((Transform::from_translation(at).with_rotation(rotation), Position(at), Rotation(rotation), LinearVelocity(v), crate::planet::bubble::KeepAwake));
+    world.entity_mut(ship).insert((Transform::from_translation(at).with_rotation(rotation), Position(at), Rotation(rotation), LinearVelocity(v), crate::planet::bubble::KeepAwake, RigidBody::Dynamic));
     world.get_mut::<ship::Ship>(ship).unwrap().pilot = Some(player);
     world.entity_mut(player).insert((crate::vehicle::Driving(ship), ColliderDisabled, Transform::from_translation(at)));
     world.get_mut::<Player>(player).unwrap().prev_pos = at;

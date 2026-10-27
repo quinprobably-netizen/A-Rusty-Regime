@@ -47,6 +47,8 @@ def main():
         if "--preview" in sys.argv:
             os.makedirs(SHOTS, exist_ok=True)
             preview(os.path.join(SHOTS, f"{sid}.png"), **s["view"])
+            if "inside" in s:
+                preview(os.path.join(SHOTS, f"{sid}-inside.png"), **s["inside"])
 
 
 if __name__ == "__main__":
