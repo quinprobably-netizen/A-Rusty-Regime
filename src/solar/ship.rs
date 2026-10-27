@@ -20,6 +20,8 @@ use crate::vehicle::{Driving, VehicleSet};
 
 /// Closer than this to the ship's centre, E boards it.
 pub const BOARD_RADIUS: f32 = 8.0;
+/// The fastest the ship may be going for its pilot to leave it, m/s.
+const LEAVE_SPEED: f32 = 20.0;
 /// From the ship's centre down to the bottom of its skids.
 pub const REST_HEIGHT: f32 = 1.45;
 const MASS: f32 = 6000.0;
@@ -211,6 +213,10 @@ pub fn board(
         if let Some(d) = driving {
             let Ok((se, mut ship, stf, vel)) = ships.get_mut(d.0) else { continue };
             input.interact_pressed = false;
+            // No stepping out of a ship at flying speed: a held X or E must not drop the pilot.
+            if vel.0.length() > LEAVE_SPEED {
+                continue;
+            }
             ship.pilot = None;
             ptf.translation = stf.translation + stf.rotation * Vec3::new(-4.5, -0.4, 0.0);
             let up = surface.up(origin.body(ptf.translation));

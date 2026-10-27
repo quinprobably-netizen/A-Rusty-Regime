@@ -2482,6 +2482,19 @@ fn the_ship_takes_its_stick_from_the_input() {
 }
 
 #[test]
+fn the_pilot_cannot_leave_a_ship_at_flying_speed() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    board(&mut app);
+    let ship = app.world_mut().query_filtered::<Entity, With<Ship>>().single(app.world()).unwrap();
+    app.world_mut().entity_mut(ship).insert(LinearVelocity(Vec3::new(0.0, 0.0, -110.0)));
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 0.1);
+    let id = app.world_mut().query_filtered::<Entity, With<Player>>().single(app.world()).unwrap();
+    assert!(app.world().get::<Driving>(id).is_some(), "still flying at 110 m/s");
+}
+
+#[test]
 fn the_ship_lifts_off_hovers_and_lands() {
     let mut app = system_app();
     run(&mut app, 1.0);
