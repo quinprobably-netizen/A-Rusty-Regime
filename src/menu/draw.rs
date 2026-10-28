@@ -46,6 +46,38 @@ pub(super) fn hints(panel: Panel, screen: Screen) -> &'static [(&'static str, &'
     }
 }
 
+/// Roughly how tall each kind of row draws in the list, px (with its gap and margins).
+fn row_height(row: Row) -> f32 {
+    match row {
+        Row::Section(_) => 36.0,
+        Row::Action(..) => 60.0,
+        _ => 34.0,
+    }
+}
+
+/// Where selectable row `cursor` starts and ends down the list, px.
+fn row_span(rows: &[Row], cursor: usize) -> (f32, f32) {
+    let mut y = 0.0;
+    let mut index = 0;
+    for &row in rows {
+        let h = row_height(row);
+        if !matches!(row, Row::Section(_)) {
+            if index == cursor {
+                return (y, y + h);
+            }
+            index += 1;
+        }
+        y += h;
+    }
+    (y, y)
+}
+
+/// How far the list scrolls so the highlighted row sits mid-box (0 while it fits from the top).
+fn list_scroll(rows: &[Row], cursor: usize, visible: f32) -> f32 {
+    let (top, bottom) = row_span(rows, cursor);
+    (top - (visible - (bottom - top)) / 2.0).max(0.0)
+}
+
 fn abs(left: Option<f32>, right: Option<f32>, top: Option<f32>, bottom: Option<f32>) -> Node {
     let v = |o: Option<f32>| o.map_or(Val::Auto, Val::Px);
     Node { position_type: PositionType::Absolute, left: v(left), right: v(right), top: v(top), bottom: v(bottom), flex_direction: FlexDirection::Column, ..default() }
@@ -147,7 +179,9 @@ pub(super) fn rebuild(
 
         // Rows.
         let top = if menu.panel == Panel::Main && screen == Screen::Title { 250.0 } else { 150.0 };
-        p.spawn(Node { position_type: PositionType::Absolute, left: Val::Px(LEFT), top: Val::Px(top), bottom: Val::Px(64.0), width: Val::Px(width), flex_direction: FlexDirection::Column, row_gap: Val::Px(2.0), overflow: Overflow::clip_y(), ..default() }).with_children(|list| {
+        // Settings runs longer than the screen: the list scrolls to keep the highlight in view.
+        let scroll = list_scroll(&rows, menu.cursor, screen_px.y - top - 64.0);
+        p.spawn((Node { position_type: PositionType::Absolute, left: Val::Px(LEFT), top: Val::Px(top), bottom: Val::Px(64.0), width: Val::Px(width), flex_direction: FlexDirection::Column, row_gap: Val::Px(2.0), overflow: Overflow::scroll_y(), ..default() }, ScrollPosition(Vec2::new(0.0, scroll)))).with_children(|list| {
             if matches!(menu.panel, Panel::Wardrobe | Panel::Quartermaster) {
                 return;
             }
@@ -351,6 +385,14 @@ fn bench(p: &mut ChildSpawnerCommands, t: &ComicTheme, rows: &[Row], cursor: usi
         if !note.is_empty() {
             list.spawn((body_text(note, 17.0, t.red, true, t), Node { margin: UiRect::top(Val::Px(10.0)), ..default() }));
         }
+        list.spawn(Node { height: Val::Px(8.0), ..default() });
+        for &row in rows {
+            if let (Row::Action(label, _), Some(i)) = (row, at(row)) {
+                // On paper, so the ink lettering reads over the dark room.
+                list.spawn((Node { align_self: AlignSelf::FlexStart, ..default() }, BackgroundColor(t.paper.with_alpha(0.85))))
+                    .with_children(|b| action_row(b, t, label, i, i == cursor, 26.0));
+            }
+        }
     });
 
     if !gunsmith::customizable(kind) {
@@ -536,6 +578,41 @@ fn tile(p: &mut ChildSpawnerCommands, t: &ComicTheme, row: Row, index: usize, se
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every selectable bench row, BACK included, is drawn as a clickable `RowId` in cursor order.
+    #[test]
+    fn the_bench_draws_every_row() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        let t = ComicTheme::look_a();
+        let kind = crate::weapon::WeaponKind::Revolver;
+        let rows = rows(Panel::Quartermaster, Screen::Paused, [true, false, false, false], gunsmith::customizable(kind));
+        let root = app.world_mut().spawn(Node::default()).id();
+        let loadout = Loadout::default();
+        app.world_mut().commands().entity(root).with_children(|p| bench(p, &t, &rows, 0, kind, &loadout, None, "", Vec2::new(1280.0, 720.0)));
+        app.world_mut().flush();
+        let w = app.world_mut();
+        let mut ids: Vec<usize> = w.query_filtered::<&RowId, With<Button>>().iter(w).map(|r| r.0).collect();
+        ids.sort();
+        assert_eq!(ids, (0..selectable(&rows).count()).collect::<Vec<_>>());
+    }
+
+    /// The long Settings list scrolls so the highlighted row is always inside the visible box.
+    #[test]
+    fn the_settings_list_scrolls_to_the_cursor() {
+        let rows = rows(Panel::Settings, Screen::Paused, [false; 4], false);
+        let n = selectable(&rows).count();
+        let visible = 500.0;
+        assert_eq!(list_scroll(&rows, 0, visible), 0.0);
+        let mut last = 0.0;
+        for cursor in 0..n {
+            let s = list_scroll(&rows, cursor, visible);
+            let (top, bottom) = row_span(&rows, cursor);
+            assert!(s >= last && top >= s && bottom <= s + visible, "row {cursor}: {top}..{bottom} not in {s}..{}", s + visible);
+            last = s;
+        }
+        assert!(last > 0.0, "the list is longer than the box");
+    }
 
     #[test]
     fn wardrobe_columns_split_left_heavy() {

@@ -43,7 +43,8 @@ pub struct EdgesPlugin;
 
 impl Plugin for EdgesPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Toon>().add_systems(Update, follow_toon);
+        // PostUpdate: after the menu has added or removed SSAO and TAA for the same change.
+        app.init_resource::<Toon>().add_systems(PostUpdate, follow_toon);
         if app.get_sub_app(RenderApp).is_none() {
             return;
         }
@@ -56,16 +57,19 @@ impl Plugin for EdgesPlugin {
 }
 
 /// Puts the pass and its prepasses on the player camera while `Toon` is on, and takes them off
-/// after. The depth prepass stays while anti-aliasing needs it.
-fn follow_toon(mut commands: Commands, toon: Res<Toon>, cameras: Query<(Entity, Has<InkEdges>, Has<TemporalAntiAliasing>), With<PlayerCamera>>) {
-    for (entity, has, taa) in &cameras {
+/// after. Prepasses stay while anti-aliasing (depth) or ambient occlusion (both) needs them.
+fn follow_toon(mut commands: Commands, toon: Res<Toon>, cameras: Query<(Entity, Has<InkEdges>, Has<TemporalAntiAliasing>, Has<bevy::pbr::ScreenSpaceAmbientOcclusion>), With<PlayerCamera>>) {
+    for (entity, has, taa, ssao) in &cameras {
         if toon.0 && !has {
             commands.entity(entity).insert((InkEdges::default(), DepthPrepass, NormalPrepass));
         } else if !toon.0 && has {
             let mut e = commands.entity(entity);
-            e.remove::<(InkEdges, NormalPrepass)>();
-            if !taa {
-                e.remove::<DepthPrepass>();
+            e.remove::<InkEdges>();
+            if !ssao {
+                e.remove::<NormalPrepass>();
+                if !taa {
+                    e.remove::<DepthPrepass>();
+                }
             }
         }
     }
@@ -157,6 +161,28 @@ mod tests {
         app.world_mut().resource_mut::<Toon>().0 = false;
         app.update();
         assert_eq!(has(&app), (false, false, false));
+    }
+
+    /// Turning toon off with ambient occlusion on (the menu adds it in the same frame) must leave
+    /// SSAO its normal prepass, or Bevy's SSAO bind groups panic.
+    #[test]
+    fn prepasses_stay_for_ambient_occlusion() {
+        use bevy::pbr::ScreenSpaceAmbientOcclusion;
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, EdgesPlugin));
+        let camera = app.world_mut().spawn(PlayerCamera::default()).id();
+        app.update();
+        app.add_systems(Update, move |mut commands: Commands, toon: Res<Toon>| {
+            if toon.is_changed() && !toon.0 {
+                commands.entity(camera).insert(ScreenSpaceAmbientOcclusion::default());
+            }
+        });
+        app.world_mut().resource_mut::<Toon>().0 = false;
+        app.update();
+        app.update();
+        let e = app.world().entity(camera);
+        assert!(!e.contains::<InkEdges>());
+        assert!(e.contains::<ScreenSpaceAmbientOcclusion>() && e.contains::<NormalPrepass>() && e.contains::<DepthPrepass>());
     }
 
     #[test]
