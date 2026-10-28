@@ -92,7 +92,7 @@ const FAR_DEPTH: u8 = 2;
 /// Above this fraction of an atmosphere's height the sky is raymarched, which holds up from orbit.
 const RAYMARCH_ABOVE: f32 = 0.4;
 /// Extra scattering in every sky; see `medium`.
-const SKY_GAIN: f32 = 2.5;
+const SKY_GAIN: f32 = 1.5;
 /// How bright the background stars are on a black sky (emissive, unaffected by exposure).
 const STAR_SHINE: f32 = 3.0;
 /// How the morning is chosen: the sun this high over the pad, rising.
