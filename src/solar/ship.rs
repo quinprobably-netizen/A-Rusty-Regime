@@ -518,7 +518,7 @@ fn fly(
     origin: Res<Origin>,
     tuning: Res<crate::tuning::Tuning>,
     specs: Res<Ships>,
-    save: Option<Res<crate::loot::Save>>,
+    save: Option<Res<crate::save::Save>>,
     spatial: Option<SpatialQuery>,
     mut controls: ResMut<ShipControls>,
     mut input: ResMut<PlayerInput>,

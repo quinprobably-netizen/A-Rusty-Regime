@@ -540,11 +540,6 @@ impl Rig {
         self.dressed && self.held.map(|h| h.0) == self.weapon
     }
 
-    /// A soldier of `team`, dressed and armed from the roster.
-    pub fn team(team: u8) -> Self {
-        Self { team: Some(team), ..Self::new("") }
-    }
-
     /// Change clothes; applied on the next frame.
     pub fn wear(&mut self, outfit: &str) {
         self.outfit = outfit.into();

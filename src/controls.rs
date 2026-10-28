@@ -17,18 +17,16 @@ pub const HOLD_SECONDS: f32 = 0.3;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Ctx {
     Foot,
-    Vehicle,
     Ship,
     Menu,
 }
 
 impl Ctx {
-    pub const GAME: [Ctx; 3] = [Ctx::Foot, Ctx::Vehicle, Ctx::Ship];
+    pub const GAME: [Ctx; 2] = [Ctx::Foot, Ctx::Ship];
 
     pub fn label(self) -> &'static str {
         match self {
             Ctx::Foot => "On foot",
-            Ctx::Vehicle => "Driving",
             Ctx::Ship => "Flying",
             Ctx::Menu => "Menus",
         }
@@ -55,17 +53,12 @@ pub enum Action {
     Knife,
     /// A weapon slot, 0-based.
     Slot(u8),
-    Flashlight,
     Inspect,
     ToggleView,
     /// Third person: put the camera over the other shoulder.
     SwapShoulder,
     Respawn,
     Pause,
-    // Driving
-    Gas,
-    Brake,
-    Handbrake,
     // Flying (roll left is positive)
     Thrust,
     Lift,
@@ -105,15 +98,11 @@ impl Action {
             Action::PrevWeapon => "Previous weapon",
             Action::Knife => "Knife (draw / put away)",
             Action::Slot(_) => "Weapon 1-10",
-            Action::Flashlight => "Flashlight",
             Action::Inspect => "Inspect weapon",
             Action::ToggleView => "First / third person",
             Action::SwapShoulder => "Swap shoulder (third person)",
             Action::Respawn => "Respawn",
             Action::Pause => "Menu",
-            Action::Gas => "Gas",
-            Action::Brake => "Brake / reverse",
-            Action::Handbrake => "Handbrake",
             Action::Thrust => "Thrust / reverse",
             Action::Lift => "Lift / sink",
             Action::Roll => "Roll",
@@ -198,7 +187,7 @@ const fn moves(ctx: Ctx, k: KeyCode, x: f32, y: f32) -> Bind {
 }
 
 use Action::*;
-use Ctx::{Foot, Menu, Ship as Fly, Vehicle as Drive};
+use Ctx::{Foot, Menu, Ship as Fly};
 use GamepadButton as P;
 use KeyCode as K;
 
@@ -247,8 +236,6 @@ pub const BINDINGS: &[Bind] = &[
     key(Foot, Slot(7), K::Digit8),
     key(Foot, Slot(8), K::Digit9),
     key(Foot, Slot(9), K::Digit0),
-    key(Foot, Flashlight, K::KeyF),
-    pad(Foot, Flashlight, P::DPadUp),
     key(Foot, Inspect, K::KeyV),
     mode(pad(Foot, Inspect, P::DPadDown), Mode::Tap),
     mode(pad(Foot, SwapShoulder, P::DPadDown), Mode::Hold),
@@ -260,26 +247,6 @@ pub const BINDINGS: &[Bind] = &[
     pad(Foot, Respawn, P::Select),
     key(Foot, Pause, K::Escape),
     pad(Foot, Pause, P::Start),
-    // ---- Driving
-    moves(Drive, K::KeyW, 0.0, 1.0),
-    moves(Drive, K::KeyA, -1.0, 0.0),
-    moves(Drive, K::KeyS, 0.0, -1.0),
-    moves(Drive, K::KeyD, 1.0, 0.0),
-    bind(Drive, Move, Source::LeftStick),
-    pad(Drive, Gas, P::RightTrigger2),
-    pad(Drive, Brake, P::LeftTrigger2),
-    key(Drive, Handbrake, K::Space),
-    pad(Drive, Handbrake, P::South),
-    key(Drive, Use, K::KeyE),
-    mode(pad(Drive, Use, P::West), Mode::Hold),
-    key(Drive, Flashlight, K::KeyF),
-    pad(Drive, Flashlight, P::DPadUp),
-    key(Drive, ToggleView, K::KeyT),
-    pad(Drive, ToggleView, P::RightThumb),
-    key(Drive, Respawn, K::Backspace),
-    pad(Drive, Respawn, P::Select),
-    key(Drive, Pause, K::Escape),
-    pad(Drive, Pause, P::Start),
     // ---- Flying: the mouse or right stick pitches and yaws
     key(Fly, Thrust, K::KeyW),
     scaled(key(Fly, Thrust, K::KeyS), -1.0),
@@ -589,6 +556,7 @@ pub fn rows(ctx: Ctx) -> Vec<(&'static str, String, String)> {
 }
 
 /// The README's controls table, one section per context, from `BINDINGS`.
+#[cfg(test)]
 pub fn markdown() -> String {
     let mut out = String::new();
     for ctx in Ctx::GAME {
@@ -610,7 +578,7 @@ mod tests {
     /// slides and pauses". The same button may be a tap for one action and a hold for another.
     #[test]
     fn no_button_does_two_things_in_one_context() {
-        for ctx in [Foot, Drive, Fly, Menu] {
+        for ctx in [Foot, Fly, Menu] {
             let bound: Vec<&Bind> = BINDINGS.iter().filter(|b| b.ctx == ctx).collect();
             for (i, a) in bound.iter().enumerate() {
                 for b in &bound[i + 1..] {
@@ -741,10 +709,6 @@ mod tests {
         assert!(state.value(Pitch) > 0.3, "stick back pitches up: {}", state.value(Pitch));
         assert!(state.value(Yaw) < -0.5, "RB yaws right: {}", state.value(Yaw));
         assert!(state.value(Lift) < -0.2, "right stick down sinks: {}", state.value(Lift));
-        let mut state = ActionState::default();
-        read_pad(Drive, &pad, &mut state);
-        assert!((state.value(Gas) - 0.6).abs() < 1e-4, "RT is gas: {}", state.value(Gas));
-        assert!(state.movement.x > 0.5, "the stick steers: {}", state.movement);
     }
 
     /// In menus the left stick steps like the D-pad, one way at a time: pushing down is Down only.

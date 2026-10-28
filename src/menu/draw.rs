@@ -5,7 +5,6 @@
 // speech bubble saying what the highlighted main-menu row does, and the ink hint strip along the
 // bottom with banked money. Rebuilt from scratch whenever the menu state changes.
 
-use bevy::prelude::*;
 
 use super::*;
 use crate::comic::{body_text, bubble, display_text, halftone_layer, hint_strip, panel, stat_bar, ComicTheme, Halftone, Tail};

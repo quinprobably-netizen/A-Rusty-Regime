@@ -53,7 +53,6 @@ mantle_max_height = 1.5
 mantle_time = 0.3
 
 # Rocket launcher (weapon 1)
-rocket_damage = 90.0
 rocket_speed = 24.0
 rocket_cooldown = 0.8
 rocket_mag = 4               # rockets in the tube, TF2 style
@@ -64,11 +63,6 @@ prop_knockback = 14.0
 prop_ref_mass = 40.0
 push_strength = 0.6
 
-# Shooting range: soldier dummies and flying drones
-target_health = 100.0
-drone_health = 60.0
-target_respawn = 3.0        # seconds a dead target stays down
-drone_speed = 2.5           # m/s along their patrol loop
 
 # Look and controller
 mouse_sensitivity = 0.002
@@ -189,7 +183,6 @@ reload = 2.2
 scope_mag = 3
 
 [grenade]                   # weapon 8: Thumper, bouncy frags on a fuse, burst on a direct hit
-damage = 100.0
 radius = 3.5
 speed = 22.0
 lift = 2.5                  # upward m/s added for a lob
@@ -202,7 +195,6 @@ mag = 1
 reload = 1.8
 
 [harpoon]                   # weapon 9: spear yanks you to the wall it hits, or yanks what it hits to you
-damage = 45.0
 speed = 70.0
 gravity = 4.0
 life = 1.2
@@ -213,39 +205,15 @@ mag = 1
 reload = 1.6
 
 [fist]                      # weapon 0: power fist, knocks things away; punch any surface to launch off it
-damage = 70.0
 range = 2.4
 knockback = 16.0
 launch = 11.0
 cooldown = 0.7
 
 [knife]                     # V: the starter knife, a quick slash with short reach
-damage = 55.0
 range = 2.1
 knockback = 3.0
 cooldown = 0.42
-
-[island]                    # RUST_REGIME_LEVEL=island; the default level is the solar system
-seed = 7
-size = 4096                 # meters per side
-cell = 4                    # meters per heightmap sample (8 on a weak GPU)
-core = 1500                 # meters; the stage 1 sites stay inside this
-height = 260                # peak height in meters
-water_level = 0.0
-
-[soldier]                   # patrolling soldiers on the island
-health = 100
-speed = 3.5                 # m/s along their route
-sight = 40                  # meters; they need a clear line to you
-fire_interval = 0.6
-damage = 12
-spread = 0.02               # radians of aim error
-forget = 4.0                # seconds out of sight before they resume patrol
-hold = 12                   # meters; they close in on you to about this
-bullet_speed = 750          # m/s
-hearing = 150               # m; a gunshot this close sends them to look
-squad_radius = 60           # m; a soldier who spots you tells mates this close
-cover_time = 2.5            # seconds behind cover after being hit
 
 [player]
 health = 100
@@ -256,24 +224,6 @@ regen_cap = 0.6             # regen stops at this fraction of max; medkits heal 
 bleed_threshold = 15        # a hit this big starts bleeding
 bleed_rate = 2.0            # hp per second while bleeding
 bleed_time = 8.0            # seconds, or until a medkit
-
-[vehicle]                   # Humvee, jeep and dirt bike (E to enter, WASD drive, Space handbrake)
-enter_radius = 4.0          # meters from a vehicle to press E
-mu = 1.0                    # peak tyre grip as a fraction of wheel load
-rolling = 0.02              # rolling resistance
-bike_upright = 6.0          # how fast a bike rolls toward its balanced lean
-offroad_grip = 0.7          # grip off the roads, as a fraction of mu
-crash_speed = 9.0           # m/s of sudden speed change before a crash does damage
-wreck_time = 30             # seconds before a wreck is replaced at its spot
-
-[loot]                      # extraction loop
-pickup_radius = 1.6
-respawn = 300               # seconds a taken cache stays gone
-extract_time = 8            # seconds standing on a pad to bank your haul
-
-[match]                     # RUST_REGIME_MODE=6v6: you and five bots against six at the fort
-kills_to_win = 30
-bots_per_team = 6
 
 [grapple]                   # ability: G / mouse 4 fires, again or jump lets go. Titanfall 2 ships 50 power to fire of 100, 50/s use, 28 m rope
 range = 30.0
@@ -288,7 +238,7 @@ release_boost = 2.0         # m/s added along your velocity when you jump off th
 arrive_distance = 1.5
 gravity_cancel = 0.8        # how much of gravity the taut rope carries while you are pulled
 
-[graphics]                  # the look: sky and post effects, texture tiling, vegetation
+[graphics]                  # the look: sky and post effects
 atmosphere = true           # physical sky and sun; off = plain blue sky, cheaper
 toon = true                 # comic shading: banded light, shadow dots, ink outlines
 ssao = true                 # screen-space ambient occlusion (off under toon)
@@ -296,16 +246,6 @@ taa = true                  # temporal anti-aliasing
 bloom = true
 exposure = 15               # camera EV100, 15 is full sun; lower = brighter
 shadow_distance = 500       # m; lower if the frame rate drops
-grass_tile = 3              # metres per texture tile
-dirt_tile = 4
-rock_tile = 6
-sand_tile = 3
-wave_height = 0.25
-wave_length = 9
-trees = 1.0                 # tree and scrub density multiplier, 0 for none
-grass = true                # grass blades around you
-grass_density = 4000        # blades per 24 m cell
-tree_range = 900            # m, trees fade out past this
 
 [sound]                     # volumes 0..1; drop CC0 .ogg files in assets/sounds/ (rifle, shotgun, ...) to replace the synthesized ones
 master = 0.8
@@ -314,17 +254,9 @@ effects = 0.7
 engine = 0.6
 ambience = 0.5
 
-[world]                     # time of day and weather
-start_hour = 15             # the game starts mid-afternoon
-day_minutes = 48            # real minutes per game day; 0 stops the clock
-weather = true              # clear, overcast, rain and fog come and go
-weather_minutes = 6         # roughly how long each lasts
-sky = "auto"                # or hold one: "clear", "overcast", "rain", "fog"
-
 [terrain]
 cell = 0.5          # finest terrain cell, m; 1 on a weak machine
 split = 2.5         # a chunk splits when you will be nearer than this many chunk sizes in a second; merges past 3
 bubble = 400        # m, solid ground and awake physics around you
-site_range = 1500   # m, sites load within this and unload 500 m further out
 origin_step = 2000  # m, the world re-centres on you after this far
 workers = 4         # chunk builds in flight

@@ -7,7 +7,7 @@ use bevy::prelude::*;
 
 use crate::controller::{ControllerSet, MoveState, Player};
 use crate::input::{PlayerInput, Rumble, ViewAngles};
-use crate::loot::Save;
+use crate::save::Save;
 use crate::tuning::{Gun, Tuning};
 
 pub struct WeaponPlugin;
@@ -15,10 +15,8 @@ pub struct WeaponPlugin;
 impl Plugin for WeaponPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<Rumble>()
-            .add_message::<Damage>()
             .add_message::<WeaponFired>()
             .add_message::<Detonate>()
-            .add_message::<HitConfirm>()
             .init_resource::<Muzzle>()
             .init_resource::<Arsenal>()
             .init_resource::<crate::gunsmith::Loadout>()
@@ -173,14 +171,6 @@ impl Arsenal {
     }
 }
 
-/// Something took a hit. `targets` turns this into health loss.
-#[derive(Message)]
-pub struct Damage {
-    pub entity: Entity,
-    pub amount: f32,
-    pub impulse: Vec3,
-}
-
 /// The current weapon just fired; the viewmodel kicks back by `kick`.
 #[derive(Message)]
 pub struct WeaponFired {
@@ -192,7 +182,6 @@ pub struct WeaponFired {
 pub struct Detonate {
     pub center: Vec3,
     pub radius: f32,
-    pub damage: f32,
     pub self_knockback: f32,
 }
 
@@ -252,16 +241,9 @@ pub fn recoil_pattern(slot: usize, n: u32) -> (f32, f32) {
     (climb, drift)
 }
 
-/// A player bullet landed on a target: the sound and crosshair tick, higher for a head.
-#[derive(Message)]
-pub struct HitConfirm {
-    pub head: bool,
-}
-
 /// What a bullet hit, for the sparks, dust or chips it throws.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Surface {
-    Flesh,
     Metal,
     Dirt,
     Stone,
@@ -310,10 +292,9 @@ fn point_seed(p: Vec3) -> u64 {
 }
 
 /// Sparks, dust or chips thrown back off `point` along `normal`; a head hit throws more.
-fn spawn_impact(commands: &mut Commands, fx: &FxAssets, point: Vec3, normal: Vec3, surface: Surface, head: bool) {
+fn spawn_impact(commands: &mut Commands, fx: &FxAssets, point: Vec3, normal: Vec3, surface: Surface) {
     let mut seed = point_seed(point);
     let (material, count, speed, gravity, size, life) = match surface {
-        Surface::Flesh => (&fx.hit_mat, if head { 9 } else { 5 }, 3.5, 7.0, Vec3::new(0.012, 0.012, 0.05), 0.3),
         Surface::Metal => (&fx.spark_mat, 7, 6.0, 6.0, Vec3::new(0.008, 0.008, 0.07), 0.25),
         Surface::Dirt => (&fx.dust_mat, 6, 2.5, 9.8, Vec3::splat(0.045), 0.6),
         Surface::Stone => (&fx.chip_mat, 5, 4.0, 9.8, Vec3::splat(0.03), 0.5),
@@ -374,7 +355,6 @@ pub struct FxAssets {
     tracer_mat: Handle<StandardMaterial>,
     brass_mat: Handle<StandardMaterial>,
     spark_mat: Handle<StandardMaterial>,
-    hit_mat: Handle<StandardMaterial>,
     dust_mat: Handle<StandardMaterial>,
     chip_mat: Handle<StandardMaterial>,
 }
@@ -442,7 +422,6 @@ fn load_assets(
         }),
         brass_mat: materials.add(StandardMaterial { base_color: Color::srgb(0.8, 0.6, 0.2), metallic: 1.0, perceptual_roughness: 0.35, ..default() }),
         spark_mat: materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.85, 0.5), emissive: LinearRgba::rgb(14.0, 8.0, 2.0), unlit: true, ..default() }),
-        hit_mat: materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.35, 0.2), emissive: LinearRgba::rgb(9.0, 2.0, 0.6), unlit: true, ..default() }),
         dust_mat: materials.add(StandardMaterial { base_color: Color::srgb(0.45, 0.38, 0.3), perceptual_roughness: 1.0, ..default() }),
         chip_mat: materials.add(StandardMaterial { base_color: Color::srgb(0.5, 0.5, 0.5), perceptual_roughness: 0.9, ..default() }),
     });
@@ -528,10 +507,10 @@ fn fire(
         Option<Single<&Transform, (With<crate::camera::PlayerCamera>, Without<Player>)>>,
     ),
     mut bodies: Query<(&RigidBody, &mut LinearVelocity, &ComputedMass), Without<Player>>,
-    writers: (MessageWriter<Damage>, MessageWriter<WeaponFired>, MessageWriter<Rumble>),
+    writers: (MessageWriter<WeaponFired>, MessageWriter<Rumble>),
     mut seed: Local<u64>,
 ) {
-    let (mut damage, mut fired, mut rumble) = writers;
+    let (mut fired, mut rumble) = writers;
     let t = &*tuning;
     let dt = time.delta_secs();
     arsenal.cooldown -= dt;
@@ -634,13 +613,12 @@ fn fire(
             fired.write(WeaponFired { kick: 0.8 });
             let Some(hit) = spatial.cast_ray(eye, Dir3::new(forward).unwrap(), f.range, true, &filter) else { return };
             recoil.hitstop = 0.06;
-            damage.write(Damage { entity: hit.entity, amount: f.damage, impulse: forward * f.knockback + Vec3::Y * 2.0 });
             if let Ok((body, mut lv, mass)) = bodies.get_mut(hit.entity)
                 && *body == RigidBody::Dynamic
             {
                 lv.0 += (forward * f.knockback + Vec3::Y * 2.0) * (t.prop_ref_mass * mass.inverse()).min(1.0);
             }
-            // Punching anything throws you back off it: off a wall, off the floor, off a soldier.
+            // Punching anything throws you back off it: off a wall, off the floor.
             p.velocity += -forward * f.launch;
             p.knockback_lock = 0.1;
             if p.state != MoveState::Mantle {
@@ -655,7 +633,6 @@ fn fire(
             fired.write(WeaponFired { kick: 0.5 });
             let Some(hit) = spatial.cast_ray(eye, Dir3::new(forward).unwrap(), k.range, true, &filter) else { return };
             recoil.hitstop = 0.04;
-            damage.write(Damage { entity: hit.entity, amount: k.damage, impulse: forward * k.knockback });
             if let Ok((body, mut lv, mass)) = bodies.get_mut(hit.entity)
                 && *body == RigidBody::Dynamic
             {
@@ -738,11 +715,11 @@ fn fly_rockets(
         };
         commands.entity(entity).despawn();
         let center = tf.translation + dir * hit.distance + hit.normal * 0.05;
-        detonate.write(Detonate { center, radius: t.blast_radius, damage: t.rocket_damage, self_knockback: t.self_knockback });
+        detonate.write(Detonate { center, radius: t.blast_radius, self_knockback: t.self_knockback });
     }
 }
 
-/// Frags lob under gravity, bounce off the world, and burst on a fuse or on hitting a target.
+/// Frags lob under gravity, bounce off the world, and burst on a fuse.
 fn fly_grenades(
     mut commands: Commands,
     time: Res<Time>,
@@ -750,7 +727,6 @@ fn fly_grenades(
     spatial: SpatialQuery,
     mut shells: Query<(Entity, &mut GrenadeShell, &mut Transform)>,
     player: Single<Entity, With<Player>>,
-    targets: Query<(), With<crate::targets::Target>>,
     mut detonate: MessageWriter<Detonate>,
 ) {
     let g = &tuning.grenade;
@@ -760,28 +736,24 @@ fn fly_grenades(
         shell.fuse -= dt;
         shell.velocity.y -= g.gravity * dt;
         let step = shell.velocity * dt;
-        let mut burst = shell.fuse <= 0.0;
+        let burst = shell.fuse <= 0.0;
         if let Ok(dir) = Dir3::new(step)
             && let Some(hit) = spatial.cast_ray(tf.translation, dir, step.length(), true, &filter)
         {
             tf.translation += dir * hit.distance + hit.normal * 0.04;
-            if targets.contains(hit.entity) {
-                burst = true;
-            } else {
-                let v = shell.velocity;
-                shell.velocity = (v - 2.0 * v.dot(hit.normal) * hit.normal) * g.bounce;
-            }
+            let v = shell.velocity;
+            shell.velocity = (v - 2.0 * v.dot(hit.normal) * hit.normal) * g.bounce;
         } else {
             tf.translation += step;
         }
         if burst {
             commands.entity(entity).despawn();
-            detonate.write(Detonate { center: tf.translation, radius: g.radius, damage: g.damage, self_knockback: g.self_knockback });
+            detonate.write(Detonate { center: tf.translation, radius: g.radius, self_knockback: g.self_knockback });
         }
     }
 }
 
-/// The harpoon's spear: stuck in the world it yanks you to it; in a target or a prop it yanks that to you.
+/// The harpoon's spear: stuck in the world it yanks you to it; in a prop it yanks that to you.
 #[allow(clippy::too_many_arguments)]
 fn fly_spears(
     mut commands: Commands,
@@ -790,9 +762,7 @@ fn fly_spears(
     spatial: SpatialQuery,
     mut spears: Query<(Entity, &mut Spear, &mut Transform), Without<Player>>,
     mut player: Single<(Entity, &mut Player, &Transform)>,
-    targets: Query<(), With<crate::targets::Target>>,
     mut bodies: Query<(&RigidBody, &mut LinearVelocity, &ComputedMass), Without<Player>>,
-    mut damage: MessageWriter<Damage>,
     mut rumble: MessageWriter<Rumble>,
 ) {
     let h = &tuning.harpoon;
@@ -816,8 +786,7 @@ fn fly_spears(
         let point = tf.translation + dir * hit.distance;
         let to_player = (player_tf.translation - point).normalize_or(Vec3::Y);
         let dynamic = bodies.get(hit.entity).is_ok_and(|(b, _, _)| *b == RigidBody::Dynamic);
-        if targets.contains(hit.entity) || dynamic {
-            damage.write(Damage { entity: hit.entity, amount: h.damage, impulse: to_player * h.pull_target + Vec3::Y * 2.0 });
+        if dynamic {
             if let Ok((body, mut lv, mass)) = bodies.get_mut(hit.entity)
                 && *body == RigidBody::Dynamic
             {
@@ -845,7 +814,6 @@ fn detonate(
     mut blasts: MessageReader<Detonate>,
     mut player: Single<(Entity, &mut Player, &Transform)>,
     mut bodies: Query<(&RigidBody, &Position, &mut LinearVelocity, &ComputedMass), Without<Player>>,
-    mut damage: MessageWriter<Damage>,
     mut rumble: MessageWriter<Rumble>,
 ) {
     let t = &*tuning;
@@ -866,14 +834,13 @@ fn detonate(
         }
         rumble.write(Rumble { strength: (1.0 - d / (b.radius * 3.0)).max(0.15), seconds: 0.2 });
 
-        // Props and targets
+        // Props
         let blast = Collider::sphere(b.radius);
         for e in spatial.shape_intersections(&blast, center, Quat::IDENTITY, &filter) {
             let Ok((body, pos, mut lv, mass)) = bodies.get_mut(e) else { continue };
             let offset = pos.0 - center;
             let falloff = 1.0 - 0.5 * (offset.length() / b.radius).min(1.0);
             let push = (offset.normalize_or(Vec3::Y) + Vec3::Y * 0.3) * t.prop_knockback * falloff;
-            damage.write(Damage { entity: e, amount: b.damage * falloff, impulse: push });
             if *body != RigidBody::Dynamic {
                 continue;
             }
@@ -920,13 +887,10 @@ fn fly_bullets(
     fx: Option<Res<FxAssets>>,
     mut materials: Option<ResMut<Assets<StandardMaterial>>>,
     player: Single<Entity, With<Player>>,
-    wind: Option<Res<crate::world::Wind>>,
     mut bullets: Query<(Entity, &mut Bullet, &mut Transform)>,
-    targets: Query<(&crate::targets::Target, &Transform), Without<Bullet>>,
     cover: Query<&Penetrable>,
     mut bodies: Query<(&RigidBody, &mut LinearVelocity, &ComputedMass), (Without<Player>, Without<Bullet>)>,
-    mut damage: MessageWriter<Damage>,
-    (mut hits, mut confirm): (MessageWriter<crate::health::PlayerHit>, MessageWriter<HitConfirm>),
+    mut hits: MessageWriter<crate::health::PlayerHit>,
     surfaces: Query<(Has<crate::planet::Chunk>, Has<crate::solar::ship::Ship>, Has<crate::solar::Fixture>)>,
 ) {
     let dt = time.delta_secs();
@@ -939,10 +903,9 @@ fn fly_bullets(
             commands.entity(entity).despawn();
             continue;
         }
-        // Drag acts on the bullet's speed through the air, so a crosswind pushes it sideways.
-        let air = wind.as_ref().map_or(Vec3::ZERO, |w| w.0);
-        let rel = b.velocity - air;
-        b.velocity = air + rel * (-b.drag * rel.length() * dt).exp();
+        // Drag acts on the bullet's speed through the air.
+        let drag = b.drag * b.velocity.length();
+        b.velocity *= (-drag * dt).exp();
         let speed = b.velocity.length();
         let mut pos = tf.translation;
         let mut remaining = speed * dt;
@@ -958,38 +921,20 @@ fn fly_bullets(
                 stopped = true;
                 break;
             }
-            // Head and leg zones on the capsule targets.
-            let target_hit = targets.contains(hit.entity);
-            let zone = targets.get(hit.entity).map_or(1.0, |(_, ttf)| {
-                let local = point.y - (ttf.translation.y - crate::targets::DUMMY_HEIGHT * 0.5);
-                if local > crate::targets::DUMMY_HEIGHT - 0.35 {
-                    t.headshot
-                } else if local < 0.85 {
-                    t.legshot
-                } else {
-                    1.0
-                }
-            });
-            damage.write(Damage { entity: hit.entity, amount: b.damage * energy * zone, impulse: dir * b.impulse * energy });
             if let Ok((body, mut lv, mass)) = bodies.get_mut(hit.entity)
                 && *body == RigidBody::Dynamic
             {
                 let scale = (t.prop_ref_mass * mass.inverse()).min(1.0);
                 lv.0 += dir * b.impulse * energy * scale;
             }
-            let head = target_hit && zone >= t.headshot;
-            if target_hit && b.owner == *player {
-                confirm.write(HitConfirm { head });
-            }
             if let (Some(fx), Some(materials)) = (&fx, materials.as_mut()) {
                 let surface = match surfaces.get(hit.entity) {
-                    _ if target_hit => Surface::Flesh,
                     Ok((true, _, _)) => Surface::Dirt,
                     Ok((_, true, _)) | Ok((_, _, true)) => Surface::Metal,
                     _ => Surface::Stone,
                 };
                 spawn_blast(&mut commands, fx, materials, point + hit.normal * 0.03, 0.06);
-                spawn_impact(&mut commands, fx, point, hit.normal, surface, head);
+                spawn_impact(&mut commands, fx, point, hit.normal, surface);
             }
             // Through thin cover, slower, up to twice.
             match cover.get(hit.entity) {

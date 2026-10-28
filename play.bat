@@ -9,6 +9,5 @@ if errorlevel 1 (
     echo COULD NOT UPDATE: you are about to play the OLD version. Run "git status" to see why.
     pause
 )
-if not "%~1"=="" set RUST_REGIME_LEVEL=%~1
 cargo run --release
 pause

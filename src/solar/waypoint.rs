@@ -108,7 +108,7 @@ fn update_markers(
     solar: Res<Solar>,
     origin: Res<Origin>,
     bases: Res<Bases>,
-    save: Option<Res<crate::loot::Save>>,
+    save: Option<Res<crate::save::Save>>,
     camera: Query<(&Transform, &Projection), With<PlayerCamera>>,
     window: Query<&Window, With<PrimaryWindow>>,
     placed: Query<(&Transform, &Base)>,

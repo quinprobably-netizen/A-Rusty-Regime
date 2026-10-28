@@ -63,7 +63,6 @@ pub struct Tuning {
     pub mantle_time: f32,
 
     // Rocket launcher
-    pub rocket_damage: f32,
     pub rocket_speed: f32,
     pub rocket_cooldown: f32,
     pub blast_radius: f32,
@@ -88,25 +87,12 @@ pub struct Tuning {
     pub knife: KnifeTuning,
 
     // Shooting range targets
-    pub target_health: f32,
     /// Damage multipliers for hits above the shoulders and below the hips.
-    pub headshot: f32,
-    pub legshot: f32,
-    pub drone_health: f32,
-    pub target_respawn: f32,
-    pub drone_speed: f32,
 
-    // Island level (table `[island]`)
-    pub island: Island,
-    pub soldier: Soldier,
     pub player: PlayerTuning,
-    pub vehicle: VehicleTuning,
-    pub loot: LootTuning,
-    pub r#match: MatchTuning,
     pub grapple: GrappleTuning,
     pub graphics: Graphics,
     pub sound: Sound,
-    pub world: WorldTuning,
     pub terrain: TerrainTuning,
 
     // Look
@@ -186,7 +172,6 @@ impl Default for Tuning {
             mantle_max_height: 1.5,
             mantle_time: 0.3,
 
-            rocket_damage: 90.0,
             rocket_speed: 24.0,
             rocket_cooldown: 0.8,
             blast_radius: 3.2,
@@ -316,24 +301,12 @@ impl Default for Tuning {
             fist: FistTuning::default(),
             knife: KnifeTuning::default(),
 
-            target_health: 100.0,
-            headshot: 2.5,
-            legshot: 0.6,
-            drone_health: 60.0,
-            target_respawn: 3.0,
-            drone_speed: 2.5,
 
-            island: Island::default(),
-            soldier: Soldier::default(),
             terrain: TerrainTuning::default(),
             player: PlayerTuning::default(),
-            vehicle: VehicleTuning::default(),
-            loot: LootTuning::default(),
-            r#match: MatchTuning::default(),
             grapple: GrappleTuning::default(),
             graphics: Graphics::default(),
             sound: Sound::default(),
-            world: WorldTuning::default(),
 
             mouse_sensitivity: 0.002,
             stick_yaw_speed: 4.5,
@@ -392,7 +365,6 @@ pub struct Gun {
 #[derive(Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct GrenadeTuning {
-    pub damage: f32,
     pub radius: f32,
     pub speed: f32,
     /// Upward speed added at launch, for a lob.
@@ -409,7 +381,7 @@ pub struct GrenadeTuning {
 
 impl Default for GrenadeTuning {
     fn default() -> Self {
-        Self { damage: 100.0, radius: 3.5, speed: 22.0, lift: 2.5, gravity: 12.0, bounce: 0.45, fuse: 2.2, self_knockback: 8.2, cooldown: 0.6, mag: 1, reload: 1.8 }
+        Self { radius: 3.5, speed: 22.0, lift: 2.5, gravity: 12.0, bounce: 0.45, fuse: 2.2, self_knockback: 8.2, cooldown: 0.6, mag: 1, reload: 1.8 }
     }
 }
 
@@ -417,7 +389,6 @@ impl Default for GrenadeTuning {
 #[derive(Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct HarpoonTuning {
-    pub damage: f32,
     pub speed: f32,
     pub gravity: f32,
     /// Seconds the spear flies before it gives up.
@@ -433,7 +404,7 @@ pub struct HarpoonTuning {
 
 impl Default for HarpoonTuning {
     fn default() -> Self {
-        Self { damage: 45.0, speed: 70.0, gravity: 4.0, life: 1.2, pull_player: 17.0, pull_target: 14.0, cooldown: 0.4, mag: 1, reload: 1.6 }
+        Self { speed: 70.0, gravity: 4.0, life: 1.2, pull_player: 17.0, pull_target: 14.0, cooldown: 0.4, mag: 1, reload: 1.6 }
     }
 }
 
@@ -441,7 +412,6 @@ impl Default for HarpoonTuning {
 #[derive(Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct FistTuning {
-    pub damage: f32,
     pub range: f32,
     pub knockback: f32,
     /// Speed you get away from whatever you punched.
@@ -451,7 +421,7 @@ pub struct FistTuning {
 
 impl Default for FistTuning {
     fn default() -> Self {
-        Self { damage: 70.0, range: 2.4, knockback: 16.0, launch: 11.0, cooldown: 0.7 }
+        Self { range: 2.4, knockback: 16.0, launch: 11.0, cooldown: 0.7 }
     }
 }
 
@@ -459,7 +429,6 @@ impl Default for FistTuning {
 #[derive(Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct KnifeTuning {
-    pub damage: f32,
     pub range: f32,
     pub knockback: f32,
     pub cooldown: f32,
@@ -467,63 +436,13 @@ pub struct KnifeTuning {
 
 impl Default for KnifeTuning {
     fn default() -> Self {
-        Self { damage: 55.0, range: 2.1, knockback: 3.0, cooldown: 0.42 }
+        Self { range: 2.1, knockback: 3.0, cooldown: 0.42 }
     }
 }
 
 impl Default for Gun {
     fn default() -> Self {
         Tuning::default().rifle
-    }
-}
-
-/// The island level: a seeded heightmap `size` meters square sampled every
-/// `cell` meters, peaks up to `height`, water at `water_level`. The stage 1
-/// sites stay inside `core` meters of the center.
-#[derive(Deserialize, Clone, Debug, PartialEq)]
-#[serde(default)]
-pub struct Island {
-    pub seed: u32,
-    pub size: f32,
-    pub cell: f32,
-    pub core: f32,
-    pub height: f32,
-    pub water_level: f32,
-}
-
-impl Default for Island {
-    fn default() -> Self {
-        Self { seed: 7, size: 4096.0, cell: 4.0, core: 1500.0, height: 260.0, water_level: 0.0 }
-    }
-}
-
-/// Patrolling soldiers (table `[soldier]`).
-#[derive(Deserialize, Clone, Debug, PartialEq)]
-#[serde(default)]
-pub struct Soldier {
-    pub health: f32,
-    pub speed: f32,
-    pub sight: f32,
-    pub fire_interval: f32,
-    pub damage: f32,
-    /// Radians of aim error.
-    pub spread: f32,
-    pub forget: f32,
-    /// How close a soldier gets to an enemy it can see.
-    pub hold: f32,
-    /// Their bullets' muzzle velocity.
-    pub bullet_speed: f32,
-    /// How far a gunshot carries (m): soldiers who hear one go to look.
-    pub hearing: f32,
-    /// A soldier who sees an enemy calls it out to squad mates this close (m).
-    pub squad_radius: f32,
-    /// Seconds a soldier stays in cover after being hit before peeking out.
-    pub cover_time: f32,
-}
-
-impl Default for Soldier {
-    fn default() -> Self {
-        Self { health: 100.0, speed: 3.5, sight: 40.0, fire_interval: 0.6, damage: 12.0, spread: 0.02, forget: 4.0, hold: 12.0, bullet_speed: 750.0, hearing: 150.0, squad_radius: 60.0, cover_time: 2.5 }
     }
 }
 
@@ -537,8 +456,6 @@ pub struct TerrainTuning {
     pub split: f32,
     /// Solid ground and awake physics within this of the player (m).
     pub bubble: f32,
-    /// Sites load within this (m) and unload 500 m further out.
-    pub site_range: f32,
     /// The world re-centres on the player after this far (m).
     pub origin_step: f32,
     /// Chunk builds in flight.
@@ -547,7 +464,7 @@ pub struct TerrainTuning {
 
 impl Default for TerrainTuning {
     fn default() -> Self {
-        Self { cell: 0.5, split: 2.5, bubble: 400.0, site_range: 1500.0, origin_step: 2000.0, workers: 4 }
+        Self { cell: 0.5, split: 2.5, bubble: 400.0, origin_step: 2000.0, workers: 4 }
     }
 }
 
@@ -577,62 +494,6 @@ pub struct PlayerTuning {
 impl Default for PlayerTuning {
     fn default() -> Self {
         Self { health: 100.0, regen_delay: 5.0, regen_rate: 20.0, respawn_delay: 2.0, regen_cap: 0.6, bleed_threshold: 15.0, bleed_rate: 2.0, bleed_time: 8.0 }
-    }
-}
-
-/// Vehicles (table `[vehicle]`).
-#[derive(Deserialize, Clone, Debug, PartialEq)]
-#[serde(default)]
-pub struct VehicleTuning {
-    /// How close you must stand to press E.
-    pub enter_radius: f32,
-    /// Peak tyre grip as a fraction of the wheel load.
-    pub mu: f32,
-    pub rolling: f32,
-    /// How fast a bike rolls toward its balanced lean (1/s).
-    pub bike_upright: f32,
-    /// Grip off the roads, as a fraction of `mu` (grass and dirt hold less than a packed road).
-    pub offroad_grip: f32,
-    /// A speed change bigger than this in one tick (m/s) is a crash that damages the vehicle.
-    pub crash_speed: f32,
-    /// Seconds a wreck sits before a fresh vehicle replaces it at its spot.
-    pub wreck_time: f32,
-}
-
-impl Default for VehicleTuning {
-    fn default() -> Self {
-        Self { enter_radius: 4.0, mu: 1.0, rolling: 0.02, bike_upright: 6.0, offroad_grip: 0.7, crash_speed: 9.0, wreck_time: 30.0 }
-    }
-}
-
-/// The extraction loop (table `[loot]`).
-#[derive(Deserialize, Clone, Debug, PartialEq)]
-#[serde(default)]
-pub struct LootTuning {
-    pub pickup_radius: f32,
-    /// Seconds a taken cache stays gone.
-    pub respawn: f32,
-    /// Seconds on a pad to extract.
-    pub extract_time: f32,
-}
-
-impl Default for LootTuning {
-    fn default() -> Self {
-        Self { pickup_radius: 1.6, respawn: 300.0, extract_time: 8.0 }
-    }
-}
-
-/// The 6v6 mode (table `[match]`).
-#[derive(Deserialize, Clone, Debug, PartialEq)]
-#[serde(default)]
-pub struct MatchTuning {
-    pub kills_to_win: u32,
-    pub bots_per_team: u32,
-}
-
-impl Default for MatchTuning {
-    fn default() -> Self {
-        Self { kills_to_win: 30, bots_per_team: 6 }
     }
 }
 
@@ -678,7 +539,7 @@ impl Default for GrappleTuning {
     }
 }
 
-/// The look (table `[graphics]`): the physical sky and post effects, texture tiling and the vegetation.
+/// The look (table `[graphics]`): the physical sky and post effects.
 #[derive(Deserialize, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct Graphics {
@@ -691,20 +552,6 @@ pub struct Graphics {
     /// Camera EV100; 15 is full sun.
     pub exposure: f32,
     pub shadow_distance: f32,
-    /// Metres per texture tile.
-    pub grass_tile: f32,
-    pub dirt_tile: f32,
-    pub rock_tile: f32,
-    pub sand_tile: f32,
-    pub wave_height: f32,
-    pub wave_length: f32,
-    /// Multiplies the tree and scrub density; 0 for none.
-    pub trees: f32,
-    pub grass: bool,
-    /// Grass blades per 24 m cell.
-    pub grass_density: u32,
-    /// Trees fade out past this (m).
-    pub tree_range: f32,
 }
 
 impl Default for Graphics {
@@ -717,39 +564,7 @@ impl Default for Graphics {
             bloom: true,
             exposure: 15.0,
             shadow_distance: 500.0,
-            grass_tile: 3.0,
-            dirt_tile: 4.0,
-            rock_tile: 6.0,
-            sand_tile: 3.0,
-            wave_height: 0.25,
-            wave_length: 9.0,
-            trees: 1.0,
-            grass: true,
-            grass_density: 4000,
-            tree_range: 900.0,
         }
-    }
-}
-
-/// Time and weather (table `[world]`).
-#[derive(Deserialize, Clone, Debug, PartialEq)]
-#[serde(default)]
-pub struct WorldTuning {
-    /// The hour the game starts at.
-    pub start_hour: f32,
-    /// Real minutes per game day; 0 stops the clock.
-    pub day_minutes: f32,
-    /// Weather changes; false keeps it clear.
-    pub weather: bool,
-    /// Roughly how long each sky lasts (real minutes).
-    pub weather_minutes: f32,
-    /// "auto", or hold one sky: clear, overcast, rain or fog.
-    pub sky: String,
-}
-
-impl Default for WorldTuning {
-    fn default() -> Self {
-        Self { start_hour: 15.0, day_minutes: 48.0, weather: true, weather_minutes: 6.0, sky: "auto".into() }
     }
 }
 
@@ -826,7 +641,7 @@ mod tests {
     #[test]
     fn terrain_table_defaults() {
         let t = TerrainTuning::default();
-        assert_eq!((t.cell, t.split, t.bubble, t.site_range, t.origin_step, t.workers), (0.5, 2.5, 400.0, 1500.0, 2000.0, 4));
+        assert_eq!((t.cell, t.split, t.bubble, t.origin_step, t.workers), (0.5, 2.5, 400.0, 2000.0, 4));
         assert_eq!(t.merge(), 3.0);
     }
 }

@@ -16,7 +16,7 @@ use super::ship;
 use crate::controller::Player;
 use crate::health::PlayerHealth;
 use crate::input::PlayerInput;
-use crate::loot::{Save, SaveFile};
+use crate::save::{Save, SaveFile};
 use crate::menu::{Counter, Screen};
 use crate::vehicle::{Driving, VehicleSet};
 use crate::wardrobe::Wardrobe;

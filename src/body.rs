@@ -1,6 +1,6 @@
 //! The player's own body: our character standing under the first-person camera, casting your
 //! shadow. It is driven by the controller's move state (idle, walk, sprint, jump, double jump, fall,
-//! crouch/slide, wall run, mantle, grapple), sits in the driver's seat while driving, dies with the
+//! crouch/slide, wall run, mantle, grapple), hides while driving, dies with the
 //! player, and layers the weapon's reloads and recoil on top. In first person it renders only into
 //! shadow maps (see `character`) and the arms are their own rig; in third person, and in a vehicle's
 //! chase camera, it is the player you see.
@@ -15,12 +15,8 @@ use crate::character::{self, CharacterAssets, FirstPerson, Rig, RigPose};
 use crate::controller::{MoveState, Player};
 use crate::input::ViewAngles;
 use crate::tuning::Tuning;
-use crate::vehicle::{Driving, Kind, Vehicle};
+use crate::vehicle::Driving;
 
-/// Where the hips sit above the body's feet in the seated clips (model units, `tools/character/anim.py`):
-/// the body is lowered by this much below the vehicle's seat point.
-const DRIVE_HIPS: f32 = 0.49;
-const RIDE_HIPS: f32 = 0.76;
 /// How long the double-jump tuck shows, seconds.
 const DOUBLE_JUMP_TIME: f32 = 0.45;
 
@@ -140,20 +136,12 @@ fn follow(
     fixed: Res<Time<Fixed>>,
     view: Res<ViewAngles>,
     tuning: Res<Tuning>,
-    player: Single<(&Player, &Transform, Option<&Driving>)>,
-    vehicles: Query<(&Vehicle, &Transform), Without<Body>>,
-    mut body: Single<&mut Transform, (With<Body>, Without<Player>, Without<Vehicle>)>,
+    player: Single<(&Player, &Transform)>,
+    mut body: Single<&mut Transform, (With<Body>, Without<Player>)>,
 ) {
-    let (p, player_tf, driving) = *player;
+    let (p, player_tf) = *player;
     let scale = tuning.stand_height / character::MODEL_HEIGHT;
     body.scale = Vec3::splat(scale);
-    if let Some((v, vtf)) = driving.and_then(|d| vehicles.get(d.0).ok()) {
-        let hips = if v.spec.kind == Kind::DirtBike { RIDE_HIPS } else { DRIVE_HIPS };
-        // Vehicles face -Z, the model +Z.
-        body.rotation = vtf.rotation * Quat::from_rotation_y(PI);
-        body.translation = vtf.translation + vtf.rotation * v.spec.seat - vtf.rotation * Vec3::Y * (hips * scale);
-        return;
-    }
     let center = p.prev_pos.lerp(player_tf.translation, fixed.overstep_fraction());
     let (forward, _) = view.flat_basis();
     body.translation = center - p.up() * p.half_height(&tuning) - forward * BACK;
@@ -178,7 +166,6 @@ fn animate(
     arsenal: Option<Res<crate::weapon::Arsenal>>,
     mut fired: MessageReader<crate::weapon::WeaponFired>,
     player: Single<(&Player, Option<&Driving>)>,
-    vehicles: Query<&Vehicle>,
     mut body: Single<&mut RigPose, With<Body>>,
     mut jumps: Local<Jumps>,
 ) {
@@ -194,9 +181,6 @@ fn animate(
     jumps.left = player.air_jumps_left;
     jumps.showing = (jumps.showing - time.delta_secs()).max(0.0);
     let mut pose = pose_for(player.state, player.crouched, speed, player.vertical(), tuning.max_speed, wall_side, hooked, jumps.showing > 0.0);
-    if let Some(v) = driving.and_then(|d| vehicles.get(d.0).ok()) {
-        pose = if v.spec.kind == Kind::DirtBike { Pose::Ride } else { Pose::Drive };
-    }
     if health.as_ref().is_some_and(|h| !h.alive()) {
         pose = Pose::Death;
     }

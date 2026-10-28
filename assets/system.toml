@@ -1,5 +1,5 @@
 # The celestial bodies: each `[body.<id>]` is one round world. Missing keys take the home world's
-# values. Bodies with an `orbit` make up the solar system level (RUST_REGIME_LEVEL=system); the
+# values. Bodies with an `orbit` make up the solar system level; the
 # debug moon has none.
 
 # The star sits at the centre of the inertial frame. Everything else circles it or another body.
@@ -90,7 +90,7 @@ soi = 25000
 orbit = { parent = "star", distance = 320000, minutes = 360, phase = 30, incline = 0 }
 palette = { low = [0.78, 0.84, 0.9], high = [0.95, 0.97, 1.0], rock = [0.4, 0.46, 0.55] }
 
-# debug sphere for RUST_REGIME_LEVEL=moon
+# debug sphere the tests run on; it is not in the solar system
 [body.moon]
 radius = 2000
 gravity = 9.8

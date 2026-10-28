@@ -21,7 +21,7 @@ use crate::camera::PlayerCamera;
 use crate::character::{Characters, OutfitDef};
 use crate::gunsmith::{self, Loadout, PARTS, SLOTS, TUNE_MAX, TUNES};
 use crate::hud::HudRoot;
-use crate::loot::{Save, SaveFile};
+use crate::save::{Save, SaveFile};
 use crate::quartermaster::{self, Sale};
 use crate::tuning::Tuning;
 use crate::wardrobe::{self, Wardrobe};
@@ -119,8 +119,6 @@ pub struct Settings {
     pub ssao: bool,
     pub taa: bool,
     pub shadow_distance: f32,
-    pub grass: bool,
-    pub trees: f32,
 }
 
 impl Default for Settings {
@@ -154,8 +152,6 @@ impl Settings {
             ssao: g.ssao,
             taa: g.taa,
             shadow_distance: g.shadow_distance,
-            grass: g.grass,
-            trees: g.trees,
         }
     }
 
@@ -181,8 +177,6 @@ impl Settings {
         t.graphics.ssao = self.ssao;
         t.graphics.taa = self.taa;
         t.graphics.shadow_distance = self.shadow_distance;
-        t.graphics.grass = self.grass;
-        t.graphics.trees = self.trees;
     }
 
     /// The saved settings, if the player changed any.
@@ -243,7 +237,6 @@ fn bool_f(b: bool) -> f32 {
 
 const VOLUME: Kind = Kind::Slider { min: 0.0, max: 1.0, step: 0.1, fmt: pct };
 const SHADOWS: &[(&str, f32)] = &[("NEAR", 250.0), ("NORMAL", 500.0), ("FAR", 1000.0), ("VERY FAR", 2000.0)];
-const TREES: &[(&str, f32)] = &[("NONE", 0.0), ("SPARSE", 0.5), ("NORMAL", 1.0), ("DENSE", 1.5)];
 
 /// Section headings and the fields under them.
 const SECTIONS: &[(&str, &[Field])] = &[
@@ -285,8 +278,6 @@ const SECTIONS: &[(&str, &[Field])] = &[
             field("AMBIENT OCCLUSION", Kind::Toggle, false, |s| bool_f(s.ssao), |s, v| s.ssao = v > 0.5),
             field("ANTI-ALIASING", Kind::Toggle, false, |s| bool_f(s.taa), |s, v| s.taa = v > 0.5),
             field("SHADOW DISTANCE", Kind::Choice(SHADOWS), false, |s| s.shadow_distance, |s, v| s.shadow_distance = v),
-            field("GRASS", Kind::Toggle, false, |s| bool_f(s.grass), |s, v| s.grass = v > 0.5),
-            field("TREES", Kind::Choice(TREES), true, |s| s.trees, |s, v| s.trees = v),
         ],
     ),
 ];
@@ -366,25 +357,18 @@ struct MapDef {
     desc: &'static str,
 }
 
-/// The island, arena and moon are still reachable with `RUST_REGIME_LEVEL`, just not from the menu.
 const MAPS: &[MapDef] = &[
     MapDef { level: "system", mode: "", name: "SOLAR SYSTEM", desc: "Haven, its moon Ash and your ship: fly between worlds" },
 ];
 
-/// The [`MAPS`] entry this run was started with. An unknown level is the solar system, as in `main`.
 /// Whether the solar system is the level running, so the space screens have something to show.
 fn space_level() -> bool {
     MAPS[current_map()].level == "system"
 }
 
+/// The [`MAPS`] entry this run was started with: the solar system is the only level.
 fn current_map() -> usize {
-    let level = std::env::var("RUST_REGIME_LEVEL").ok();
-    let level = match level.as_deref() {
-        Some(l @ ("island" | "arena" | "moon")) => l,
-        _ => "system",
-    };
-    let mode = if std::env::var("RUST_REGIME_MODE").is_ok_and(|m| m == "6v6") { "6v6" } else { "" };
-    MAPS.iter().position(|m| m.level == level && m.mode == mode).unwrap_or(0)
+    0
 }
 
 /// Levels are wired in when the app is built, so another map is a fresh run of the game that
@@ -1036,11 +1020,11 @@ mod tests {
         let invert = fields().position(|f| f.label == "INVERT Y").unwrap();
         step_field(invert, 1, &mut s);
         assert!(s.invert_y, "toggles flip");
-        let trees = fields().position(|f| f.label == "TREES").unwrap();
-        step_field(trees, -1, &mut s);
-        assert_eq!(s.trees, 0.5, "choices step through the list");
-        step_field(trees, -2, &mut s);
-        assert_eq!(s.trees, 1.5, "and wrap");
+        let shadows = fields().position(|f| f.label == "SHADOW DISTANCE").unwrap();
+        step_field(shadows, -1, &mut s);
+        assert_eq!(s.shadow_distance, 250.0, "choices step through the list");
+        step_field(shadows, -2, &mut s);
+        assert_eq!(s.shadow_distance, 1000.0, "and wrap");
         let f = fields().nth(fov).unwrap();
         assert_eq!(field_value(f, &s), ("110".into(), Some(1.0)));
     }

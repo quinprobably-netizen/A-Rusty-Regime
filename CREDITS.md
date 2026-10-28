@@ -4,8 +4,6 @@ Everything here may ship in a commercially sold game (see `CLAUDE.md`).
 
 | What | Source | Licence |
 |------|--------|---------|
-| Arena props, blasters, flying enemy (`assets/models/arena`, `assets/models/fps`) | [Kenney](https://kenney.nl) Starter Kit FPS / Basic Scene | CC0 (kits' code MIT) |
-| Ground, rock, concrete, wood, metal textures (`assets/textures`) | [ambientCG](https://ambientcg.com) | CC0 |
 | Character base bodies (fetched by `tools/character/build.sh`) | [Blender Studio Human Base Meshes](https://www.blender.org/download/demo-files/) | CC0 |
 | Gamepad button mappings for the 8BitDo Ultimate 2 (`PAD_MAPPINGS` in `src/input.rs`) | [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB) | zlib |
 | Bangers font (`assets/fonts/Bangers-Regular.ttf`) | [Google Fonts](https://fonts.google.com/specimen/Bangers), The Bangers Project Authors | SIL OFL 1.1 (`assets/fonts/Bangers-OFL.txt`) |

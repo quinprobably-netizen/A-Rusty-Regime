@@ -4,7 +4,6 @@
 
 use bevy::ecs::system::SystemParam;
 use bevy::math::DVec3;
-use bevy::prelude::*;
 
 use super::*;
 use super::draw::LEFT;

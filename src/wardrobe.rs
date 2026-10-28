@@ -12,7 +12,7 @@ use crate::character::{ArmsOnly, CHARACTERS, Characters, OutfitDef, Rig, WEAR_MA
 use crate::controller::Player;
 use crate::dressing::Mannequin;
 use crate::input::PlayerInput;
-use crate::loot::{Save, SaveFile};
+use crate::save::{Save, SaveFile};
 use crate::vehicle::{Driving, VehicleSet};
 
 /// Name of the outfit the wardrobe writes into `Characters`.
