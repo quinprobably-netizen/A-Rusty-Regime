@@ -14,7 +14,7 @@ pub(super) fn spawn(mut commands: Commands, theme: Res<ComicTheme>, mut halftone
     commands
         .spawn((Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), flex_direction: FlexDirection::Column, ..default() }, GlobalZIndex(40)))
         .with_children(|root| {
-            root.spawn(Node { flex_grow: 1.0, padding: UiRect::all(Val::Px(56.0)), column_gap: Val::Px(48.0), ..default() }).with_children(|row| {
+            root.spawn(Node { flex_grow: 1.0, padding: UiRect::all(Val::Px(56.0)), column_gap: Val::Px(48.0), align_items: AlignItems::FlexStart, ..default() }).with_children(|row| {
                 row.spawn(Node { width: Val::Px(420.0), flex_direction: FlexDirection::Column, row_gap: Val::Px(24.0), ..default() }).with_children(|col| {
                     col.spawn(display_text("RUST REGIME", 96.0, t.red, &t));
                     caption(col, &t, "MEANWHILE… reach the Roost quartermaster and bank your haul.");

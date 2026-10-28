@@ -16,8 +16,10 @@ fn fragment(in: UiVertexOutput) -> @location(0) vec4<f32> {
     let s = sin(material.params.z);
     let p = in.uv * in.size;
     let q = vec2<f32>(c * p.x - s * p.y, s * p.x + c * p.y);
-    let pitch = material.params.x;
+    let pitch = max(material.params.x, 1.0);
     let d = length(fract(q / pitch) - 0.5) * pitch;
     let r = material.params.y;
-    return mix(material.dot, material.fill, smoothstep(r - 0.75, r + 0.75, d));
+    // Dots composite over the fill by their own alpha; the node keeps the fill's alpha.
+    let cover = material.dot.a * (1.0 - smoothstep(r - 0.75, r + 0.75, d));
+    return vec4<f32>(mix(material.fill.rgb, material.dot.rgb, cover), material.fill.a);
 }

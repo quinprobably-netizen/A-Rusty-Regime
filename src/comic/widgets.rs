@@ -25,7 +25,7 @@ pub fn bar_spans(base: f32, now: f32) -> (f32, f32, f32) {
 /// Segments to fill for `value` out of `max`: rounded down, but at least one while there is any
 /// value left, so 1 health never reads as dead.
 pub fn filled_segments(value: f32, max: f32, segments: usize) -> usize {
-    if !(max > 0.0) || !(value > 0.0) {
+    if segments == 0 || !(max > 0.0) || !(value > 0.0) {
         return 0;
     }
     let share = (value / max).min(1.0);
@@ -87,9 +87,18 @@ pub enum Tail {
 
 /// A white speech bubble with an ink tail pointing at what it talks about.
 pub fn bubble(p: &mut ChildSpawnerCommands, theme: &ComicTheme, text: &str, tail: Tail) -> Entity {
-    let (left, top) = match tail {
-        Tail::Left => (Val::Px(-18.0), Val::Percent(50.0)),
-        Tail::Down => (Val::Px(32.0), Val::Percent(100.0)),
+    // The tail is a diamond half-hidden by a clipping box that sits just outside the border, so
+    // only the outer half shows: a triangle pointing away from the bubble.
+    let out = theme.ink_px + 14.0;
+    let (clip, diamond) = match tail {
+        Tail::Left => (
+            Node { position_type: PositionType::Absolute, left: Val::Px(-out), top: Val::Percent(50.0), margin: UiRect::top(Val::Px(-14.0)), width: Val::Px(14.0), height: Val::Px(28.0), overflow: Overflow::clip(), ..default() },
+            Node { position_type: PositionType::Absolute, left: Val::Px(4.0), top: Val::Px(4.0), width: Val::Px(20.0), height: Val::Px(20.0), ..default() },
+        ),
+        Tail::Down => (
+            Node { position_type: PositionType::Absolute, left: Val::Px(32.0), bottom: Val::Px(-out), width: Val::Px(28.0), height: Val::Px(14.0), overflow: Overflow::clip(), ..default() },
+            Node { position_type: PositionType::Absolute, left: Val::Px(4.0), top: Val::Px(-10.0), width: Val::Px(20.0), height: Val::Px(20.0), ..default() },
+        ),
     };
     p.spawn((
         Node { max_width: Val::Px(300.0), border: UiRect::all(Val::Px(theme.ink_px)), padding: UiRect::axes(Val::Px(16.0), Val::Px(12.0)), border_radius: BorderRadius::all(Val::Px(24.0)), ..default() },
@@ -97,11 +106,9 @@ pub fn bubble(p: &mut ChildSpawnerCommands, theme: &ComicTheme, text: &str, tail
         BorderColor::all(theme.ink),
     ))
     .with_children(|b| {
-        b.spawn((
-            Node { position_type: PositionType::Absolute, left, top, width: Val::Px(20.0), height: Val::Px(20.0), margin: UiRect::top(Val::Px(-10.0)), ..default() },
-            BackgroundColor(theme.ink),
-            UiTransform::from_rotation(Rot2::degrees(45.0)),
-        ));
+        b.spawn(clip).with_children(|c| {
+            c.spawn((diamond, BackgroundColor(theme.ink), UiTransform::from_rotation(Rot2::degrees(45.0))));
+        });
         b.spawn(body_text(text, 19.0, theme.ink, false, theme));
     })
     .id()
@@ -224,6 +231,7 @@ mod tests {
         assert_eq!(filled_segments(1.0, 100.0, 10), 1);
         assert_eq!(filled_segments(50.0, 0.0, 10), 0);
         assert_eq!(filled_segments(f32::NAN, 100.0, 10), 0);
+        assert_eq!(filled_segments(5.0, 10.0, 0), 0);
     }
 
     #[test]
@@ -239,6 +247,26 @@ mod tests {
         assert_eq!(money(2450), "¢ 2,450");
         assert_eq!(money(0), "¢ 0");
         assert_eq!(money(1_500_000), "¢ 1,500,000");
+    }
+
+    #[test]
+    fn bubble_tail_is_clipped_outside_the_bubble() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        let theme = ComicTheme::default();
+        let root = app.world_mut().spawn(Node::default()).id();
+        let mut ids = vec![];
+        app.world_mut().commands().entity(root).with_children(|p| {
+            ids.push(bubble(p, &theme, "Left", Tail::Left));
+            ids.push(bubble(p, &theme, "Down", Tail::Down));
+        });
+        app.world_mut().flush();
+        for id in ids {
+            let w = app.world();
+            let tail = w.get::<Children>(id).unwrap()[0];
+            let node = w.get::<Node>(tail).unwrap();
+            assert_eq!(node.overflow, Overflow::clip(), "the tail's wrapper clips the diamond to a triangle");
+        }
     }
 
     #[test]

@@ -42,8 +42,8 @@ pub fn sfx_pop(commands: &mut Commands, theme: &ComicTheme, word: &str, at: Vec2
         .id()
 }
 
-pub(super) fn animate_pops(mut commands: Commands, time: Res<Time<Real>>, mut pops: Query<(Entity, &mut SfxPop, &mut UiTransform, &mut TextColor)>) {
-    for (entity, mut pop, mut transform, mut color) in &mut pops {
+pub(super) fn animate_pops(mut commands: Commands, time: Res<Time<Real>>, mut pops: Query<(Entity, &mut SfxPop, &mut UiTransform, &mut TextColor, &mut TextShadow)>) {
+    for (entity, mut pop, mut transform, mut color, mut shadow) in &mut pops {
         pop.age += time.delta_secs();
         if pop.age >= pop.life {
             commands.entity(entity).despawn();
@@ -53,6 +53,7 @@ pub(super) fn animate_pops(mut commands: Commands, time: Res<Time<Real>>, mut po
         transform.scale = Vec2::splat(scale);
         transform.rotation = Rot2::degrees(pop.tilt);
         color.0.set_alpha(alpha);
+        shadow.color.set_alpha(alpha);
     }
 }
 
@@ -80,7 +81,12 @@ mod tests {
         let theme = ComicTheme::default();
         sfx_pop(&mut app.world_mut().commands(), &theme, "BLAM!", Vec2::new(100.0, 100.0), -12.0);
         app.world_mut().flush();
-        for _ in 0..16 {
+        for _ in 0..12 {
+            app.update();
+        }
+        let shadow = app.world_mut().query::<&TextShadow>().single(app.world()).unwrap().color.alpha();
+        assert!(shadow < 0.5, "the ink shadow fades with the word, {shadow}");
+        for _ in 0..4 {
             app.update();
         }
         let left = app.world_mut().query::<&SfxPop>().iter(app.world()).count();
