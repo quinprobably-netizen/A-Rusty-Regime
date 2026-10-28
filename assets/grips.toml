@@ -62,8 +62,7 @@ vertical = [0.0, -0.035, -0.281]
 [fist]
 right = [0.0, 0.0, 0.0]
 
-# The knife is modelled in the pistol grip's place (tools/weapons/guns/knife.py), so it is held with
-# the pistol's right-hand pose until the solver writes its own.
+# The knife is modelled in the pistol grip's place (tools/weapons/guns/knife.py); the solver closes
+# the whole hand round its handle (no trigger). Characters with no knife pose yet use the pistol's.
 [knife]
 right = [0.0, -0.05, 0.055]
-thumb = [-0.015, -0.006, -0.015]
