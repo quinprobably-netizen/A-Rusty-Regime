@@ -39,6 +39,7 @@ pub struct Sounds {
     rifle: Handle<AudioSource>,
     shotgun: Handle<AudioSource>,
     pistol: Handle<AudioSource>,
+    swish: Handle<AudioSource>,
     explosion: Handle<AudioSource>,
     steps: [Handle<AudioSource>; 4],
     land: Handle<AudioSource>,
@@ -282,6 +283,7 @@ fn load(mut commands: Commands, tuning: Res<Tuning>, server: Res<AssetServer>, m
         rifle: clip("rifle", gunshot(0.4, 0.018, 130.0, 0.7, 0.14, 6000.0, 21)),
         shotgun: clip("shotgun", gunshot(0.55, 0.035, 75.0, 1.0, 0.2, 3500.0, 31)),
         pistol: clip("pistol", gunshot(0.28, 0.011, 160.0, 0.45, 0.08, 7000.0, 41)),
+        swish: clip("swish", thud(0.16, 5500.0, 0.05, 220.0, 0.05, 141)),
         explosion: clip("explosion", gunshot(1.8, 0.09, 42.0, 1.1, 0.7, 500.0, 51)),
         steps: [
             clip("step1", thud(0.1, 900.0, 0.022, 95.0, 0.3, 61)),
@@ -336,6 +338,7 @@ fn weapons(mut commands: Commands, s: Res<Sounds>, tuning: Res<Tuning>, arsenal:
             RocketLauncher | Grenade | Harpoon => &s.rocket,
             Rifle | Smg | Dmr => &s.rifle,
             Shotgun | Fist => &s.shotgun,
+            Knife => &s.swish,
             Pistol | Revolver => &s.pistol,
         };
         oneshot(&mut commands, clip, tuning.sound.guns, speed);

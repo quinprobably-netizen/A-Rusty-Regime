@@ -262,6 +262,7 @@ fn update_weapon(
             WeaponKind::RocketLauncher => "SPLASH   ROCKET JUMP READY",
             WeaponKind::Grenade => "BOUNCES   BURSTS ON A FUSE OR A HIT",
             WeaponKind::Harpoon => "YANKS YOU TO WALLS   YANKS THINGS TO YOU",
+            WeaponKind::Knife => "QUICK SLASH   X TO PUT IT AWAY",
             _ => "PUNCH ANY SURFACE TO LAUNCH OFF IT",
         }
         .into()

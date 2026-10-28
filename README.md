@@ -39,10 +39,11 @@ First build takes a while. Linux needs `libasound2-dev libudev-dev libwayland-de
 | Last weapon | Q | Y |
 | Next weapon | Wheel down | RB, D-pad right |
 | Previous weapon | Wheel up | D-pad left |
+| Knife (draw / put away) | X | R3 (hold) |
 | Weapon 1-10 | 1 - 9, 0 |  |
 | Flashlight | F | D-pad up |
 | Inspect weapon | V | D-pad down |
-| First / third person | T | R3 |
+| First / third person | T | R3 (tap) |
 | Respawn | Backspace | View |
 | Menu | Escape | Start |
 
@@ -73,20 +74,29 @@ First build takes a while. Linux needs `libasound2-dev libudev-dev libwayland-de
 | Respawn | Backspace | View |
 | Menu | Escape | Start |
 
-**Menus** follow the same buttons: arrows or WASD (d-pad) move, Enter or Space (A) select, Esc (B or Start) backs out, Q / E (LB / RB) change weapon in the gunsmith.
+**Menus** follow the same buttons: arrows or WASD (d-pad) move, Enter or Space (A) select, Esc (B or Start) backs out, Q / E (LB / RB) change weapon at the quartermaster.
 <!-- controls:end -->
 
 ## Menus
 The game boots to a title screen over the live island; Esc pauses (time stops, the cursor comes
-back). Both lists lead to the same screens: **Gunsmith** (four attachment slots per hitscan gun,
-parts change spread, recoil, rate, velocity and damage and show on the viewmodel; stat bars compare
-the bare gun), **Wardrobe** (character, head, colours, camo, skin, gloves, boots, webbing, metal, lights, visor, wear and three presets, shown on a mannequin), **Settings** (mouse sensitivity, invert Y, FOV, five volumes, sky, bloom, ambient
+back). Both lists lead to the same screens: **Wardrobe** (character, head, colours, camo, skin, gloves, boots, webbing, metal, lights, visor, wear and three presets, shown on a mannequin), **Settings** (mouse sensitivity, invert Y, FOV, five volumes, sky, bloom, ambient
 occlusion, anti-aliasing, shadow distance, grass, trees; saved to `settings.toml`, which lays over
 `tuning.toml` so F5 keeps your choices), **Maps** (island, island 6v6, arena, solar system, moon: picking another map restarts the game straight into it, no env vars needed) and **Controls**. Navigate with W/S or arrows, adjust with
 A/D, Enter picks, Esc backs out; the d-pad, A and B do the same on a pad; the mouse works too.
-`RUST_REGIME_MENU=title|pause|maps|settings|controls|gunsmith|wardrobe|play` opens straight into a screen
+`RUST_REGIME_MENU=title|pause|maps|settings|controls|quartermaster|wardrobe|play` opens straight into a screen
 (with `RUST_REGIME_SCREENSHOT` it skips the title unless set). Design notes:
 `docs/superpowers/specs/2026-10-18-menus-design.md`.
+
+## Weapons and the quartermaster
+You start with one sidearm, bare, and a knife: the **Warden** revolver or the **Smite** pistol, whichever
+your character carries (`start` in `assets/characters.toml`). The **Talon** knife is on X (R3 held on a pad;
+the same key puts it away) and cuts what is within arm's reach. Every other gun and every attachment is
+bought from the Roost's **quartermaster** with banked money (the courier contracts at Site Vantage are the
+income): walk up and press E, which also tops up your health and ammunition. At the counter Q / E (LB / RB)
+step through the guns and A / D through each gun's four attachment slots (parts change spread, recoil, rate,
+velocity and damage and show on the viewmodel; stat bars compare the bare gun). Trying a part on is free;
+Enter buys it, once, for every gun. Whatever is not bought comes off again when you leave. Prices live in
+`src/quartermaster.rs`.
 
 ## HUD
 Compass tape with the objective marked, health plate bottom left, movement readout (or vehicle

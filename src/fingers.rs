@@ -74,7 +74,9 @@ impl Solved {
     }
 
     pub fn get(&self, character: &str, kind: WeaponKind, pose: &str) -> Option<&HandPose> {
-        self.0.get(character)?.get(&format!("{}.{pose}", kind.id()))
+        let poses = self.0.get(character)?;
+        // The knife sits in the pistol grip's place, so it takes the pistol's hand until it has its own.
+        poses.get(&format!("{}.{pose}", kind.id())).or_else(|| if kind == WeaponKind::Knife { poses.get(&format!("pistol.{pose}")) } else { None })
     }
 }
 

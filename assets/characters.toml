@@ -4,6 +4,8 @@
 # Every character has its own model, models/character/<id>.glb. Colours tint its cloth: primary
 # (main cloth), secondary (second cloth), accent (straps, trim). `loadout` is the weapon bots
 # wearing the character carry (rifle shotgun pistol smg dmr revolver grenade harpoon rocket fist).
+# `start` is the sidearm the player starts with as this character, bare, besides the knife: pistol
+# (Smite) or revolver (Warden). Everything else is bought at the quartermaster.
 
 [character.acolyte]
 name = "Acolyte"
@@ -12,6 +14,7 @@ primary = "#1a1a1d"
 secondary = "#2a2a2e"
 accent = "#7a1010"
 loadout = "rifle"
+start = "revolver"
 
 [character.zealot]
 name = "Zealot"
@@ -20,6 +23,7 @@ primary = "#1c1a1e"
 secondary = "#3a3036"
 accent = "#8a1414"
 loadout = "revolver"
+start = "pistol"
 
 [character.choir]
 name = "Choir"
@@ -28,6 +32,7 @@ primary = "#202024"
 secondary = "#34343a"
 accent = "#6e1212"
 loadout = "dmr"
+start = "revolver"
 
 [character.mechanic]
 name = "Mechanic"
@@ -36,6 +41,7 @@ primary = "#6e6450"
 secondary = "#3d3a33"
 accent = "#9a6a35"
 loadout = "shotgun"
+start = "pistol"
 
 [character.bruiser]
 name = "Bruiser"
@@ -44,6 +50,7 @@ primary = "#55606a"
 secondary = "#4f4536"
 accent = "#a0743c"
 loadout = "fist"
+start = "revolver"
 
 [character.trapper]
 name = "Trapper"
@@ -52,6 +59,7 @@ primary = "#544632"
 secondary = "#3f433b"
 accent = "#8b5a2b"
 loadout = "harpoon"
+start = "pistol"
 
 [character.runner]
 name = "Runner"
@@ -60,6 +68,7 @@ primary = "#141413"
 secondary = "#D97757"
 accent = "#D4A27F"
 loadout = "smg"
+start = "revolver"
 
 [character.breaker]
 name = "Breaker"
@@ -68,6 +77,7 @@ primary = "#141413"
 secondary = "#F0EEE6"
 accent = "#D97757"
 loadout = "grenade"
+start = "pistol"
 
 [character.ghost]
 name = "Ghost"
@@ -76,6 +86,7 @@ primary = "#141413"
 secondary = "#D4A27F"
 accent = "#F0EEE6"
 loadout = "pistol"
+start = "revolver"
 
 [character.contractor]
 name = "Contractor"
@@ -84,6 +95,7 @@ primary = "#b9bec6"
 secondary = "#33383f"
 accent = "#c9a227"
 loadout = "rifle"
+start = "pistol"
 
 [character.juggernaut]
 name = "Juggernaut"
@@ -92,6 +104,7 @@ primary = "#33383f"
 secondary = "#2b2f35"
 accent = "#c9a227"
 loadout = "rocket"
+start = "revolver"
 
 [character.handler]
 name = "Handler"
@@ -100,6 +113,7 @@ primary = "#b9bec6"
 secondary = "#33383f"
 accent = "#c9a227"
 loadout = "smg"
+start = "pistol"
 
 [faction.regime]
 name = "Regime"

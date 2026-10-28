@@ -32,6 +32,7 @@ mod roads;
 mod world;
 mod menu;
 mod gunsmith;
+mod quartermaster;
 mod scope;
 mod fingers;
 mod system;
