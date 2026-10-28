@@ -22,9 +22,39 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerHealth>()
+            .init_resource::<FlightHud>()
             .add_systems(Startup, spawn_hud)
-            .add_systems(Update, (update_speed, update_weapon, update_crosshair, update_health, update_objective, update_compass, update_grapple, update_hint));
+            .add_systems(Update, (update_speed, update_weapon, update_crosshair, update_health, update_objective, update_compass, update_grapple, update_hint, update_reticle));
     }
+}
+
+/// What the ship being flown tells the HUD each tick; `active` is false when nobody flies.
+#[derive(Resource, Default, Debug, Clone)]
+pub struct FlightHud {
+    pub active: bool,
+    /// The nose's heading in the view's convention (as `ViewAngles::yaw`), and how far it points
+    /// above the horizon, radians.
+    pub heading: f32,
+    pub pitch: f32,
+    pub speed: f32,
+    /// Vertical speed, up positive.
+    pub climb: f32,
+    /// Height of the landing gear over the ground; none in deep space.
+    pub altitude: Option<f32>,
+    /// 1 where flight assist holds the ship, fading to 0 by 3.5 km.
+    pub assist: f32,
+    /// Boost left, 0 to 1, and whether it is burning.
+    pub boost: f32,
+    pub boosting: bool,
+    pub stopping: bool,
+    pub throttle: f32,
+    /// Seconds left of the "too fast to leave" warning.
+    pub too_fast: f32,
+    /// Which way the ship moves, and where its nose points, in world space.
+    pub velocity: Vec3,
+    pub nose: Vec3,
+    /// Straight up from the ground below, world space.
+    pub up: Vec3,
 }
 
 /// Every HUD element hangs off this, so menus can hide it in one go. Other modules put it on
@@ -64,6 +94,16 @@ struct HeatFill;
 struct ScoreText;
 #[derive(Component)]
 struct CrosshairLine(Vec2);
+/// The weapon plate, hidden while flying.
+#[derive(Component)]
+struct WeaponPlate;
+/// Flight reticle: where the ship is going, where its nose points, and a horizon line.
+#[derive(Component)]
+struct VelocityMark;
+#[derive(Component)]
+struct NoseMark;
+#[derive(Component)]
+struct Horizon;
 #[derive(Component)]
 struct CrosshairDot;
 #[derive(Component)]
@@ -167,6 +207,12 @@ fn spawn_hud(mut commands: Commands) {
             p.spawn((CrosshairLine(dir), Node { position_type: PositionType::Absolute, left: Val::Percent(50.0), top: Val::Percent(50.0), width: Val::Px(w), height: Val::Px(h), ..default() }, BackgroundColor(WHITE)));
         }
         p.spawn((CrosshairDot, Node { position_type: PositionType::Absolute, left: Val::Percent(50.0), top: Val::Percent(50.0), width: Val::Px(2.0), height: Val::Px(2.0), margin: UiRect::all(Val::Px(-1.0)), ..default() }, BackgroundColor(WHITE)));
+        // Flight reticle: a ring where the ship is heading, a cross where the nose points.
+        p.spawn((VelocityMark, Node { position_type: PositionType::Absolute, width: Val::Px(14.0), height: Val::Px(14.0), border: UiRect::all(Val::Px(2.0)), border_radius: BorderRadius::all(Val::Px(7.0)), ..default() }, BorderColor::all(AMBER), Visibility::Hidden));
+        p.spawn((NoseMark, Node { position_type: PositionType::Absolute, width: Val::Px(18.0), height: Val::Px(2.0), ..default() }, BackgroundColor(WHITE), Visibility::Hidden))
+            .with_child((Node { position_type: PositionType::Absolute, left: Val::Px(8.0), top: Val::Px(-8.0), width: Val::Px(2.0), height: Val::Px(18.0), ..default() }, BackgroundColor(WHITE)));
+        // Horizon: a long thin line where the horizon lies ahead, tilted with the ship's bank.
+        p.spawn((Horizon, Node { position_type: PositionType::Absolute, width: Val::Px(240.0), height: Val::Px(1.0), ..default() }, BackgroundColor(DIM), UiTransform::default(), Visibility::Hidden));
         // Grapple power, a thin bar under the crosshair that only shows while charging or pulling.
         p.spawn((GrappleBar, Node { position_type: PositionType::Absolute, left: Val::Percent(50.0), top: Val::Percent(50.0), width: Val::Px(40.0), height: Val::Px(3.0), margin: UiRect { left: Val::Px(-20.0), top: Val::Px(18.0), ..default() }, ..default() }, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.35))))
             .with_child((GrappleFill, fill(AMBER)));
@@ -194,7 +240,7 @@ fn spawn_hud(mut commands: Commands) {
 
         // Bottom right: weapon.
         let (node, bg, border) = plate();
-        p.spawn((Node { right: Val::Px(24.0), bottom: Val::Px(24.0), width: Val::Px(280.0), align_items: AlignItems::FlexEnd, ..node }, bg, border)).with_children(|w| {
+        p.spawn((WeaponPlate, Node { right: Val::Px(24.0), bottom: Val::Px(24.0), width: Val::Px(280.0), align_items: AlignItems::FlexEnd, ..node }, bg, border)).with_children(|w| {
             w.spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(4.0), ..default() }).with_children(|pips| {
                 for i in 0..WEAPONS.len() {
                     pips.spawn((SlotPip(i), Node { width: Val::Px(16.0), height: Val::Px(5.0), ..default() }, BackgroundColor(FAINT)));
@@ -210,10 +256,35 @@ fn spawn_hud(mut commands: Commands) {
 fn update_speed(
     player: Single<(&Player, Option<&crate::vehicle::Driving>)>,
     vehicles: Query<(&crate::vehicle::Vehicle, &avian3d::prelude::LinearVelocity)>,
+    flight: Res<FlightHud>,
     mut texts: ParamSet<(Single<&mut Text, With<SpeedText>>, Single<&mut Text, With<StateText>>)>,
     mut nodes: ParamSet<(Single<&mut Node, With<VehicleBars>>, Single<&mut Node, With<RpmFill>>, Single<&mut Node, With<FuelFill>>)>,
 ) {
     let (player, driving) = *player;
+    // Flying: total and vertical speed, height over the gear, the assist and the boost tank.
+    if flight.active {
+        let assist = match flight.assist {
+            a if a >= 1.0 => "ASSIST",
+            a if a > 0.0 => "ASSIST FADING",
+            _ => "FREE FLIGHT",
+        };
+        let doing = if flight.stopping {
+            "   STOPPING"
+        } else if flight.boosting {
+            "   BOOST"
+        } else if flight.boost <= 0.0 {
+            "   BOOST EMPTY"
+        } else {
+            ""
+        };
+        texts.p1().0 = format!("{assist}{doing}   PITCH {:+.0}", flight.pitch.to_degrees());
+        let alt = flight.altitude.map_or(String::new(), |a| if a < 1000.0 { format!("   ALT {a:.0} m") } else { format!("   ALT {:.1} km", a / 1000.0) });
+        texts.p0().0 = format!("{:.0} m/s   VS {:+.1}{alt}", flight.speed, flight.climb);
+        nodes.p0().display = Display::Flex;
+        nodes.p1().width = Val::Percent(flight.boost.clamp(0.0, 1.0) * 100.0);
+        nodes.p2().width = Val::Percent(flight.throttle.abs().clamp(0.0, 1.0) * 100.0);
+        return;
+    }
     if let Some((v, vel)) = driving.and_then(|d| vehicles.get(d.0).ok()) {
         let gear = if v.gear < 0 { "R".to_string() } else { v.gear.to_string() };
         let fuel = if v.fuel <= 0.0 { "OUT OF FUEL" } else { "" };
@@ -240,6 +311,8 @@ fn update_speed(
 }
 
 fn update_weapon(
+    flight: Res<FlightHud>,
+    mut plate: Single<&mut Node, (With<WeaponPlate>, Without<HeatFill>)>,
     arsenal: Res<Arsenal>,
     tuning: Res<Tuning>,
     loadout: Res<Loadout>,
@@ -251,6 +324,7 @@ fn update_weapon(
     mut pips: Query<(&SlotPip, &mut BackgroundColor)>,
     mut heat: Single<(&mut Node, &mut BackgroundColor), (With<HeatFill>, Without<SlotPip>)>,
 ) {
+    plate.display = if flight.active { Display::None } else { Display::Flex };
     let kind = arsenal.kind();
     weapon_text.0 = match arsenal.rounds(&tuning) {
         _ if arsenal.reload > 0.0 => format!("{}   RELOADING", kind.name()),
@@ -291,6 +365,7 @@ fn update_crosshair(
     recoil: Option<Res<Recoil>>,
     aim: Option<Res<Aim>>,
     score: Res<Score>,
+    flight: Res<FlightHud>,
     player: Single<(&Player, Has<crate::vehicle::Driving>)>,
     mut lines: Query<(&CrosshairLine, &mut Node, &mut BackgroundColor)>,
     mut dot: Single<&mut BackgroundColor, (With<CrosshairDot>, Without<CrosshairLine>)>,
@@ -318,6 +393,10 @@ fn update_crosshair(
     // A fitted red dot or scope is the aim point while aiming: the crosshair fades out of its way.
     if crate::gunsmith::customizable(kind) && loadout.part(kind, 0) > 0 {
         color.set_alpha(color.alpha() * (1.0 - ads));
+    }
+    // Flying, the flight reticle takes over.
+    if flight.active {
+        color = Color::NONE;
     }
     for (line, mut node, mut bg) in &mut lines {
         let d = line.0;
@@ -364,8 +443,10 @@ fn update_objective(
 }
 
 /// Slide the compass ticks past the notch; yaw 0 looks down -Z, which is north.
-fn update_compass(view: Res<ViewAngles>, objective: Option<Res<ObjectiveHud>>, mut ticks: Query<(&CompassTick, &mut Node)>, mut mark: Single<(&mut Node, &mut Visibility), (With<ObjectiveMark>, Without<CompassTick>)>) {
-    let heading = (-view.yaw.to_degrees()).rem_euclid(360.0);
+fn update_compass(view: Res<ViewAngles>, flight: Res<FlightHud>, objective: Option<Res<ObjectiveHud>>, mut ticks: Query<(&CompassTick, &mut Node)>, mut mark: Single<(&mut Node, &mut Visibility), (With<ObjectiveMark>, Without<CompassTick>)>) {
+    // Flying, the tape follows the nose.
+    let yaw = if flight.active { flight.heading } else { view.yaw };
+    let heading = (-yaw.to_degrees()).rem_euclid(360.0);
     let centre = TAPE_HALF * TAPE_PX;
     let place = |offset: f32, node: &mut Node, width: f32| {
         let visible = offset.abs() < TAPE_HALF;
@@ -425,4 +506,59 @@ fn update_hint(time: Res<Time>, mut hint: Single<&mut TextColor, With<HintText>>
     *shown += time.delta_secs();
     let a = ((12.0 - *shown) / 3.0).clamp(0.0, 1.0) * 0.55;
     hint.0 = Color::srgba(1.0, 1.0, 1.0, a);
+}
+
+/// Places the flight reticle: the velocity ring and nose cross where they fall on screen, and the
+/// horizon line banked and shifted with the ship.
+#[allow(clippy::type_complexity)]
+fn update_reticle(
+    flight: Res<FlightHud>,
+    camera: Option<Single<(&Camera, &GlobalTransform), With<crate::camera::PlayerCamera>>>,
+    mut velocity: Single<(&mut Node, &mut Visibility), (With<VelocityMark>, Without<NoseMark>, Without<Horizon>)>,
+    mut nose: Single<(&mut Node, &mut Visibility), (With<NoseMark>, Without<VelocityMark>, Without<Horizon>)>,
+    mut horizon: Single<(&mut Node, &mut Visibility, &mut UiTransform), (With<Horizon>, Without<VelocityMark>, Without<NoseMark>)>,
+) {
+    let hide = |v: &mut Mut<Visibility>| {
+        v.set_if_neq(Visibility::Hidden);
+    };
+    let Some(camera) = camera.filter(|_| flight.active) else {
+        hide(&mut velocity.1);
+        hide(&mut nose.1);
+        hide(&mut horizon.1);
+        return;
+    };
+    let (camera, eye) = *camera;
+    let place = |dir: Vec3, size: Vec2, node: &mut Node, vis: &mut Mut<Visibility>| match camera.world_to_viewport(eye, eye.translation() + dir * 1000.0) {
+        Ok(at) if dir != Vec3::ZERO => {
+            node.left = Val::Px(at.x - size.x / 2.0);
+            node.top = Val::Px(at.y - size.y / 2.0);
+            vis.set_if_neq(Visibility::Inherited);
+        }
+        _ => {
+            vis.set_if_neq(Visibility::Hidden);
+        }
+    };
+    let moving = if flight.speed > 3.0 { flight.velocity.normalize_or_zero() } else { Vec3::ZERO };
+    let (node, vis) = &mut *velocity;
+    place(moving, Vec2::splat(14.0), node, vis);
+    let (node, vis) = &mut *nose;
+    place(flight.nose, Vec2::new(18.0, 2.0), node, vis);
+    // The horizon ahead: where the nose's heading meets it, and which way it runs across the screen.
+    let (node, vis, transform) = &mut *horizon;
+    let ahead = (flight.nose - flight.up * flight.nose.dot(flight.up)).normalize_or_zero();
+    let across = ahead.cross(flight.up);
+    let ends = (camera.world_to_viewport(eye, eye.translation() + ahead * 1000.0), camera.world_to_viewport(eye, eye.translation() + (ahead + across * 0.1) * 1000.0));
+    match ends {
+        (Ok(a), Ok(b)) if flight.altitude.is_some() && ahead != Vec3::ZERO => {
+            node.left = Val::Px(a.x - 120.0);
+            node.top = Val::Px(a.y);
+            node.margin = UiRect::ZERO;
+            let d = b - a;
+            transform.rotation = Rot2::radians(d.y.atan2(d.x));
+            vis.set_if_neq(Visibility::Inherited);
+        }
+        _ => {
+            vis.set_if_neq(Visibility::Hidden);
+        }
+    }
 }

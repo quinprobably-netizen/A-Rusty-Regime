@@ -67,11 +67,15 @@ First build takes a while. Linux needs `libasound2-dev libudev-dev libwayland-de
 | Action | Keyboard / mouse | Gamepad |
 |---|---|---|
 | Thrust / reverse | W, S | RT, LT |
-| Lift / sink | Space, Ctrl | Left stick up / down |
+| Lift / sink | Space, Ctrl | Right stick up / down |
 | Roll | A, D | Left stick left / right |
+| Pitch (pull back: nose up) |  | Left stick up / down |
+| Yaw |  | LB, RB |
 | Boost | Shift | A |
+| Stop (match ground speed) | X | Y |
+| Look around (hold) | Alt | B |
 | Enter / leave a vehicle or ship | E | X (hold) |
-| First / third person | T | R3 |
+| First / third person | T | R3 (tap) |
 | Respawn | Backspace | View |
 | Menu | Escape | Start |
 
@@ -268,10 +272,13 @@ at `terrain.cell = 1` 0.48 ms (0.71 ms max) and 10.1 a second.
 ### Solar system
 `./play.sh system` (`play.bat system` on Windows) starts you on a landing pad on
 Haven, a 17.5 km world with seas, beside your ship. Press E to board. The mouse pitches
-and yaws, A and D roll, W and S thrust, Space and Ctrl lift and sink, Shift boosts, E
-again steps out, anywhere, even in mid-air. Flight assist holds you up and levels you
-below 3 km, so landing is sinking onto flat ground. Boosting is capped by your height
-over the ground and reaches 6 km/s in space; thick air drags and heats the nose.
+and yaws, A and D roll, W and S thrust, Space and Ctrl lift and sink, Shift boosts (from a
+tank that refills), X stops, held Alt looks round, T swaps cockpit and chase view, and E
+steps out once you are under 20 m/s. Flight assist holds you up and levels you (never against
+the stick) below about 3 km, fading out by 3.5 km, and slows the last metres of a descent to
+a soft touchdown, so landing is sinking onto flat ground. Boosting is capped by your height
+over the ground and reaches 6 km/s in space; thick air drags and heats the nose. Flight mouse
+and stick sensitivity are in Settings.
 
 Four ships stand on the apron, one per faction, each with its own handling from
 `assets/ships.toml`: the Deserters' **Kestrel** (yours, nearest the spawn: a patched

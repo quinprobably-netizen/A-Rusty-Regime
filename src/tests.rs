@@ -2642,9 +2642,18 @@ fn the_ship_lifts_off_hovers_and_lands() {
     run(&mut app, 2.0);
     let held = surface.altitude(ship_state(&mut app).0);
     assert!((held - settled).abs() < 0.5, "hovers in place with no lift: {settled} then {held}");
-    // Sinking brings it back down onto the pad, where it stays once the pilot leaves.
+    // Sinking brings it back down onto the pad, the last metres slowed to a soft touchdown, and it
+    // stays there once the pilot leaves.
     input(&mut app).lift = -1.0;
-    run(&mut app, 6.0);
+    let mut touchdown = 0.0f32;
+    for _ in 0..120 {
+        run(&mut app, 0.1);
+        let (p, v) = ship_state(&mut app);
+        if surface.altitude(p) - start < 3.0 {
+            touchdown = touchdown.max(-v.dot(p.normalize()));
+        }
+    }
+    assert!(touchdown < 4.0, "touched down at {touchdown} m/s");
     input(&mut app).lift = 0.0;
     input(&mut app).interact_pressed = true;
     run(&mut app, 2.0);
@@ -2701,6 +2710,66 @@ fn flying_down_to_ash_hands_off_to_the_moon_and_streams_its_ground() {
     assert_eq!(app.world().resource::<planet::Planet>().sphere.body.radius, radius);
     let g = app.world().resource::<Surface>().gravity(q, 9.8).length();
     assert!((g - 0.475).abs() < 0.01, "Ash's 1.9 m/s² a quarter as strong at twice its radius: {g}");
+}
+
+#[test]
+fn a_part_push_on_the_lift_climbs_instead_of_sinking() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    board(&mut app);
+    let surface = app.world().resource::<Surface>().clone();
+    input(&mut app).lift = 1.0;
+    run(&mut app, 1.5);
+    input(&mut app).lift = 0.0;
+    run(&mut app, 2.0);
+    let before = surface.altitude(ship_state(&mut app).0);
+    input(&mut app).lift = 0.3;
+    run(&mut app, 2.0);
+    let after = surface.altitude(ship_state(&mut app).0);
+    assert!(after > before + 1.0, "a third of the lift climbs: {before} then {after}");
+}
+
+#[test]
+fn stop_brings_a_flying_ship_to_a_hover() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    board(&mut app);
+    let (p, _) = ship_state(&mut app);
+    let up = p.normalize();
+    let east = up.any_orthonormal_vector();
+    put_ship(&mut app, p + up * 600.0, east * 120.0);
+    input(&mut app).stop = true;
+    run(&mut app, 5.0);
+    let (_, v) = ship_state(&mut app);
+    assert!(v.length() < 3.0, "stopped: still {} m/s", v.length());
+}
+
+#[test]
+fn boost_burns_from_a_tank_that_refills() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    board(&mut app);
+    let ship = ship_entity(&mut app);
+    input(&mut app).boost = true;
+    run(&mut app, 2.0);
+    let used = app.world().get::<Ship>(ship).unwrap().boost_used;
+    assert!(used > 0.05, "boosting burns the tank: {used}");
+    input(&mut app).boost = false;
+    run(&mut app, 4.0);
+    assert!(app.world().get::<Ship>(ship).unwrap().boost_used < used, "and it refills once let go");
+}
+
+#[test]
+fn flight_assist_and_the_speed_cap_fade_out_smoothly_with_height() {
+    use solar::ship::assist;
+    let k = &solar::ship::Ships::load().ship[0];
+    assert_eq!(assist(1000.0), 1.0);
+    assert_eq!(assist(4000.0), 0.0);
+    assert!((assist(3000.0) - 0.5).abs() < 1e-4);
+    for h in [2500.0, 3000.0, 3500.0, 5000.0] {
+        let (below, above) = (k.speed_cap(h - 1.0, false), k.speed_cap(h + 1.0, false));
+        assert!(above >= below && above / below < 1.01, "no jump in the cap at {h} m: {below} to {above}");
+    }
 }
 
 #[test]
