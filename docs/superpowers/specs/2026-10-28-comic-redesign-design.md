@@ -28,10 +28,10 @@ with 2 running alongside once 1 lands.
   `caption` (yellow box), `panel` (paper box with ink and shadow), `bubble` (speech bubble with a
   tail), `stat_bar` (ink fill plus a blue gain or red loss segment), `pip_row` (ammo dots),
   `segment_bar` (health), `hint_strip`, `sfx_pop` (a word like BLAM! that pops, tilts and fades).
-- Halftone and tilt: Bevy UI has no rotation or pattern fills, so a small `UiMaterial`
-  (`assets/shaders/comic_ui.wgsl`) draws a panel's fill, ink border, offset shadow and optional
-  halftone in one quad, with rotation passed in as a uniform. Text sits on top, unrotated, unless
-  it's an SFX pop (a `Transform` rotation on the text node).
+- Tilt, shadow and halftone: Bevy 0.19 UI covers tilt (`UiTransform` rotation) and hard offset
+  shadows (`BoxShadow` with zero blur). Only the halftone needs a shader: a small `UiMaterial`
+  (`assets/shaders/halftone.wgsl`) that draws a dot grid on a fill colour, placed as a child
+  node under a panel's ink border.
 - Tests: theme defaults load; every widget spawns under a test app without panicking.
 
 ## 2. World: per-material toon shading
