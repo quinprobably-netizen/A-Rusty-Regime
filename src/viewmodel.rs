@@ -14,7 +14,7 @@ use bevy::world_serialization::{WorldAssetRoot, WorldInstanceReady};
 use crate::camera::{PlayerCamera, Widen};
 use crate::controller::{MoveState, Player};
 use crate::gunsmith::{Loadout, MESHES, customizable};
-use crate::input::PlayerInput;
+use crate::input::{PlayerInput, ViewAngles};
 use crate::tuning::Tuning;
 use crate::weapon::{Arsenal, Muzzle, WEAPONS, WeaponFired, WeaponKind, SWITCH_TIME};
 
@@ -38,6 +38,18 @@ pub struct ViewModel {
     showcase: f32,
     spin: f32,
     flash: f32,
+    /// The gun trailing the player's turning: offset and its speed, on a spring.
+    sway: Vec2,
+    sway_vel: Vec2,
+    prev_look: Vec2,
+    /// Sideways lean into a strafe, -1..1.
+    lean: f32,
+    /// Landing dip (negative is down) on its own spring, and the sliding stoop, 0..1.
+    land: f32,
+    land_vel: f32,
+    slide: f32,
+    was_grounded: bool,
+    prev_fall: f32,
 }
 
 impl ViewModel {
@@ -248,7 +260,10 @@ fn hook_up(
         if let (Some(m), Some(fx)) = (muzzle, &flash) {
             let kind = WEAPONS[model.index];
             if !matches!(kind, WeaponKind::Fist | WeaponKind::Harpoon | WeaponKind::Knife) {
-                commands.entity(m).with_child((Flash, Mesh3d(fx.mesh.clone()), MeshMaterial3d(fx.mat.clone()), Transform::default(), Visibility::Hidden));
+                commands.entity(m).with_children(|m| {
+                    m.spawn((Flash, Mesh3d(fx.mesh.clone()), MeshMaterial3d(fx.mat.clone()), Transform::default(), Visibility::Hidden))
+                        .with_child(PointLight { intensity: 40_000.0, range: 5.0, color: Color::srgb(1.0, 0.7, 0.35), shadow_maps_enabled: false, ..default() });
+                });
             }
         }
         model.rig = Some(Rig { player, clips: nodes, playing: Clip::Idle, parts, muzzle, optic, spear, eye, dot });
@@ -280,6 +295,7 @@ fn animate(
     menu: Option<Res<crate::menu::Menu>>,
     driving: Query<(), With<crate::vehicle::Driving>>,
     real: Res<Time<Real>>,
+    view: Res<ViewAngles>,
 ) {
     let dt = time.delta_secs();
     let (tf, vm, vis) = &mut *vm;
@@ -313,6 +329,29 @@ fn animate(
     vm.bob += dt * speed * 1.7;
     let bob = Vec3::new(vm.bob.cos(), -(vm.bob * 2.0).sin().abs() * 0.6, 0.0) * 0.012 * amount;
 
+    // The gun trails a turn and springs back, leans into a strafe, dips on landing and stoops in a slide.
+    let look = Vec2::new(view.yaw, view.pitch);
+    let turn = if dt > 0.0 { ((look - vm.prev_look) / dt).clamp(Vec2::splat(-12.0), Vec2::splat(12.0)) } else { Vec2::ZERO };
+    vm.prev_look = look;
+    if dt > 0.0 {
+        let accel = Vec2::new(turn.x, -turn.y) * 0.75 - 150.0 * vm.sway - 19.6 * vm.sway_vel;
+        vm.sway_vel += accel * dt;
+        vm.sway = (vm.sway + vm.sway_vel * dt).clamp(Vec2::splat(-0.05), Vec2::splat(0.05));
+        let (_, right) = view.flat_basis();
+        let strafe = (player.velocity.dot(right) / tuning.max_speed.max(1.0)).clamp(-1.0, 1.0);
+        vm.lean += (strafe - vm.lean) * (1.0 - (-8.0 * dt).exp());
+        if grounded && !vm.was_grounded {
+            vm.land_vel -= (-vm.prev_fall).clamp(0.0, 20.0) * 0.05;
+        }
+        vm.was_grounded = grounded;
+        vm.prev_fall = player.vertical();
+        let accel = -180.0 * vm.land - 20.0 * vm.land_vel;
+        vm.land_vel += accel * dt;
+        vm.land = (vm.land + vm.land_vel * dt).clamp(-0.07, 0.03);
+        let sliding = if player.state == MoveState::Slide { 1.0 } else { 0.0 };
+        vm.slide += (sliding - vm.slide) * (1.0 - (-10.0 * dt).exp());
+    }
+
     // Aimed: the current weapon's sight line on the screen centre, a scope's eyepiece close to the eye.
     let kind = arsenal.kind();
     let optic = if customizable(kind) { loadout.part(kind, 0) } else { 0 };
@@ -321,8 +360,12 @@ fn animate(
 
     let ads = aim.as_ref().map_or(0.0, |a| a.level);
     let rest = REST.lerp(aimed, ads);
-    let play_pos = rest + bob * (1.0 - 0.8 * ads) + Vec3::Z * vm.kick * 0.04;
-    let play_rot = Quat::from_rotation_x(vm.kick * 0.08);
+    // Sway is nearly off when aimed, so it never fights the sights.
+    let calm = 1.0 - 0.85 * ads;
+    let sway_pos = Vec3::new(vm.sway.x + vm.lean * 0.008, vm.sway.y + vm.land * (1.0 - 0.7 * ads) - 0.03 * vm.slide, 0.0) * calm;
+    let sway_rot = Quat::from_euler(EulerRot::YXZ, -vm.sway.x * 1.5, vm.sway.y * 1.5, -vm.lean * 0.04 + vm.slide * 0.12) ;
+    let play_pos = rest + bob * (1.0 - 0.8 * ads) + Vec3::Z * vm.kick * 0.04 + sway_pos;
+    let play_rot = Quat::from_rotation_x(vm.kick * 0.08) * Quat::IDENTITY.slerp(sway_rot, calm);
     let show_rot = Quat::from_rotation_y(1.25 + 0.3 * (vm.spin * 0.7).sin()) * Quat::from_rotation_x(0.08);
     tf.translation = play_pos.lerp(SHOWCASE, vm.showcase);
     tf.rotation = play_rot.slerp(show_rot, vm.showcase);
@@ -438,8 +481,10 @@ fn flash(vm: Single<&ViewModel>, mut flashes: Query<(&mut Visibility, &mut Trans
             *v = want;
         }
         if on {
-            // A different size and twist each shot so it never looks stamped.
-            tf.scale = Vec3::new(1.0, 1.0, 1.6) * (0.8 + (*n % 3) as f32 * 0.2);
+            // A different width, length and twist each shot so it never looks stamped.
+            let width = 0.7 + (*n * 7 % 5) as f32 * 0.15;
+            let length = 1.2 + (*n * 3 % 7) as f32 * 0.22;
+            tf.scale = Vec3::new(width, width, length);
             tf.rotation = Quat::from_rotation_z(*n as f32 * 1.3);
         }
     }

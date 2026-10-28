@@ -18,6 +18,7 @@ impl Plugin for WeaponPlugin {
             .add_message::<Damage>()
             .add_message::<WeaponFired>()
             .add_message::<Detonate>()
+            .add_message::<HitConfirm>()
             .init_resource::<Muzzle>()
             .init_resource::<Arsenal>()
             .init_resource::<crate::gunsmith::Loadout>()
@@ -25,7 +26,7 @@ impl Plugin for WeaponPlugin {
             .init_resource::<Recoil>()
             .init_resource::<Aim>()
             .add_systems(FixedUpdate, (switch_weapon, fire, fly_rockets, fly_grenades, fly_spears, detonate, fly_bullets).chain().before(ControllerSet))
-            .add_systems(Update, (fade_explosions, fade_tracers, recoil, aim));
+            .add_systems(Update, (fade_explosions, fade_tracers, recoil, aim, fly_debris, hitstop));
     }
 }
 
@@ -233,6 +234,113 @@ pub struct Recoil {
     pub since_shot: f32,
     /// Sustained-fire heat, 0..1, widening the spread.
     pub heat: f32,
+    /// Shots in the current burst: the gun's fixed recoil pattern is indexed by it.
+    pub streak: u32,
+    /// Camera shake from firing, 0..1, easing off by itself.
+    pub trauma: f32,
+    /// Real seconds of hit-stop left after a melee blow lands.
+    pub hitstop: f32,
+}
+
+/// The `n`th shot of a burst from weapon `slot`: how much its upward kick has climbed (1 on the
+/// first shot, settling near 1.6) and how far along the gun's sideways pattern it is (-1..1).
+/// The pattern is the same every burst, so it can be learned and pulled against.
+pub fn recoil_pattern(slot: usize, n: u32) -> (f32, f32) {
+    let n = n as f32;
+    let climb = 1.0 + 0.6 * (1.0 - (-n / 4.0).exp());
+    let drift = (n / 5.0).min(1.0) * (n * 0.55 + slot as f32 * 1.3).sin();
+    (climb, drift)
+}
+
+/// A player bullet landed on a target: the sound and crosshair tick, higher for a head.
+#[derive(Message)]
+pub struct HitConfirm {
+    pub head: bool,
+}
+
+/// What a bullet hit, for the sparks, dust or chips it throws.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Surface {
+    Flesh,
+    Metal,
+    Dirt,
+    Stone,
+}
+
+/// A bit of debris, casing or spark: flies under `gravity`, spins, shrinks away over its last 40%.
+#[derive(Component)]
+pub struct Debris {
+    velocity: Vec3,
+    spin: Vec3,
+    life: f32,
+    age: f32,
+    gravity: f32,
+    size: Vec3,
+}
+
+fn spawn_debris(commands: &mut Commands, fx: &FxAssets, material: &Handle<StandardMaterial>, at: Vec3, velocity: Vec3, spin: Vec3, size: Vec3, life: f32, gravity: f32) {
+    commands.spawn((
+        Debris { velocity, spin, life, age: 0.0, gravity, size },
+        Mesh3d(fx.tracer_mesh.clone()),
+        MeshMaterial3d(material.clone()),
+        Transform::from_translation(at).looking_to(velocity.try_normalize().unwrap_or(Vec3::Z), Vec3::Y).with_scale(size),
+    ));
+}
+
+fn fly_debris(mut commands: Commands, time: Res<Time>, mut bits: Query<(Entity, &mut Debris, &mut Transform)>) {
+    let dt = time.delta_secs();
+    for (e, mut d, mut tf) in &mut bits {
+        d.age += dt;
+        if d.age >= d.life {
+            commands.entity(e).despawn();
+            continue;
+        }
+        d.velocity.y -= d.gravity * dt;
+        tf.translation += d.velocity * dt;
+        if d.spin != Vec3::ZERO {
+            tf.rotate_local(Quat::from_euler(EulerRot::XYZ, d.spin.x * dt, d.spin.y * dt, d.spin.z * dt));
+        }
+        tf.scale = d.size * ((d.life - d.age) / (d.life * 0.4)).min(1.0);
+    }
+}
+
+/// A seed from where something happened, for effects that need a few random numbers.
+fn point_seed(p: Vec3) -> u64 {
+    (p.x.to_bits() as u64) << 32 ^ (p.y.to_bits() as u64) << 16 ^ p.z.to_bits() as u64 | 1
+}
+
+/// Sparks, dust or chips thrown back off `point` along `normal`; a head hit throws more.
+fn spawn_impact(commands: &mut Commands, fx: &FxAssets, point: Vec3, normal: Vec3, surface: Surface, head: bool) {
+    let mut seed = point_seed(point);
+    let (material, count, speed, gravity, size, life) = match surface {
+        Surface::Flesh => (&fx.hit_mat, if head { 9 } else { 5 }, 3.5, 7.0, Vec3::new(0.012, 0.012, 0.05), 0.3),
+        Surface::Metal => (&fx.spark_mat, 7, 6.0, 6.0, Vec3::new(0.008, 0.008, 0.07), 0.25),
+        Surface::Dirt => (&fx.dust_mat, 6, 2.5, 9.8, Vec3::splat(0.045), 0.6),
+        Surface::Stone => (&fx.chip_mat, 5, 4.0, 9.8, Vec3::splat(0.03), 0.5),
+    };
+    for _ in 0..count {
+        let scatter = Vec3::new(next_unit(&mut seed) - 0.5, next_unit(&mut seed) - 0.5, next_unit(&mut seed) - 0.5);
+        let velocity = (normal * (0.6 + next_unit(&mut seed)) + scatter * 1.4) * speed;
+        let spin = if surface == Surface::Dirt || surface == Surface::Stone { scatter * 18.0 } else { Vec3::ZERO };
+        spawn_debris(commands, fx, material, point + normal * 0.02, velocity, spin, size, life * (0.6 + next_unit(&mut seed) * 0.8), gravity);
+    }
+    // Stone and metal also throw a couple of sparks.
+    if matches!(surface, Surface::Stone | Surface::Metal) {
+        for _ in 0..2 {
+            let scatter = Vec3::new(next_unit(&mut seed) - 0.5, next_unit(&mut seed) - 0.5, next_unit(&mut seed) - 0.5);
+            spawn_debris(commands, fx, &fx.spark_mat, point + normal * 0.02, (normal + scatter) * 7.0, Vec3::ZERO, Vec3::new(0.008, 0.008, 0.06), 0.18, 4.0);
+        }
+    }
+}
+
+/// The world slows to a crawl for a few frames when a melee blow lands, then comes back.
+fn hitstop(real: Res<Time<Real>>, mut recoil: ResMut<Recoil>, mut clock: ResMut<Time<Virtual>>) {
+    if recoil.hitstop > 0.0 {
+        recoil.hitstop -= real.delta_secs();
+        clock.set_relative_speed(if recoil.hitstop > 0.0 { 0.05 } else { 1.0 });
+    } else if clock.relative_speed() != 1.0 {
+        clock.set_relative_speed(1.0);
+    }
 }
 
 /// Aim down sights: 0 from the hip, 1 fully aimed.
@@ -264,6 +372,11 @@ pub struct FxAssets {
     blast_mesh: Handle<Mesh>,
     tracer_mesh: Handle<Mesh>,
     tracer_mat: Handle<StandardMaterial>,
+    brass_mat: Handle<StandardMaterial>,
+    spark_mat: Handle<StandardMaterial>,
+    hit_mat: Handle<StandardMaterial>,
+    dust_mat: Handle<StandardMaterial>,
+    chip_mat: Handle<StandardMaterial>,
 }
 
 #[derive(Component)]
@@ -327,6 +440,11 @@ fn load_assets(
             unlit: true,
             ..default()
         }),
+        brass_mat: materials.add(StandardMaterial { base_color: Color::srgb(0.8, 0.6, 0.2), metallic: 1.0, perceptual_roughness: 0.35, ..default() }),
+        spark_mat: materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.85, 0.5), emissive: LinearRgba::rgb(14.0, 8.0, 2.0), unlit: true, ..default() }),
+        hit_mat: materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.35, 0.2), emissive: LinearRgba::rgb(9.0, 2.0, 0.6), unlit: true, ..default() }),
+        dust_mat: materials.add(StandardMaterial { base_color: Color::srgb(0.45, 0.38, 0.3), perceptual_roughness: 1.0, ..default() }),
+        chip_mat: materials.add(StandardMaterial { base_color: Color::srgb(0.5, 0.5, 0.5), perceptual_roughness: 0.9, ..default() }),
     });
 }
 
@@ -515,6 +633,7 @@ fn fire(
             arsenal.cooldown = f.cooldown;
             fired.write(WeaponFired { kick: 0.8 });
             let Some(hit) = spatial.cast_ray(eye, Dir3::new(forward).unwrap(), f.range, true, &filter) else { return };
+            recoil.hitstop = 0.06;
             damage.write(Damage { entity: hit.entity, amount: f.damage, impulse: forward * f.knockback + Vec3::Y * 2.0 });
             if let Ok((body, mut lv, mass)) = bodies.get_mut(hit.entity)
                 && *body == RigidBody::Dynamic
@@ -535,6 +654,7 @@ fn fire(
             arsenal.cooldown = k.cooldown;
             fired.write(WeaponFired { kick: 0.5 });
             let Some(hit) = spatial.cast_ray(eye, Dir3::new(forward).unwrap(), k.range, true, &filter) else { return };
+            recoil.hitstop = 0.04;
             damage.write(Damage { entity: hit.entity, amount: k.damage, impulse: forward * k.knockback });
             if let Ok((body, mut lv, mass)) = bodies.get_mut(hit.entity)
                 && *body == RigidBody::Dynamic
@@ -557,14 +677,31 @@ fn fire(
     }
     spread *= 1.0 - aim_level.level * (1.0 - gun.ads_spread);
     recoil.heat = (recoil.heat + 0.12).min(1.0);
+    // The gun's fixed pattern: a burst starts straight up, climbs, and drifts the same way each time.
+    if recoil.since_shot > 0.35 {
+        recoil.streak = 0;
+    }
+    let (climb, drift) = recoil_pattern(slot, recoil.streak);
+    recoil.streak += 1;
     recoil.since_shot = 0.0;
-    let side = ((arsenal.shots as f32) * 0.9).sin();
     let mut ads = 1.0 - aim_level.level * 0.5;
     // The marksman rifle's folded bipod: braced while crouched, it kicks far less.
     if kind == WeaponKind::Dmr && p.crouched {
         ads *= 0.5;
     }
-    recoil.pending += Vec2::new(gun.recoil_side.to_radians() * side, gun.recoil_up.to_radians()) * ads;
+    recoil.pending += Vec2::new(gun.recoil_side.to_radians() * drift, gun.recoil_up.to_radians() * climb) * ads;
+    // Brass out of the ejection port, to the right and up, carrying a little of the player's own speed.
+    if let Some(fx) = fx.as_deref()
+        && kind != WeaponKind::Revolver
+    {
+        let seed = &mut *seed;
+        let right = aim * Vec3::X;
+        let up = aim * Vec3::Y;
+        let velocity = right * (2.0 + next_unit(seed)) + up * (1.5 + next_unit(seed) * 0.8) - forward * 0.4 + p.velocity * 0.8;
+        let shell = kind == WeaponKind::Shotgun;
+        let size = if shell { Vec3::new(0.02, 0.02, 0.05) } else { Vec3::new(0.01, 0.01, 0.035) };
+        spawn_debris(&mut commands, fx, &fx.brass_mat, eye + aim * Vec3::new(0.14, -0.1, -0.45), velocity, Vec3::new(20.0, 14.0, 6.0), size, 1.0, 9.8);
+    }
     for _ in 0..gun.pellets.max(1) {
         // Uniform point in a disc, as yaw/pitch offsets.
         let angle = next_unit(&mut seed) * std::f32::consts::TAU;
@@ -789,7 +926,8 @@ fn fly_bullets(
     cover: Query<&Penetrable>,
     mut bodies: Query<(&RigidBody, &mut LinearVelocity, &ComputedMass), (Without<Player>, Without<Bullet>)>,
     mut damage: MessageWriter<Damage>,
-    mut hits: MessageWriter<crate::health::PlayerHit>,
+    (mut hits, mut confirm): (MessageWriter<crate::health::PlayerHit>, MessageWriter<HitConfirm>),
+    surfaces: Query<(Has<crate::planet::Chunk>, Has<crate::solar::ship::Ship>, Has<crate::solar::Fixture>)>,
 ) {
     let dt = time.delta_secs();
     let t = &*tuning;
@@ -821,6 +959,7 @@ fn fly_bullets(
                 break;
             }
             // Head and leg zones on the capsule targets.
+            let target_hit = targets.contains(hit.entity);
             let zone = targets.get(hit.entity).map_or(1.0, |(_, ttf)| {
                 let local = point.y - (ttf.translation.y - crate::targets::DUMMY_HEIGHT * 0.5);
                 if local > crate::targets::DUMMY_HEIGHT - 0.35 {
@@ -838,8 +977,19 @@ fn fly_bullets(
                 let scale = (t.prop_ref_mass * mass.inverse()).min(1.0);
                 lv.0 += dir * b.impulse * energy * scale;
             }
+            let head = target_hit && zone >= t.headshot;
+            if target_hit && b.owner == *player {
+                confirm.write(HitConfirm { head });
+            }
             if let (Some(fx), Some(materials)) = (&fx, materials.as_mut()) {
-                spawn_blast(&mut commands, fx, materials, point + hit.normal * 0.03, 0.18);
+                let surface = match surfaces.get(hit.entity) {
+                    _ if target_hit => Surface::Flesh,
+                    Ok((true, _, _)) => Surface::Dirt,
+                    Ok((_, true, _)) | Ok((_, _, true)) => Surface::Metal,
+                    _ => Surface::Stone,
+                };
+                spawn_blast(&mut commands, fx, materials, point + hit.normal * 0.03, 0.06);
+                spawn_impact(&mut commands, fx, point, hit.normal, surface, head);
             }
             // Through thin cover, slower, up to twice.
             match cover.get(hit.entity) {
@@ -866,9 +1016,15 @@ fn fly_bullets(
     }
 }
 
-/// Applies the pending view kick fast, then pulls most of it back once the trigger rests.
-fn recoil(time: Res<Time>, mut recoil: ResMut<Recoil>, mut view: ResMut<ViewAngles>) {
+/// Applies the pending view kick fast, then pulls most of it back once the trigger rests: the
+/// sideways part comes back quicker and further than the upward part, so the end of a burst is
+/// pure climb.
+fn recoil(time: Res<Time>, mut recoil: ResMut<Recoil>, mut view: ResMut<ViewAngles>, mut fired: MessageReader<WeaponFired>) {
     let dt = time.delta_secs();
+    for f in fired.read() {
+        recoil.trauma = (recoil.trauma + f.kick * 0.2).min(1.0);
+    }
+    recoil.trauma = (recoil.trauma - 3.0 * dt).max(0.0);
     recoil.since_shot += dt;
     let step = recoil.pending * (1.0 - (-30.0 * dt).exp());
     recoil.pending -= step;
@@ -876,9 +1032,9 @@ fn recoil(time: Res<Time>, mut recoil: ResMut<Recoil>, mut view: ResMut<ViewAngl
     view.yaw += step.x;
     view.pitch = (view.pitch + step.y).min(1.54);
     if recoil.since_shot > 0.12 {
-        let back = recoil.applied * (1.0 - (-8.0 * dt).exp());
+        let back = Vec2::new(recoil.applied.x * (1.0 - (-14.0 * dt).exp()), recoil.applied.y * (1.0 - (-8.0 * dt).exp()));
         recoil.applied -= back;
-        view.yaw -= back.x * 0.7;
+        view.yaw -= back.x * 0.95;
         view.pitch = (view.pitch - back.y * 0.7).max(-1.54);
     }
 }
