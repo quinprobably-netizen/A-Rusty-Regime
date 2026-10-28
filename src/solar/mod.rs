@@ -373,14 +373,22 @@ fn spawn_sky(
         }
     }
 
-    // A shell of stars a thousand kilometres out, a few kilometres across each.
+    let stars = star_mesh();
+    let shine = materials.add(StandardMaterial { base_color: Color::BLACK, emissive: LinearRgba::WHITE * STAR_SHINE, reflectance: 0.0, ..default() });
+    commands.spawn((Name::new("Stars"), Starfield(shine.clone()), Mesh3d(meshes.add(stars)), MeshMaterial3d(shine), NotShadowCaster, Transform::default()));
+}
+
+/// A shell of stars a thousand kilometres out, a few kilometres across each. Started from the
+/// first star, not the unit cube it is cut from: that cube sat on the camera (a frame behind it)
+/// and showed as a growing white box whenever the ship moved back past where the camera looked.
+fn star_mesh() -> Mesh {
     let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
     let mut next = move || {
         state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
         (state >> 40) as f32 / (1u64 << 24) as f32
     };
-    let mut stars = Mesh::from(Cuboid::from_length(1.0));
-    let unit = stars.clone();
+    let unit = Mesh::from(Cuboid::from_length(1.0));
+    let mut stars: Option<Mesh> = None;
     for _ in 0..1499 {
         let z = 2.0 * next() - 1.0;
         let phi = std::f32::consts::TAU * next();
@@ -389,10 +397,14 @@ fn spawn_sky(
         let size = 1500.0 + 2500.0 * next().powi(3);
         let mut one = unit.clone();
         one.transform_by(Transform::from_translation(dir * 1.0e6).with_scale(Vec3::splat(size)).looking_to(dir, Vec3::Y));
-        stars.merge(&one).ok();
+        match &mut stars {
+            Some(stars) => {
+                stars.merge(&one).ok();
+            }
+            None => stars = Some(one),
+        }
     }
-    let shine = materials.add(StandardMaterial { base_color: Color::BLACK, emissive: LinearRgba::WHITE * STAR_SHINE, reflectance: 0.0, ..default() });
-    commands.spawn((Name::new("Stars"), Starfield(shine.clone()), Mesh3d(meshes.add(stars)), MeshMaterial3d(shine), NotShadowCaster, Transform::default()));
+    stars.unwrap_or(unit)
 }
 
 /// The camera sees across the system, through the physical sky.
@@ -703,5 +715,18 @@ fn flight_text(
     }
     if text.0 != line {
         text.0 = line;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_star_vertex_is_far_out() {
+        let mesh = star_mesh();
+        let Some(bevy::mesh::VertexAttributeValues::Float32x3(positions)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else { panic!("no positions") };
+        assert_eq!(positions.len(), 1499 * 24);
+        assert!(positions.iter().all(|p| Vec3::from(*p).length() > 9.0e5), "a star sits near the camera");
     }
 }
