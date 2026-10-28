@@ -14,7 +14,6 @@ use bevy::prelude::*;
 use bevy::ui_render::prelude::UiMaterialPlugin;
 
 pub use halftone::{halftone_layer, Halftone};
-pub use sfx::sfx_pop;
 pub use theme::{body_text, display_text, ComicTheme};
 pub use widgets::{bubble, caption, hint_strip, panel, segment_bar, stat_bar, Tail};
 

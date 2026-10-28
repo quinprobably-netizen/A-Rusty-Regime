@@ -208,6 +208,7 @@ impl System {
         }
     }
 
+    #[cfg(test)]
     pub fn body(&self, id: &str) -> Option<&Body> {
         self.body.get(id)
     }

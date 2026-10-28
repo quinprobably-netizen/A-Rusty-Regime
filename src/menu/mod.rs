@@ -21,7 +21,7 @@ use crate::camera::PlayerCamera;
 use crate::character::{Characters, OutfitDef};
 use crate::gunsmith::{self, Loadout, PARTS, SLOTS, TUNE_MAX, TUNES};
 use crate::hud::HudRoot;
-use crate::loot::{Save, SaveFile};
+use crate::save::{Save, SaveFile};
 use crate::quartermaster::{self, Sale};
 use crate::tuning::Tuning;
 use crate::wardrobe::{self, Wardrobe};

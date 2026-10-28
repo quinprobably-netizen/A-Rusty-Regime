@@ -38,11 +38,6 @@ pub struct PlayerInput {
     pub interact_pressed: bool,
     /// Use the class ability (G / mouse 4 / LB), latched like `jump_pressed`.
     pub ability_pressed: bool,
-    /// Toggle the flashlight (F / d-pad up), latched.
-    pub flashlight_pressed: bool,
-    /// Gas minus brake from the triggers (RT - LT), -1..1; only vehicles read it.
-    pub throttle: f32,
-    pub handbrake: bool,
     /// Flip first / third person (T / R3), latched.
     pub view_pressed: bool,
     /// Camera to the other shoulder in third person (Z), latched.
@@ -160,7 +155,7 @@ fn context(screen: Option<&State<crate::menu::Screen>>, driving: &Query<&crate::
     }
     match driving.single() {
         Ok(d) if ships.contains(d.0) => Ctx::Ship,
-        Ok(_) => Ctx::Vehicle,
+        Ok(_) => Ctx::Foot,
         Err(_) => Ctx::Foot,
     }
 }
@@ -250,11 +245,8 @@ pub(crate) fn gather(
     input.weapon_last |= pressed(Action::LastWeapon);
     input.interact_pressed |= pressed(Action::Use);
     input.ability_pressed |= pressed(Action::Ability);
-    input.flashlight_pressed |= pressed(Action::Flashlight);
     input.view_pressed |= pressed(Action::ToggleView);
     input.shoulder_pressed |= pressed(Action::SwapShoulder);
-    input.throttle = state.value(Action::Gas) - state.value(Action::Brake);
-    input.handbrake = held(Action::Handbrake);
     input.thrust = state.value(Action::Thrust);
     input.lift = state.value(Action::Lift);
     // The left stick is a flight joystick (pitch and roll) with the look curve, so small

@@ -11,18 +11,14 @@ use std::time::Duration;
 use crate::controller::{self, ControllerPlugin, MoveState, Player};
 use crate::input::{PlayerInput, ViewAngles};
 use crate::health::{HealthPlugin, PlayerHealth, PlayerHit};
-use crate::targets::Soldier;
 use crate::tuning::Tuning;
-use crate::targets::{self, Target, TargetsPlugin};
 use crate::planet::{self, chunk::{self, ChunkMesh}, quadtree::{self, NodeId}};
 use crate::planet::gravity::gravitate;
 use crate::surface::testing::random_dirs;
 use crate::surface::{Origin, Sphere, Surface, QUANTUM};
 use crate::system::Body;
-use crate::loot::{self, ExtractPad, Inventory, Loot, LootPlugin, Save, SaveFile};
-use crate::targets::{Killed, Team};
-use crate::weapon::Damage;
-use crate::vehicle::{self, Driving, Kind, Vehicle, VehiclePlugin};
+use crate::save::{Save, SaveFile, SavePlugin};
+use crate::vehicle::{Driving, VehiclePlugin};
 use crate::weapon::{Arsenal, WeaponKind, WeaponPlugin};
 
 const DT: f32 = 1.0 / 66.0;
@@ -46,7 +42,7 @@ fn build_app(tuning: Tuning) -> App {
         .init_resource::<ViewAngles>()
         .add_plugins(crate::boot::BootPlugin)
         .insert_resource(crate::character::Characters::load())
-        .add_plugins((ControllerPlugin, WeaponPlugin, TargetsPlugin, HealthPlugin, VehiclePlugin, LootPlugin, crate::abilities::AbilitiesPlugin));
+        .add_plugins((ControllerPlugin, WeaponPlugin, HealthPlugin, VehiclePlugin, SavePlugin, crate::abilities::AbilitiesPlugin));
     app.world_mut().spawn((RigidBody::Static, Collider::cuboid(200.0, 1.0, 200.0), Transform::from_xyz(0.0, -0.5, 0.0)));
     app
 }
@@ -303,11 +299,10 @@ fn full_game_boots_headless() {
         crate::camera::CameraPlugin,
         WeaponPlugin,
         crate::viewmodel::ViewModelPlugin,
-        TargetsPlugin,
         HealthPlugin,
         crate::hud::HudPlugin,
         VehiclePlugin,
-        LootPlugin,
+        SavePlugin,
         crate::boot::BootPlugin,
         solar::SolarPlugin,
     ));
@@ -381,54 +376,6 @@ fn hitscan_knocks_props() {
     let v = app.world().get::<LinearVelocity>(crate_).unwrap().0;
     assert!(v.z < -2.0, "crate pushed away from the player: {v}");
     assert_eq!(app.world().resource::<Arsenal>().shots, 1);
-}
-
-#[test]
-fn dummy_dies_falls_and_respawns() {
-    let tuning = Tuning::default();
-    let mut app = make_app(tuning.clone());
-    let feet = controller::SPAWN + Vec3::new(0.0, -1.0, -8.0);
-    let t = app.world().resource::<Tuning>().clone();
-    targets::spawn_dummy(&mut app.world_mut().commands(), &t, None, feet, 0.0);
-    app.update();
-    let mut q = app.world_mut().query_filtered::<Entity, With<Target>>();
-    let dummy = q.single(app.world()).unwrap();
-
-    select_weapon(&mut app, WeaponKind::Rifle);
-    input(&mut app).fire_held = true;
-    run(&mut app, 1.0);
-    input(&mut app).fire_held = false;
-    let target = app.world().get::<Target>(dummy).unwrap();
-    let home = target.home;
-    assert!(!target.alive(), "rifle fire for a second kills a {} hp dummy", tuning.target_health);
-    assert_eq!(*app.world().get::<RigidBody>(dummy).unwrap(), RigidBody::Dynamic);
-    let score = app.world().resource::<targets::Score>();
-    assert!(score.kills == 1 && score.hits >= 2, "{score:?}");
-
-    run(&mut app, 0.5);
-    let fallen = app.world().get::<Transform>(dummy).unwrap().translation;
-    assert!(fallen.y < home.y - 0.2 || fallen.z < feet.z - 0.3, "dummy was knocked over: {fallen}");
-
-    run(&mut app, tuning.target_respawn + 0.2);
-    let target = app.world().get::<Target>(dummy).unwrap();
-    assert!(target.alive());
-    assert_eq!(*app.world().get::<RigidBody>(dummy).unwrap(), RigidBody::Static);
-    let pos = app.world().get::<Transform>(dummy).unwrap().translation;
-    assert!(pos.distance(home) < 0.05, "back home: {pos}");
-}
-
-#[test]
-fn rocket_damages_targets() {
-    let mut app = make_app(Tuning::default());
-    let feet = controller::SPAWN + Vec3::new(0.0, -1.0, -8.0);
-    let t = app.world().resource::<Tuning>().clone();
-    targets::spawn_dummy(&mut app.world_mut().commands(), &t, None, feet, 0.0);
-    app.update();
-    input(&mut app).fire_held = true;
-    run(&mut app, 0.6);
-    let mut q = app.world_mut().query::<&Target>();
-    let target = q.single(app.world()).unwrap();
-    assert!(target.health < Tuning::default().target_health, "rocket splash hurt the dummy: {}", target.health);
 }
 
 #[test]
@@ -982,19 +929,6 @@ fn hit_player(app: &mut App, amount: f32) {
     app.world_mut().resource_mut::<Messages<PlayerHit>>().write(PlayerHit { amount });
 }
 
-fn soldier(app: &mut App, route: Vec<Vec3>) {
-    app.world_mut()
-        .run_system_once(move |mut commands: Commands, tuning: Res<Tuning>| targets::spawn_soldier(&mut commands, &tuning, None, route.clone()))
-        .unwrap();
-    app.update();
-}
-
-fn soldier_state(app: &mut App) -> (Vec3, Option<f32>) {
-    let mut q = app.world_mut().query::<(&Soldier, &Transform)>();
-    let (s, tf) = q.single(app.world()).unwrap();
-    (tf.translation, s.alert)
-}
-
 #[test]
 fn player_dies_and_respawns_with_full_health() {
     let mut app = make_app(Tuning::default());
@@ -1032,219 +966,19 @@ fn health_regenerates_to_the_cap_after_a_quiet_spell() {
 }
 
 #[test]
-fn big_hits_bleed_until_a_medkit() {
+fn big_hits_bleed_until_healed() {
     let mut app = make_app(Tuning::default());
     hit_player(&mut app, 30.0);
     run(&mut app, 2.0);
     let h = app.world().resource::<PlayerHealth>().clone();
     assert!(h.bleeding > 0.0 && h.hp < 67.0 && h.hp > 64.0, "bleeding 2 hp/s: {h:?}");
-    let (pos, _, _) = player(&mut app);
-    app.world_mut().spawn((loot::Medkit { down: 0.0 }, Transform::from_translation(pos), Visibility::default()));
-    run(&mut app, 0.1);
+    app.world_mut().resource_mut::<PlayerHealth>().heal();
     let h = app.world().resource::<PlayerHealth>().clone();
     assert!(h.hp == 100.0 && h.bleeding <= 0.0, "healed: {h:?}");
-    let mut q = app.world_mut().query::<(&loot::Medkit, &Visibility)>();
-    let (kit, vis) = q.single(app.world()).unwrap();
-    assert!(kit.down > 0.0 && *vis == Visibility::Hidden, "the medkit is used up for a while");
-}
-
-#[test]
-fn soldier_shoots_player_in_sight() {
-    let mut app = make_app(Tuning::default());
-    set_player(&mut app, Vec3::new(0.0, 1.0, 0.0), Vec3::ZERO);
-    soldier(&mut app, vec![Vec3::new(10.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 6.0)]);
-    run(&mut app, 1.5);
-    let (_, alert) = soldier_state(&mut app);
-    assert!(alert.is_some(), "soldier is alert");
-    let hp = app.world().resource::<PlayerHealth>().hp;
-    assert!(hp < 100.0 - 10.0, "player was shot, hp {hp}");
-}
-
-#[test]
-fn soldier_ignores_player_behind_wall_and_patrols() {
-    let mut app = make_app(Tuning::default());
-    set_player(&mut app, Vec3::new(0.0, 1.0, 0.0), Vec3::ZERO);
-    wall(&mut app, Vec3::new(1.0, 6.0, 30.0), Vec3::new(5.0, 3.0, 0.0));
-    soldier(&mut app, vec![Vec3::new(10.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 6.0)]);
-    let (start, _) = soldier_state(&mut app);
-    run(&mut app, 1.5);
-    let (pos, alert) = soldier_state(&mut app);
-    assert!(alert.is_none(), "not alert");
-    assert!((pos - start).length() > 2.0, "kept walking its route, moved {}", (pos - start).length());
-    assert_eq!(app.world().resource::<PlayerHealth>().hp, 100.0);
-}
-
-#[test]
-fn soldier_forgets_hidden_player() {
-    let mut app = make_app(Tuning::default());
-    set_player(&mut app, Vec3::new(0.0, 1.0, 0.0), Vec3::ZERO);
-    soldier(&mut app, vec![Vec3::new(10.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 6.0)]);
-    run(&mut app, 0.5);
-    assert!(soldier_state(&mut app).1.is_some());
-    // Out of sight range but still on the floor (off the floor you fall and respawn in view).
-    set_player(&mut app, Vec3::new(0.0, 1.0, -80.0), Vec3::ZERO);
-    run(&mut app, 2.0);
-    assert!(soldier_state(&mut app).1.is_some(), "still alert before forget");
-    run(&mut app, 2.5);
-    assert!(soldier_state(&mut app).1.is_none(), "forgot the player");
 }
 
 // ---------------------------------------------------------------------------
 // Vehicles
-
-/// An app whose world gravity matches the controller's, as in the game.
-fn vehicle_app() -> App {
-    let mut app = make_app(Tuning::default());
-    let g = app.world().resource::<Tuning>().gravity;
-    app.insert_resource(Gravity(Vec3::NEG_Y * g));
-    app
-}
-
-fn spawn_vehicle(app: &mut App, kind: Kind, ground: Vec3, yaw: f32) -> Entity {
-    let tuning = app.world().resource::<Tuning>().clone();
-    app.world_mut().run_system_once(move |mut commands: Commands| vehicle::spawn(&mut commands, None, &tuning, kind, ground, yaw)).unwrap()
-}
-
-fn vehicle_state(app: &mut App, e: Entity) -> (Vec3, Quat, Vec3, usize) {
-    let mut q = app.world_mut().query::<(&Transform, &LinearVelocity, &Vehicle)>();
-    let (tf, vel, v) = q.get(app.world(), e).unwrap();
-    (tf.translation, tf.rotation, vel.0, v.grounded_wheels())
-}
-
-fn driving(app: &mut App) -> Option<Entity> {
-    let mut q = app.world_mut().query_filtered::<&Driving, With<Player>>();
-    q.single(app.world()).ok().map(|d| d.0)
-}
-
-#[test]
-fn vehicle_physics_curves() {
-    use crate::vehicle::physics::*;
-    let c = TyreCurve::GRAVEL;
-    // The tyre's force rises to a peak near the curve's peak slip and falls past it.
-    let f = |kappa: f32| tyre_force(&c, 1000.0, kappa, 0.0).fx;
-    assert!(f(0.03) < f(0.1) && f(0.1) < f(0.16), "rising to the peak: {} {} {}", f(0.03), f(0.1), f(0.16));
-    assert!(f(0.16) > f(1.0), "falling past it: {} {}", f(0.16), f(1.0));
-    assert!(f(0.16) > 900.0 && f(0.16) <= 1000.0);
-    // Sliding left pushes right; the combined slip shares the peak.
-    let side = tyre_force(&c, 1000.0, 0.0, 0.1);
-    assert!(side.fy < -500.0 && side.fx == 0.0, "{side:?}");
-    let both = tyre_force(&c, 1000.0, 0.16, 0.19);
-    assert!(both.fx.hypot(both.fy) <= 1000.0 + 1e-3);
-    // The coil-over: stiffer in bump than rebound, and a wall at the end of the stroke.
-    let k = |x, v| coilover(&SUSP, x, v, 40_000.0, 3000.0, 4000.0, 3500.0, 500.0, 0.1, 0.25);
-    assert!(k(0.1, 0.0) > 3900.0 && k(0.1, 0.0) < 4100.0);
-    assert!(k(0.1, 0.5) > k(0.1, 0.0) && k(0.1, -0.5) < k(0.1, 0.0));
-    assert!(k(0.27, 0.0) > 10.0 * k(0.1, 0.0), "hard stop: {}", k(0.27, 0.0));
-    // Engine: interpolated torque, and braking off the throttle.
-    let curve = [(1000.0, 100.0), (2000.0, 200.0), (3000.0, 150.0)];
-    assert_eq!(engine_torque(&curve, 1500.0), 150.0);
-    assert_eq!(engine_torque(&curve, 500.0), 100.0);
-    assert_eq!(engine_torque(&curve, 9000.0), 150.0);
-    assert!(engine_net(&curve, 2000.0, 1.0, 2.0, 3000.0, 0.9) > 150.0);
-    assert!(engine_net(&curve, 2000.0, 0.0, 2.0, 3000.0, 0.9) < 0.0);
-}
-
-#[test]
-fn humvee_settles_at_ride_height() {
-    let mut app = vehicle_app();
-    let e = spawn_vehicle(&mut app, Kind::Humvee, Vec3::new(30.0, 0.0, 30.0), 0.0);
-    run(&mut app, 3.0);
-    let (pos, rot, vel, grounded) = vehicle_state(&mut app, e);
-    assert_eq!(grounded, 4);
-    assert!(vel.length() < 0.2, "at rest, got {vel}");
-    assert!((pos.y - 0.95).abs() < 0.15, "centre of mass at ride height, got {}", pos.y);
-    assert!((rot * Vec3::Y).y > 0.995, "level, got {rot:?}");
-    assert!((pos.xz() - Vec2::new(30.0, 30.0)).length() < 0.2, "stayed put, got {pos}");
-}
-
-#[test]
-fn humvee_drives_steers_and_the_player_gets_out() {
-    let mut app = vehicle_app();
-    let e = spawn_vehicle(&mut app, Kind::Humvee, Vec3::new(40.0, 0.0, 40.0), 0.0);
-    run(&mut app, 1.0);
-    set_player(&mut app, Vec3::new(43.0, 1.0, 40.0), Vec3::ZERO);
-    input(&mut app).interact_pressed = true;
-    run(&mut app, 0.1);
-    assert_eq!(driving(&mut app), Some(e), "pressed E next to it");
-
-    input(&mut app).movement = Vec2::new(0.0, 1.0);
-    run(&mut app, 4.0);
-    let (pos, rot, vel, _) = vehicle_state(&mut app, e);
-    let heading = rot * Vec3::NEG_Z;
-    assert!(vel.dot(heading) > 8.0, "accelerated forward, got {vel} heading {heading}");
-    assert!(pos.z < 30.0, "moved along -Z, got {pos}");
-    let (ppos, _, _) = player(&mut app);
-    assert!(ppos.distance(pos) < 3.0, "the driver rides along, player at {ppos}, vehicle at {pos}");
-
-    input(&mut app).movement = Vec2::new(-1.0, 1.0);
-    run(&mut app, 2.0);
-    let (_, rot, vel, _) = vehicle_state(&mut app, e);
-    let heading = rot * Vec3::NEG_Z;
-    assert!(heading.x < -0.3, "turned left, heading {heading}");
-    assert!((rot * Vec3::Y).y > 0.9, "and stayed on its wheels");
-    assert!(vel.length() > 3.0);
-
-    // Holding back brakes to a stop (then it would start reversing).
-    input(&mut app).movement = Vec2::new(0.0, -1.0);
-    let mut slowest = f32::MAX;
-    for _ in 0..50 {
-        run(&mut app, 0.05);
-        slowest = slowest.min(vehicle_state(&mut app, e).2.length());
-    }
-    assert!(slowest < 1.0, "braked, got down to {slowest}");
-
-    input(&mut app).movement = Vec2::ZERO;
-    input(&mut app).interact_pressed = true;
-    run(&mut app, 0.5);
-    assert_eq!(driving(&mut app), None, "got out");
-    let (vpos, _, _, _) = vehicle_state(&mut app, e);
-    let (ppos, _, state) = player(&mut app);
-    assert!(ppos.distance(vpos) > 1.0 && ppos.distance(vpos) < 5.0, "standing beside it: {ppos} vs {vpos}");
-    assert_eq!(state, MoveState::Ground);
-}
-
-#[test]
-fn bike_stays_upright_and_rides() {
-    let mut app = vehicle_app();
-    let e = spawn_vehicle(&mut app, Kind::DirtBike, Vec3::new(-40.0, 0.0, 40.0), 0.0);
-    run(&mut app, 3.0);
-    let (pos, rot, vel, grounded) = vehicle_state(&mut app, e);
-    assert_eq!(grounded, 2);
-    assert!((rot * Vec3::Y).y > 0.98 && vel.length() < 0.2, "parked upright: {rot:?} {vel}");
-    assert!((pos.y - 0.62).abs() < 0.15, "at ride height, got {}", pos.y);
-    set_player(&mut app, Vec3::new(-38.0, 1.0, 40.0), Vec3::ZERO);
-    input(&mut app).interact_pressed = true;
-    run(&mut app, 0.1);
-    assert_eq!(driving(&mut app), Some(e));
-    input(&mut app).movement = Vec2::new(0.0, 1.0);
-    run(&mut app, 3.0);
-    let (_, rot, vel, _) = vehicle_state(&mut app, e);
-    assert!(vel.dot(rot * Vec3::NEG_Z) > 5.0, "rode off, got {vel}");
-    input(&mut app).movement = Vec2::new(-0.6, 1.0);
-    run(&mut app, 1.5);
-    let (_, rot, _, _) = vehicle_state(&mut app, e);
-    let up = rot * Vec3::Y;
-    let heading = rot * Vec3::NEG_Z;
-    let right = Vec3::new(heading.x, 0.0, heading.z).normalize().cross(Vec3::Y);
-    assert!(up.y > 0.7, "leaning but up, got {up}");
-    assert!(up.dot(right) < -0.2, "leaning into the left turn, got {up} with right {right}");
-    assert!(heading.x < -0.2, "turning left, heading {heading}");
-}
-
-#[test]
-fn vehicle_respawns_after_falling_off_the_world() {
-    let mut app = vehicle_app();
-    // Seconds to drop `m` metres from rest; the kill plane is at -30.
-    let g = app.world().resource::<Tuning>().gravity;
-    let fall = |m: f32| (2.0 * m / g).sqrt();
-    let e = spawn_vehicle(&mut app, Kind::Jeep, Vec3::new(300.0, 0.0, 300.0), 0.0);
-    run(&mut app, fall(20.0));
-    let (pos, _, _, _) = vehicle_state(&mut app, e);
-    assert!(pos.y < -15.0, "fell off the floor, got {pos}");
-    run(&mut app, fall(35.0) - fall(20.0));
-    let (pos, _, _, _) = vehicle_state(&mut app, e);
-    assert!(pos.y > -15.0 && (pos.xz() - Vec2::new(300.0, 300.0)).length() < 0.5, "back home, got {pos}");
-}
 
 /// The solar system as `main` runs it, headless: the world, the ship and the player.
 fn solar_app() -> App {
@@ -1269,11 +1003,10 @@ fn solar_app() -> App {
         crate::camera::CameraPlugin,
         WeaponPlugin,
         crate::viewmodel::ViewModelPlugin,
-        TargetsPlugin,
         HealthPlugin,
         crate::hud::HudPlugin,
         VehiclePlugin,
-        LootPlugin,
+        SavePlugin,
         solar::SolarPlugin,
     ));
     app.finish();
@@ -1298,92 +1031,17 @@ fn viewmodel_stays_hidden_while_driving() {
 }
 
 // ---------------------------------------------------------------------------
-// Extraction loop, missions, teams
-
-fn spawn_loot(app: &mut App, pos: Vec3, value: u32, key: Option<usize>) -> Entity {
-    app.world_mut().spawn(loot::bundle(pos, value, key)).id()
-}
-
-fn spawn_pad(app: &mut App, pos: Vec3) {
-    app.world_mut().spawn((ExtractPad { radius: 6.0 }, Transform::from_translation(pos)));
-}
-
-fn inventory(app: &mut App) -> (u32, Vec<usize>) {
-    let inv = app.world().resource::<Inventory>();
-    (inv.carried, inv.keys.clone())
-}
-
-fn save(app: &mut App) -> Save {
-    app.world().resource::<Save>().clone()
-}
-
-#[test]
-fn loot_is_carried_banked_on_extraction_and_lost_on_death() {
-    let mut app = make_app(Tuning::default());
-    spawn_loot(&mut app, Vec3::new(20.0, 0.0, 20.0), 40, None);
-    spawn_pad(&mut app, Vec3::new(-40.0, 0.0, -40.0));
-    set_player(&mut app, Vec3::new(20.0, 1.0, 20.0), Vec3::ZERO);
-    run(&mut app, 0.2);
-    assert_eq!(inventory(&mut app), (40, vec![]), "picked up");
-    set_player(&mut app, Vec3::new(-40.0, 1.0, -40.0), Vec3::ZERO);
-    run(&mut app, 4.0);
-    assert_eq!(inventory(&mut app).0, 40, "still extracting");
-    assert!(app.world().resource::<Inventory>().extracting > 3.0);
-    run(&mut app, 4.5);
-    let s = save(&mut app);
-    assert_eq!((s.banked, s.runs, inventory(&mut app).0), (40, 1, 0), "banked: {s:?}");
-    let (pos, _, _) = player(&mut app);
-    assert!(pos.distance(Vec3::new(-40.0, 1.0, -40.0)) > 10.0, "sent back to spawn, got {pos}");
-
-    // The cache comes back later; pick it up again and die with it.
-    let mut q = app.world_mut().query::<&mut Loot>();
-    q.single_mut(app.world_mut()).unwrap().down = 0.1;
-    run(&mut app, 0.2);
-    set_player(&mut app, Vec3::new(20.0, 1.0, 20.0), Vec3::ZERO);
-    run(&mut app, 0.2);
-    assert_eq!(inventory(&mut app).0, 40);
-    hit_player(&mut app, 500.0);
-    run(&mut app, 0.2);
-    let s = save(&mut app);
-    assert_eq!((inventory(&mut app).0, s.deaths, s.banked), (0, 1, 40), "lost the haul: {s:?}");
-}
+// Saves
 
 #[test]
 fn save_round_trips_through_a_file() {
     let path = std::env::temp_dir().join(format!("rust-regime-save-{}.toml", std::process::id()));
     let file = SaveFile(Some(path.clone()));
-    let s = Save { banked: 1234, runs: 7, deaths: 2, ..default() };
+    let s = Save { banked: 1234, ..default() };
     file.write(&s);
     assert_eq!(file.load(), s);
     std::fs::remove_file(&path).ok();
     assert_eq!(file.load(), Save::default(), "missing file is a fresh save");
-}
-
-#[test]
-fn soldiers_of_different_teams_fight_each_other() {
-    let mut app = make_app(Tuning::default());
-    set_player(&mut app, Vec3::new(90.0, 1.0, 90.0), Vec3::ZERO);
-    let spawn = |app: &mut App, pos: Vec3, team: Team| {
-        app.world_mut()
-            .run_system_once(move |mut commands: Commands, tuning: Res<Tuning>| targets::spawn_soldier_team(&mut commands, &tuning, None, vec![pos], team))
-            .unwrap();
-    };
-    spawn(&mut app, Vec3::new(0.0, 0.0, 0.0), Team(0));
-    spawn(&mut app, Vec3::new(0.0, 0.0, 20.0), Team(1));
-    spawn(&mut app, Vec3::new(-30.0, 0.0, 0.0), Team(1));
-    run(&mut app, 6.0);
-    let mut killed = 0;
-    let mut q = app.world_mut().query::<(&Target, &Team)>();
-    for (t, _) in q.iter(app.world()) {
-        if !t.alive() {
-            killed += 1;
-        }
-    }
-    assert!(killed >= 1, "someone died in the crossfire");
-    let hp = app.world().resource::<PlayerHealth>().hp;
-    assert_eq!(hp, 100.0, "nobody shot the far-off player");
-    let mut kills = app.world_mut().resource_mut::<Messages<Killed>>();
-    kills.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -1477,18 +1135,6 @@ fn grapple_needs_the_class_and_a_target_in_range() {
     assert!(!app.world().resource::<GrappleState>().enabled);
 }
 
-fn dummy_at(app: &mut App, feet: Vec3) -> Entity {
-    let t = app.world().resource::<Tuning>().clone();
-    targets::spawn_dummy(&mut app.world_mut().commands(), &t, None, feet, 0.0);
-    app.update();
-    let mut q = app.world_mut().query_filtered::<Entity, With<Target>>();
-    q.single(app.world()).unwrap()
-}
-
-fn target_health(app: &mut App, e: Entity) -> f32 {
-    app.world().get::<Target>(e).unwrap().health
-}
-
 #[test]
 fn bullets_fly_drop_and_slow_then_vanish() {
     use crate::weapon::Bullet;
@@ -1506,51 +1152,6 @@ fn bullets_fly_drop_and_slow_then_vanish() {
     run(&mut app, 3.0);
     let mut q = app.world_mut().query::<&Bullet>();
     assert_eq!(q.iter(app.world()).count(), 0, "gone after three seconds");
-}
-
-#[test]
-fn bullets_go_through_wood_but_not_stone() {
-    let mut app = make_app(Tuning::default());
-    let dummy = dummy_at(&mut app, controller::SPAWN + Vec3::new(0.0, -1.0, -8.0));
-    // A thin wooden fence halfway, shoulder high.
-    let fence = app.world_mut().spawn((RigidBody::Static, Collider::cuboid(4.0, 3.0, 0.1), crate::weapon::Penetrable { cost: 0.35 }, Transform::from_translation(controller::SPAWN + Vec3::new(0.0, 0.5, -4.0)))).id();
-    select_weapon(&mut app, WeaponKind::Rifle);
-    input(&mut app).fire_pressed = true;
-    input(&mut app).fire_held = true;
-    run(&mut app, 0.12);
-    input(&mut app).fire_held = false;
-    let hp = target_health(&mut app, dummy);
-    assert!(hp < 100.0 && hp > 40.0, "hit through the fence with less energy: {hp}");
-    // Make it stone: no way through.
-    app.world_mut().entity_mut(fence).remove::<crate::weapon::Penetrable>();
-    let before = target_health(&mut app, dummy);
-    input(&mut app).fire_held = true;
-    run(&mut app, 0.3);
-    assert_eq!(target_health(&mut app, dummy), before, "stone stops bullets");
-}
-
-#[test]
-fn headshots_hurt_more_than_legshots() {
-    let t = Tuning::default();
-    let mut app = make_app(t.clone());
-    let feet = controller::SPAWN + Vec3::new(0.0, -1.0, -8.0);
-    let dummy = dummy_at(&mut app, feet);
-    select_weapon(&mut app, WeaponKind::Pistol);
-    let mut q = app.world_mut().query::<(&Player, &Transform)>();
-    let (p, tf) = q.single(app.world()).unwrap();
-    let eye = tf.translation + Vec3::Y * p.eye_offset(&t);
-    let aim_at = |y: f32| ((feet.y + y) - eye.y).atan2(8.0);
-    app.world_mut().resource_mut::<ViewAngles>().pitch = aim_at(1.65);
-    input(&mut app).fire_pressed = true;
-    run(&mut app, 0.2);
-    let head = 100.0 - target_health(&mut app, dummy);
-    app.world_mut().resource_mut::<ViewAngles>().pitch = aim_at(0.4);
-    app.world_mut().resource_mut::<crate::weapon::Recoil>().pending = Vec2::ZERO;
-    let before = target_health(&mut app, dummy);
-    input(&mut app).fire_pressed = true;
-    run(&mut app, 0.2);
-    let legs = before - target_health(&mut app, dummy);
-    assert!(head > 50.0 && legs > 5.0 && legs < 20.0, "head {head} vs legs {legs}");
 }
 
 #[test]
@@ -1576,122 +1177,6 @@ fn aiming_down_sights_settles_and_tightens() {
     input(&mut app).aim_held = false;
     run(&mut app, 0.6);
     assert!(app.world().resource::<crate::weapon::Aim>().level < 0.05);
-}
-
-fn soldiers(app: &mut App) -> Vec<(Entity, Vec3, Option<f32>)> {
-    let mut q = app.world_mut().query::<(Entity, &Soldier, &Transform)>();
-    q.iter(app.world()).map(|(e, s, tf)| (e, tf.translation, s.alert)).collect()
-}
-
-#[test]
-fn soldier_hears_a_shot_and_goes_to_look() {
-    let mut app = make_app(Tuning::default());
-    set_player(&mut app, Vec3::new(0.0, 1.0, 0.0), Vec3::ZERO);
-    // Out of sight behind a long wall, 40 m off.
-    wall(&mut app, Vec3::new(1.0, 6.0, 60.0), Vec3::new(20.0, 3.0, 0.0));
-    soldier(&mut app, vec![Vec3::new(40.0, 0.0, 0.0), Vec3::new(40.0, 0.0, 1.0)]);
-    run(&mut app, 0.3);
-    assert!(soldier_state(&mut app).1.is_none(), "quiet: not alert");
-    select_weapon(&mut app, WeaponKind::Pistol);
-    app.world_mut().resource_mut::<ViewAngles>().yaw = std::f32::consts::FRAC_PI_2;
-    input(&mut app).fire_pressed = true;
-    run(&mut app, 0.1);
-    let (start, alert) = soldier_state(&mut app);
-    assert!(alert.is_some(), "heard the shot");
-    run(&mut app, 1.0);
-    let (pos, _) = soldier_state(&mut app);
-    assert!(pos.distance(Vec3::new(0.0, pos.y, 0.0)) < start.distance(Vec3::new(0.0, start.y, 0.0)) - 2.0, "walking toward the shot: {start} to {pos}");
-}
-
-#[test]
-fn a_soldier_who_sees_you_calls_his_squad() {
-    let mut app = make_app(Tuning::default());
-    set_player(&mut app, Vec3::new(0.0, 1.0, 0.0), Vec3::ZERO);
-    // The second soldier is round a corner, 30 m from the first.
-    wall(&mut app, Vec3::new(30.0, 6.0, 1.0), Vec3::new(10.0, 3.0, -8.0));
-    soldier(&mut app, vec![Vec3::new(15.0, 0.0, 0.0), Vec3::new(15.0, 0.0, 1.0)]);
-    soldier(&mut app, vec![Vec3::new(10.0, 0.0, -25.0), Vec3::new(11.0, 0.0, -25.0)]);
-    run(&mut app, 0.5);
-    let s = soldiers(&mut app);
-    assert!(s.iter().all(|(_, _, a)| a.is_some()), "both alert: {s:?}");
-}
-
-#[test]
-fn a_hit_soldier_runs_for_cover() {
-    let mut app = make_app(Tuning::default());
-    set_player(&mut app, Vec3::new(0.0, 1.0, 0.0), Vec3::ZERO);
-    // A crate-height wall just beside the soldier, side-on to the player.
-    wall(&mut app, Vec3::new(0.6, 2.0, 3.0), Vec3::new(17.0, 1.0, 0.0));
-    soldier(&mut app, vec![Vec3::new(15.0, 0.0, 3.0), Vec3::new(15.0, 0.0, 4.0)]);
-    run(&mut app, 0.2);
-    let e = soldiers(&mut app)[0].0;
-    app.world_mut().resource_mut::<Messages<Damage>>().write(Damage { entity: e, amount: 10.0, impulse: Vec3::ZERO });
-    run(&mut app, 2.0);
-    let (_, pos, _) = soldiers(&mut app)[0];
-    let eye = Vec3::new(0.0, 1.0, 0.0) + Vec3::Y * 0.6;
-    let to = pos + Vec3::Y * 0.6 - eye;
-    let mut q = app.world_mut().query_filtered::<Entity, With<Player>>();
-    let player_e = q.single(app.world()).unwrap();
-    let blocked = app
-        .world_mut()
-        .run_system_once(move |spatial: SpatialQuery| {
-            spatial
-                .cast_ray(eye, Dir3::new(to.normalize()).unwrap(), to.length(), true, &SpatialQueryFilter::from_excluded_entities([player_e, e]))
-                .is_some()
-        })
-        .unwrap();
-    assert!(blocked, "the wall is between them now, soldier at {pos}");
-}
-
-
-#[test]
-fn fuel_burns_and_an_empty_tank_stops_the_engine() {
-    let mut app = vehicle_app();
-    let e = spawn_vehicle(&mut app, Kind::Jeep, Vec3::new(40.0, 0.0, 40.0), 0.0);
-    run(&mut app, 1.0);
-    set_player(&mut app, Vec3::new(42.0, 1.0, 40.0), Vec3::ZERO);
-    input(&mut app).interact_pressed = true;
-    run(&mut app, 0.1);
-    input(&mut app).movement = Vec2::Y;
-    run(&mut app, 2.0);
-    let fuel = app.world().get::<Vehicle>(e).unwrap().fuel;
-    assert!(fuel < 57.0 && fuel > 56.9, "a little burned: {fuel}");
-    // Stopped dead, wheels and all, so any motion from here on would have to come from the engine.
-    let mut v = app.world_mut().get_mut::<Vehicle>(e).unwrap();
-    v.fuel = 0.0;
-    for w in &mut v.wheels {
-        w.om = 0.0;
-    }
-    app.world_mut().entity_mut(e).insert(LinearVelocity::ZERO);
-    run(&mut app, 0.3);
-    let (start, _, _, _) = vehicle_state(&mut app, e);
-    run(&mut app, 2.0);
-    let (end, _, vel, _) = vehicle_state(&mut app, e);
-    assert!(vel.length() < 0.5 && start.distance(end) < 0.5, "no power: {vel}");
-}
-
-#[test]
-fn shot_up_vehicles_wreck_throw_the_driver_and_come_back() {
-    let mut app = vehicle_app();
-    let e = spawn_vehicle(&mut app, Kind::Jeep, Vec3::new(40.0, 0.0, 40.0), 0.0);
-    run(&mut app, 1.0);
-    set_player(&mut app, Vec3::new(42.0, 1.0, 40.0), Vec3::ZERO);
-    input(&mut app).interact_pressed = true;
-    run(&mut app, 0.1);
-    for _ in 0..3 {
-        app.world_mut().resource_mut::<Messages<Damage>>().write(Damage { entity: e, amount: 150.0, impulse: Vec3::ZERO });
-        run(&mut app, 0.05);
-    }
-    let v = app.world().get::<Vehicle>(e).unwrap();
-    assert!(v.wreck.is_some() && v.health == 0.0, "wrecked: {} hp", v.health);
-    assert_eq!(driving(&mut app), None, "the driver was thrown out");
-    assert!(app.world().resource::<PlayerHealth>().hp < 70.0, "and hurt");
-    input(&mut app).interact_pressed = true;
-    run(&mut app, 0.1);
-    assert_eq!(driving(&mut app), None, "a wreck can't be driven");
-    run(&mut app, Tuning::default().vehicle.wreck_time);
-    let v = app.world().get::<Vehicle>(e).unwrap();
-    assert!(v.wreck.is_none() && v.health == v.spec.hp && v.fuel == v.spec.tank, "replaced with a fresh one");
 }
 
 // ------------------------------------------------------------------------------------ menus
@@ -1865,51 +1350,6 @@ fn only_owned_weapons_can_be_drawn_and_x_toggles_the_knife() {
 }
 
 #[test]
-fn the_knife_cuts_what_is_in_reach_and_nothing_beyond() {
-    let t = Tuning::default();
-    let mut app = make_app(t.clone());
-    run(&mut app, 0.5);
-    let near = dummy_at(&mut app, controller::SPAWN + Vec3::new(0.0, -1.0, -1.6));
-    select_weapon(&mut app, WeaponKind::Knife);
-    input(&mut app).fire_held = true;
-    run(&mut app, 0.1);
-    let one = t.target_health - t.knife.damage;
-    assert!((target_health(&mut app, near) - one).abs() < 0.01, "one slash: {}", target_health(&mut app, near));
-    // Held, the next slash waits out the cooldown.
-    run(&mut app, t.knife.cooldown * 0.5);
-    assert!((target_health(&mut app, near) - one).abs() < 0.01, "too soon");
-    run(&mut app, t.knife.cooldown);
-    assert!(!app.world().get::<Target>(near).unwrap().alive(), "two slashes of {} kill a {} hp dummy", t.knife.damage, t.target_health);
-
-    let mut far = make_app(t.clone());
-    run(&mut far, 0.5);
-    let dummy = dummy_at(&mut far, controller::SPAWN + Vec3::new(0.0, -1.0, -(t.knife.range + 2.0)));
-    select_weapon(&mut far, WeaponKind::Knife);
-    input(&mut far).fire_held = true;
-    run(&mut far, 0.1);
-    assert_eq!(target_health(&mut far, dummy), t.target_health, "out of arm's reach");
-}
-
-#[test]
-fn a_melee_hit_freezes_the_world_for_a_moment_then_lets_go() {
-    let t = Tuning::default();
-    let mut app = make_app(t.clone());
-    run(&mut app, 0.5);
-    dummy_at(&mut app, controller::SPAWN + Vec3::new(0.0, -1.0, -1.6));
-    select_weapon(&mut app, WeaponKind::Knife);
-    input(&mut app).fire_held = true;
-    let mut slowest: f32 = 1.0;
-    for _ in 0..10 {
-        app.update();
-        slowest = slowest.min(app.world().resource::<Time<Virtual>>().relative_speed());
-    }
-    input(&mut app).fire_held = false;
-    assert!(slowest < 0.5, "slowed on the hit: {slowest}");
-    run(&mut app, 0.3);
-    assert_eq!(app.world().resource::<Time<Virtual>>().relative_speed(), 1.0, "back to full speed");
-}
-
-#[test]
 fn recoil_follows_a_fixed_pattern_that_climbs_then_resets() {
     use crate::weapon::recoil_pattern;
     let first = recoil_pattern(1, 0);
@@ -1931,25 +1371,6 @@ fn recoil_follows_a_fixed_pattern_that_climbs_then_resets() {
     run(&mut app, 0.03);
     assert!(app.world().resource::<crate::weapon::Recoil>().streak <= 2, "the pattern restarts after a pause");
 }
-
-#[test]
-fn a_hit_on_a_target_is_confirmed_and_throws_sparks() {
-    let mut app = make_app(Tuning::default());
-    app.add_systems(Update, |mut r: MessageReader<crate::weapon::HitConfirm>, mut n: Local<u32>, mut out: ResMut<Confirmed>| {
-        *n += r.read().count() as u32;
-        out.0 = *n;
-    });
-    app.init_resource::<Confirmed>();
-    let dummy = dummy_at(&mut app, controller::SPAWN + Vec3::new(0.0, -1.0, -8.0));
-    select_weapon(&mut app, WeaponKind::Pistol);
-    input(&mut app).fire_pressed = true;
-    run(&mut app, 0.2);
-    assert!(target_health(&mut app, dummy) < 100.0);
-    assert!(app.world().resource::<Confirmed>().0 >= 1, "the hit was confirmed");
-}
-
-#[derive(Resource, Default)]
-struct Confirmed(u32);
 
 #[test]
 fn magazines_run_dry_and_reload() {

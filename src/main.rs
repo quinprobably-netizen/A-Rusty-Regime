@@ -4,14 +4,12 @@ mod body;
 mod camo;
 mod character;
 mod dressing;
-mod aim_assist;
 mod camera;
 mod controller;
 mod health;
 mod hud;
 mod controls;
 mod input;
-mod targets;
 mod tuning;
 mod viewmodel;
 mod wardrobe;
@@ -19,7 +17,7 @@ mod weapon;
 #[cfg(test)]
 mod tests;
 mod vehicle;
-mod loot;
+mod save;
 mod boot;
 mod sound;
 mod menu;
@@ -65,13 +63,12 @@ fn main() {
             weapon::WeaponPlugin,
             health::HealthPlugin,
             viewmodel::ViewModelPlugin,
-            targets::TargetsPlugin,
             hud::HudPlugin,
             vehicle::VehiclePlugin,
-            loot::LootPlugin,
+            save::SavePlugin,
             sound::SoundPlugin,
         ))
-        .add_plugins((abilities::AbilitiesPlugin, arms::ArmsPlugin, wardrobe::WardrobePlugin, dressing::DressingPlugin, gunsmith::GunsmithPlugin, menu::MenuPlugin, scope::ScopePlugin, fingers::FingersPlugin, aim_assist::AimAssistPlugin, comic::ComicPlugin, near::NearPlugin))
+        .add_plugins((abilities::AbilitiesPlugin, arms::ArmsPlugin, wardrobe::WardrobePlugin, dressing::DressingPlugin, gunsmith::GunsmithPlugin, menu::MenuPlugin, scope::ScopePlugin, fingers::FingersPlugin, comic::ComicPlugin, near::NearPlugin))
         .add_plugins(level_plugin())
         .add_systems(Update, dev_screenshot.run_if(|| std::env::var_os("RUST_REGIME_SCREENSHOT").is_some()))
         .run();
@@ -101,7 +98,6 @@ fn dev_screenshot(
     mut player: Single<(&mut controller::Player, &mut Transform)>,
     surface: Res<surface::Surface>,
     origin: Option<Res<surface::Origin>>,
-    vehicles: Query<(&Transform, &vehicle::Vehicle, Option<&Children>), Without<controller::Player>>,
 ) {
     use bevy::render::view::screenshot::{Screenshot, save_to_disk};
     // `RUST_REGIME_SCREENSHOT_FRAME` waits longer for slow loads (default 150).
@@ -114,11 +110,6 @@ fn dev_screenshot(
         return;
     }
     *frames += 1;
-    if *frames == at {
-        for (tf, v, children) in &vehicles {
-            info!("{} at {} up {} grounded {} parts {}", v.spec.name, tf.translation, tf.rotation * Vec3::Y, v.grounded_wheels(), children.map_or(0, |c| c.len()));
-        }
-    }
     // Optional "slot,yaw_degrees,x,z,pitch_degrees" to pick a weapon, spot and look direction.
     if *frames == 1 && let Ok(spec) = std::env::var("RUST_REGIME_SCREENSHOT_VIEW") {
         let mut parts = spec.split(',').filter_map(|v| v.trim().parse::<f32>().ok());

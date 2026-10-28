@@ -6,16 +6,14 @@
 //! pops on hits. Everything hangs off `HudRoot` so the menus can hide it.
 
 use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
 
 use crate::comic::widgets::{filled_segments, pips, MAX_PIPS};
-use crate::comic::{body_text, display_text, panel, sfx_pop, ComicTheme, Halftone};
+use crate::comic::{body_text, display_text, panel, ComicTheme, Halftone};
 use crate::controller::{MoveState, Player};
 use crate::gunsmith::{Loadout, PARTS, SLOTS};
 use crate::health::PlayerHealth;
 use crate::input::ViewAngles;
-use crate::loot::{Inventory, Save};
-use crate::targets::Score;
+use crate::save::Save;
 use crate::tuning::Tuning;
 use crate::weapon::{Aim, Arsenal, Recoil, WEAPONS, WeaponKind};
 
@@ -27,7 +25,7 @@ impl Plugin for HudPlugin {
             .init_resource::<ComicTheme>()
             .init_resource::<FlightHud>()
             .add_systems(Startup, spawn_hud)
-            .add_systems(Update, (update_speed, update_weapon, update_crosshair, update_health, update_haul, update_compass, update_grapple, update_hint, pop_on_hits, update_reticle));
+            .add_systems(Update, (update_speed, update_weapon, update_crosshair, update_health, update_haul, update_compass, update_grapple, update_hint, update_reticle));
     }
 }
 
@@ -90,8 +88,6 @@ struct SlotPip(usize);
 #[derive(Component)]
 struct HeatFill;
 #[derive(Component)]
-struct ScoreText;
-#[derive(Component)]
 struct CrosshairLine(Vec2);
 #[derive(Component)]
 struct CrosshairDot;
@@ -129,17 +125,6 @@ struct HintText;
 const TAPE_PX: f32 = 2.4;
 const TAPE_HALF: f32 = 70.0;
 const HEALTH_SEGMENTS: usize = 10;
-
-/// The comic word for what the last frame's score change was: a kill beats a hit.
-pub(crate) fn pop_word(hits: u32, kills: u32, prev: (u32, u32)) -> Option<&'static str> {
-    if kills > prev.1 {
-        Some("KO!")
-    } else if hits > prev.0 {
-        Some("HIT!")
-    } else {
-        None
-    }
-}
 
 fn abs_node(left: Option<f32>, right: Option<f32>, top: Option<f32>, bottom: Option<f32>, width: f32) -> Node {
     let v = |o: Option<f32>| o.map_or(Val::Auto, Val::Px);
@@ -200,9 +185,8 @@ fn spawn_hud(mut commands: Commands, theme: Res<ComicTheme>, halftones: Option<R
             c.spawn((Node { position_type: PositionType::Absolute, left: Val::Px(tape_w / 2.0 - t.ink_px - 1.5), top: Val::Px(0.0), width: Val::Px(3.0), height: Val::Px(26.0), ..default() }, BackgroundColor(t.ink)));
         });
 
-        // Top right: score, the haul (the world clock sits under them, from `world`), the menu hint.
+        // Top right: the haul and the menu hint.
         let shadow = TextShadow { offset: Vec2::splat(2.0), color: t.ink };
-        p.spawn((ScoreText, body_text("", 16.0, t.paper, true, &t), shadow, Node { position_type: PositionType::Absolute, top: Val::Px(14.0), right: Val::Px(24.0), ..default() }));
         p.spawn((HaulText, body_text("", 16.0, t.paper, true, &t), shadow, Node { position_type: PositionType::Absolute, top: Val::Px(34.0), right: Val::Px(24.0), ..default() }));
         p.spawn((HintText, body_text("ESC  MENU", 14.0, t.paper, true, &t), shadow, Node { position_type: PositionType::Absolute, top: Val::Px(54.0), right: Val::Px(24.0), ..default() }));
 
@@ -280,13 +264,12 @@ fn spawn_hud(mut commands: Commands, theme: Res<ComicTheme>, halftones: Option<R
 }
 
 fn update_speed(
-    player: Single<(&Player, Option<&crate::vehicle::Driving>)>,
-    vehicles: Query<(&crate::vehicle::Vehicle, &avian3d::prelude::LinearVelocity)>,
+    player: Single<&Player>,
     flight: Res<FlightHud>,
     mut texts: ParamSet<(Single<&mut Text, With<SpeedText>>, Single<&mut Text, With<StateText>>)>,
     mut nodes: ParamSet<(Single<&mut Node, With<VehicleBars>>, Single<&mut Node, With<RpmFill>>, Single<&mut Node, With<FuelFill>>)>,
 ) {
-    let (player, driving) = *player;
+    let player = *player;
     // Flying: total and vertical speed, height over the gear, the assist and the boost tank.
     if flight.active {
         let assist = match flight.assist {
@@ -309,16 +292,6 @@ fn update_speed(
         nodes.p0().display = Display::Flex;
         nodes.p1().width = Val::Percent(flight.boost.clamp(0.0, 1.0) * 100.0);
         nodes.p2().width = Val::Percent(flight.throttle.abs().clamp(0.0, 1.0) * 100.0);
-        return;
-    }
-    if let Some((v, vel)) = driving.and_then(|d| vehicles.get(d.0).ok()) {
-        let gear = if v.gear < 0 { "R".to_string() } else { v.gear.to_string() };
-        let fuel = if v.fuel <= 0.0 { "OUT OF FUEL" } else { "" };
-        texts.p1().0 = format!("{}   GEAR {gear}   HULL {:.0}%   {fuel}", v.spec.name.to_uppercase(), v.health / v.spec.hp * 100.0);
-        texts.p0().0 = format!("{:4.0} km/h", vel.0.length() * 3.6);
-        nodes.p0().display = Display::Flex;
-        nodes.p1().width = Val::Percent((v.rpm / v.spec.redline.max(1.0) * 100.0).clamp(0.0, 100.0));
-        nodes.p2().width = Val::Percent((v.fuel / v.spec.tank.max(1.0) * 100.0).clamp(0.0, 100.0));
         return;
     }
     nodes.p0().display = Display::None;
@@ -344,9 +317,8 @@ fn update_weapon(
     tuning: Res<Tuning>,
     loadout: Res<Loadout>,
     recoil: Option<Res<Recoil>>,
-    score: Res<Score>,
     theme: Res<ComicTheme>,
-    mut texts: ParamSet<(Single<&mut Text, With<WeaponText>>, Single<&mut Text, With<AmmoText>>, Single<&mut Text, With<MagText>>, Single<&mut Text, With<PartsText>>, Single<&mut Text, With<ScoreText>>)>,
+    mut texts: ParamSet<(Single<&mut Text, With<WeaponText>>, Single<&mut Text, With<AmmoText>>, Single<&mut Text, With<MagText>>, Single<&mut Text, With<PartsText>>)>,
     mut slot_pips: Query<(&SlotPip, &mut BackgroundColor), Without<AmmoPip>>,
     mut ammo: Query<(&AmmoPip, &mut Node, &mut BackgroundColor), Without<SlotPip>>,
     mut heat: Single<(&mut Node, &mut BackgroundColor), (With<HeatFill>, Without<SlotPip>, Without<AmmoPip>)>,
@@ -393,32 +365,22 @@ fn update_weapon(
     let (node, color) = &mut *heat;
     node.width = Val::Percent(h.clamp(0.0, 1.0) * 100.0);
     color.0 = if h > 0.7 { theme.red } else { theme.orange };
-    if score.is_changed() {
-        texts.p4().0 = format!("HITS {}   KILLS {}", score.hits, score.kills);
-    }
 }
 
-/// The crosshair opens with heat and movement, closes crouched or aiming, and flashes red on a hit.
+/// The crosshair opens with heat and movement, and closes crouched or aiming.
 fn update_crosshair(
-    time: Res<Time>,
     tuning: Res<Tuning>,
     arsenal: Res<Arsenal>,
     loadout: Res<Loadout>,
     recoil: Option<Res<Recoil>>,
     aim: Option<Res<Aim>>,
-    score: Res<Score>,
     theme: Res<ComicTheme>,
     flight: Res<FlightHud>,
     player: Single<(&Player, Has<crate::vehicle::Driving>)>,
     mut lines: Query<(&CrosshairLine, &mut Node, &mut BackgroundColor, Option<&mut Outline>)>,
     mut dot: Single<(&mut BackgroundColor, Option<&mut Outline>), (With<CrosshairDot>, Without<CrosshairLine>)>,
-    mut flash: Local<f32>,
 ) {
     let (p, driving) = *player;
-    if score.is_changed() && score.hits > 0 {
-        *flash = 0.12;
-    }
-    *flash -= time.delta_secs();
     let kind = arsenal.kind();
     let heat = recoil.as_ref().map_or(0.0, |r| r.heat);
     let ads = aim.as_ref().map_or(0.0, |a| a.level);
@@ -431,8 +393,8 @@ fn update_crosshair(
     if driving {
         spread *= 2.0;
     }
-    let gap = 5.0 + spread * 6.0 + if *flash > 0.0 { 3.0 } else { 0.0 };
-    let mut color = if *flash > 0.0 { theme.red } else if ads > 0.5 { theme.yellow } else { Color::WHITE };
+    let gap = 5.0 + spread * 6.0;
+    let mut color = if ads > 0.5 { theme.yellow } else { Color::WHITE };
     // A fitted red dot or scope is the aim point while aiming: the crosshair fades out of its way.
     if crate::gunsmith::customizable(kind) && loadout.part(kind, 0) > 0 {
         color.set_alpha(color.alpha() * (1.0 - ads));
@@ -460,15 +422,8 @@ fn update_crosshair(
     }
 }
 
-fn update_haul(tuning: Res<Tuning>, inventory: Option<Res<Inventory>>, save: Option<Res<Save>>, mut haul_text: Single<&mut Text, With<HaulText>>) {
-    let mut haul = String::new();
-    if let (Some(inv), Some(save)) = (&inventory, &save) {
-        haul = format!("CARRY {}   BANK {}   RUNS {}", inv.carried, save.banked, save.runs);
-        if inv.extracting > 0.0 {
-            haul = format!("EXTRACTING {:.0}/{:.0} s   {haul}", inv.extracting, tuning.loot.extract_time);
-        }
-    }
-    haul_text.0 = haul;
+fn update_haul(save: Option<Res<Save>>, mut haul_text: Single<&mut Text, With<HaulText>>) {
+    haul_text.0 = save.map_or(String::new(), |save| format!("BANK {}", save.banked));
 }
 
 /// Slide the compass ticks past the notch; yaw 0 looks down -Z, which is north.
@@ -555,20 +510,6 @@ fn update_hint(time: Res<Time>, actions: Option<Res<crate::controls::ActionState
     hint.0.set_alpha(a);
 }
 
-/// A comic word ("HIT!", "KO!") pops beside the crosshair when the score goes up, at most one a
-/// frame, tilting left and right in turn.
-fn pop_on_hits(mut commands: Commands, score: Res<Score>, theme: Res<ComicTheme>, window: Option<Single<&Window, With<PrimaryWindow>>>, mut prev: Local<(u32, u32)>, mut flip: Local<bool>) {
-    if !score.is_changed() {
-        return;
-    }
-    let word = pop_word(score.hits, score.kills, *prev);
-    *prev = (score.hits, score.kills);
-    let Some(word) = word else { return };
-    let size = window.map_or(Vec2::new(1280.0, 720.0), |w| w.size());
-    *flip = !*flip;
-    sfx_pop(&mut commands, &theme, word, size / 2.0 + Vec2::new(60.0, -110.0), if *flip { -12.0 } else { 10.0 });
-}
-
 /// Places the flight reticle: the velocity ring and nose cross where they fall on screen, and the
 /// horizon line banked and shifted with the ship.
 #[allow(clippy::type_complexity)]
@@ -627,14 +568,6 @@ fn update_reticle(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn pop_word_prefers_kills() {
-        assert_eq!(pop_word(5, 1, (4, 0)), Some("KO!"));
-        assert_eq!(pop_word(5, 0, (4, 0)), Some("HIT!"));
-        assert_eq!(pop_word(4, 0, (4, 0)), None);
-        assert_eq!(pop_word(0, 0, (4, 1)), None, "a reset score is not a hit");
-    }
 
     #[test]
     fn hud_spawns_without_the_comic_plugin() {

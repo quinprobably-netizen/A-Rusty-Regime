@@ -648,7 +648,7 @@ fn flight_text(
     bases: Query<(&Transform, &base::Base)>,
     base_specs: Res<base::Bases>,
     prompt: Res<station::Prompt>,
-    save: Option<Res<crate::loot::Save>>,
+    save: Option<Res<crate::save::Save>>,
     hud: Option<Res<crate::hud::FlightHud>>,
     actions: Option<Res<crate::controls::ActionState>>,
     mut text: Single<&mut Text, With<FlightText>>,

@@ -1,23 +1,20 @@
 //! Sound (hyper-realism stage R2), all synthesized at startup so the download stays small:
 //! gunshots with a crack, a thump and a tail; footsteps, landings and hits; looping engines
 //! pitched by rpm on each vehicle; wind that grows with height and speed;
-//! and short jingles for loot and extraction. Drop CC0 samples in `assets/sounds/`
+//! Drop CC0 samples in `assets/sounds/`
 //! later and `load` picks them over the synthesis.
 
 use std::f32::consts::{PI, TAU};
 use std::sync::Arc;
 
-use bevy::audio::{AudioSink, AudioSinkPlayback, GlobalVolume, SpatialAudioSink, SpatialListener, Volume};
+use bevy::audio::{AudioSink, AudioSinkPlayback, GlobalVolume, SpatialListener, Volume};
 use bevy::prelude::*;
 
 use crate::camera::PlayerCamera;
 use crate::controller::{MoveState, Player};
 use crate::health::{PlayerHealth, PlayerHit};
-use crate::loot::Inventory;
-use crate::targets::{Shot, Target};
 use crate::tuning::Tuning;
-use crate::vehicle::{Kind, Vehicle};
-use crate::weapon::{Arsenal, Bullet, Damage, Explosion, HitConfirm, WeaponFired, WeaponKind, WEAPONS};
+use crate::weapon::{Arsenal, Bullet, Explosion, WeaponFired, WeaponKind, WEAPONS};
 
 pub struct SoundPlugin;
 
@@ -25,7 +22,7 @@ impl Plugin for SoundPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, load).add_systems(
             Update,
-            (listener, weapons, soldier_shots, explosions, hits, steps, engines, ambience, jingles, reload_foley, whizz_by, hit_ticks).run_if(resource_exists::<Sounds>),
+            (listener, weapons, explosions, hits, steps, ambience, reload_foley, whizz_by).run_if(resource_exists::<Sounds>),
         );
     }
 }
@@ -42,21 +39,11 @@ pub struct Sounds {
     steps: [Handle<AudioSource>; 4],
     land: Handle<AudioSource>,
     jump: Handle<AudioSource>,
-    hit: Handle<AudioSource>,
     hurt: Handle<AudioSource>,
-    engine_big: Handle<AudioSource>,
-    engine_small: Handle<AudioSource>,
-    engine_bike: Handle<AudioSource>,
     wind: Handle<AudioSource>,
-    pickup: Handle<AudioSource>,
-    extract: Handle<AudioSource>,
     /// Three takes of each gun's shot, by weapon slot (empty for the rest).
     shots: Vec<Vec<Handle<AudioSource>>>,
-    soldier: Handle<AudioSource>,
-    soldier_far: Handle<AudioSource>,
     whizz: Handle<AudioSource>,
-    tick: Handle<AudioSource>,
-    tick_head: Handle<AudioSource>,
     draw: Handle<AudioSource>,
     foley: Vec<Handle<AudioSource>>,
 }
@@ -237,16 +224,6 @@ fn whizz(seed: u64) -> Vec<f32> {
         .collect()
 }
 
-/// The tick when your shot lands: a short pair of partials, higher for a head.
-fn tick(hz: f32, len: f32) -> Vec<f32> {
-    (0..(len * RATE as f32) as usize)
-        .map(|i| {
-            let t = i as f32 / RATE as f32;
-            ((TAU * hz * t).sin() * 0.6 + (TAU * hz * 1.5 * t).sin() * 0.3) * (-t / (len * 0.3)).exp()
-        })
-        .collect()
-}
-
 /// What the foley sounds are, in `Sounds::foley` order.
 #[derive(Clone, Copy)]
 enum Foley {
@@ -302,30 +279,6 @@ fn thud(seconds: f32, cutoff: f32, tau: f32, hz: f32, amount: f32, seed: u64) ->
         .collect()
 }
 
-/// A looping engine note: harmonics of `f0` plus a little filtered noise, cut to whole cycles.
-fn engine(f0: f32, harmonics: usize, grit: f32, seed: u64) -> Vec<f32> {
-    let cycles = (f0 * 1.0).round().max(1.0);
-    let n = (cycles / f0 * RATE as f32).round() as usize;
-    let f = cycles / (n as f32 / RATE as f32);
-    let mut rng = Rng(seed);
-    let mut lp = LowPass::new(f0 * 6.0);
-    (0..n)
-        .map(|i| {
-            let t = i as f32 / RATE as f32;
-            let phase = TAU * f * t;
-            let mut v = 0.0;
-            for k in 1..=harmonics {
-                v += (phase * k as f32).sin() / (k as f32).powf(1.1);
-            }
-            // The exhaust pulse: a sharp peak once per cycle.
-            let p = (phase / TAU).fract();
-            let q = p.min(1.0 - p);
-            v += (-(q * q) / 0.004).exp() * 1.2;
-            soft(v * 0.45 + lp.run(rng.next()) * grit)
-        })
-        .collect()
-}
-
 /// A seamless loop: the last `fade` seconds cross-fade into the start.
 fn looped(mut v: Vec<f32>, fade: f32) -> Vec<f32> {
     let f = (fade * RATE as f32) as usize;
@@ -352,25 +305,6 @@ fn wind(seed: u64) -> Vec<f32> {
         })
         .collect();
     looped(v, 0.5)
-}
-
-/// Sine notes in a row, each `len` s with a soft decay.
-fn jingle(notes: &[f32], len: f32) -> Vec<f32> {
-    let per = (len * RATE as f32) as usize;
-    let mut v = Vec::with_capacity(per * notes.len() + per);
-    for (k, hz) in notes.iter().enumerate() {
-        for i in 0..per + per / 2 {
-            let t = i as f32 / RATE as f32;
-            let s = ((TAU * hz * t).sin() + 0.3 * (TAU * hz * 2.0 * t).sin()) * (-t / (len * 0.6)).exp() * 0.4;
-            let at = k * per + i;
-            if at >= v.len() {
-                v.push(s);
-            } else {
-                v[at] += s;
-            }
-        }
-    }
-    v
 }
 
 fn load(mut commands: Commands, tuning: Res<Tuning>, server: Res<AssetServer>, mut sources: ResMut<Assets<AudioSource>>) {
@@ -429,20 +363,10 @@ fn load(mut commands: Commands, tuning: Res<Tuning>, server: Res<AssetServer>, m
         ],
         land: clip("land", thud(0.25, 600.0, 0.06, 60.0, 0.7, 71)),
         jump: clip("jump", thud(0.12, 2500.0, 0.04, 200.0, 0.1, 81)),
-        hit: clip("hit", thud(0.14, 700.0, 0.035, 110.0, 0.5, 91)),
         hurt: clip("hurt", thud(0.3, 400.0, 0.08, 70.0, 0.8, 101)),
-        engine_big: clip("engine_big", engine(24.0, 12, 0.25, 111)),
-        engine_small: clip("engine_small", engine(36.0, 10, 0.2, 121)),
-        engine_bike: clip("engine_bike", engine(58.0, 8, 0.3, 131)),
         wind: clip("wind", wind(141)),
-        pickup: clip("pickup", jingle(&[660.0, 880.0], 0.09)),
-        extract: clip("extract", jingle(&[523.0, 659.0, 784.0, 1047.0], 0.13)),
         shots,
-        soldier: clip("soldier_shot", shot(&Voice { crack: 0.014, body: 0.04, cutoff: 5500.0, sub_hz: 90.0, sub: 0.5, tail: 0.2, click: 0.2 }, 1, 71)),
-        soldier_far: clip("soldier_shot_far", shot(&Voice { crack: 0.004, body: 0.12, cutoff: 1500.0, sub_hz: 60.0, sub: 0.2, tail: 0.5, click: 0.0 }, 1, 72)),
         whizz: clip("whizz", whizz(73)),
-        tick: clip("tick", tick(1700.0, 0.05)),
-        tick_head: clip("tick_head", tick(2900.0, 0.07)),
         draw: clip("draw", mix(&[(0.0, scrape(0.08, 74)), (0.07, clack(0.08, 1100.0, 0.012, 75))])),
         foley,
     };
@@ -545,22 +469,6 @@ fn whizz_by(
     }
 }
 
-/// The tick for your own shot landing on an enemy.
-fn hit_ticks(mut commands: Commands, s: Res<Sounds>, tuning: Res<Tuning>, mut confirm: MessageReader<HitConfirm>) {
-    for c in confirm.read() {
-        let clip = if c.head { &s.tick_head } else { &s.tick };
-        oneshot(&mut commands, clip, tuning.sound.effects * 0.6, 1.0);
-    }
-}
-
-fn soldier_shots(mut commands: Commands, s: Res<Sounds>, tuning: Res<Tuning>, camera: Option<Single<&Transform, With<PlayerCamera>>>, mut shots: MessageReader<Shot>) {
-    for shot in shots.read() {
-        // Far away a shot loses its crack and keeps a long, muffled boom.
-        let far = camera.as_ref().is_some_and(|c| c.translation.distance(shot.pos) > 70.0);
-        at(&mut commands, if far { &s.soldier_far } else { &s.soldier }, shot.pos, tuning.sound.guns * 0.8, 0.95);
-    }
-}
-
 fn explosions(mut commands: Commands, s: Res<Sounds>, tuning: Res<Tuning>, blasts: Query<&Transform, Added<Explosion>>) {
     for tf in &blasts {
         at(&mut commands, &s.explosion, tf.translation, tuning.sound.guns * 1.2, 1.0);
@@ -571,15 +479,8 @@ fn hits(
     mut commands: Commands,
     s: Res<Sounds>,
     tuning: Res<Tuning>,
-    mut damage: MessageReader<Damage>,
     mut player_hits: MessageReader<PlayerHit>,
-    targets: Query<&Transform, With<Target>>,
 ) {
-    for d in damage.read() {
-        if let Ok(tf) = targets.get(d.entity) {
-            at(&mut commands, &s.hit, tf.translation, tuning.sound.effects, 1.0);
-        }
-    }
     for _ in player_hits.read() {
         oneshot(&mut commands, &s.hurt, tuning.sound.effects, 1.0);
     }
@@ -630,35 +531,6 @@ fn stride_reset(d: f32) -> f32 {
 }
 
 #[derive(Component)]
-struct EngineSound;
-
-/// Every vehicle idles; the loop's speed follows rpm and its volume the throttle.
-fn engines(
-    mut commands: Commands,
-    s: Res<Sounds>,
-    tuning: Res<Tuning>,
-    mut vehicles: Query<(Entity, &Vehicle, Option<&mut SpatialAudioSink>, Has<EngineSound>)>,
-) {
-    for (e, v, sink, has) in &mut vehicles {
-        if !has {
-            let clip = match v.spec.kind {
-                Kind::Humvee => &s.engine_big,
-                Kind::Jeep => &s.engine_small,
-                Kind::DirtBike => &s.engine_bike,
-            };
-            commands.entity(e).insert((EngineSound, AudioPlayer(clip.clone()), PlaybackSettings::LOOP.with_spatial(true).with_volume(Volume::Linear(0.0))));
-            continue;
-        }
-        let Some(mut sink) = sink else { continue };
-        let base = (v.spec.idle * 1.6).max(500.0);
-        sink.set_speed((v.rpm / base).clamp(0.4, 4.0));
-        let load = 0.35 + 0.65 * v.throttle.abs();
-        let running = if v.driver.is_some() { 1.0 } else { 0.25 };
-        sink.set_volume(Volume::Linear(tuning.sound.engine * load * running));
-    }
-}
-
-#[derive(Component)]
 struct Wind;
 
 /// Wind grows with height and speed.
@@ -686,23 +558,6 @@ fn ambience(
     }
 }
 
-#[derive(Default)]
-struct JingleState {
-    carried: u32,
-}
-
-fn jingles(mut commands: Commands, s: Res<Sounds>, tuning: Res<Tuning>, inv: Option<Res<Inventory>>, mut st: Local<JingleState>) {
-    let v = tuning.sound.effects;
-    if let Some(inv) = inv {
-        if inv.just_extracted {
-            oneshot(&mut commands, &s.extract, v, 1.0);
-        } else if inv.carried > st.carried {
-            oneshot(&mut commands, &s.pickup, v * 0.8, 1.0);
-        }
-        st.carried = inv.carried;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -710,7 +565,7 @@ mod tests {
     #[test]
     fn shots_and_foley_are_bounded() {
         let v = Voice { crack: 0.012, body: 0.05, cutoff: 7000.0, sub_hz: 110.0, sub: 0.5, tail: 0.16, click: 0.4 };
-        for clip in [shot(&v, 0, 1), shot(&v, 2, 2), clack(0.1, 900.0, 0.015, 3), scrape(0.1, 4), whizz(5), tick(2000.0, 0.05), mix(&[(0.0, scrape(0.1, 6)), (0.1, clack(0.1, 900.0, 0.02, 7))])] {
+        for clip in [shot(&v, 0, 1), shot(&v, 2, 2), clack(0.1, 900.0, 0.015, 3), scrape(0.1, 4), whizz(5), mix(&[(0.0, scrape(0.1, 6)), (0.1, clack(0.1, 900.0, 0.02, 7))])] {
             assert!(clip.len() > 100 && clip.iter().all(|x| x.is_finite() && x.abs() <= 1.01 * 2.0), "clip stays in range");
         }
         assert!(shot(&v, 0, 1) != shot(&v, 2, 1), "takes differ");
@@ -728,10 +583,6 @@ mod tests {
 
     #[test]
     fn loops_are_seamless() {
-        let e = engine(24.0, 12, 0.0, 1);
-        let n = e.len();
-        assert!((n as f32 / RATE as f32 - 1.0).abs() < 0.05, "about a second long");
-        assert!((e[0] - e[n - 1]).abs() < 0.2, "the cycle closes: {} vs {}", e[0], e[n - 1]);
         let w = wind(3);
         assert_eq!(w.len(), (4.0 * RATE as f32) as usize - (0.5 * RATE as f32) as usize);
     }

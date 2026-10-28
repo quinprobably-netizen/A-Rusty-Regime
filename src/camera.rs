@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use crate::controller::{MoveState, Player};
 use crate::input::ViewAngles;
 use crate::tuning::Tuning;
-use crate::vehicle::{Driving, Vehicle};
+use crate::vehicle::Driving;
 
 /// First-person camera, or over the right shoulder in third person (T). Interpolates between fixed
 /// ticks so 66 Hz physics looks smooth at any frame rate, and smooths crouch height and wall-run tilt.
@@ -123,7 +123,7 @@ fn spawn_camera(mut commands: Commands, tuning: Res<Tuning>) {
 }
 
 type CameraItem<'a> = (&'a mut Transform, &'a mut PlayerCamera, &'a mut Projection);
-type CameraFilter = (Without<Player>, Without<Vehicle>, Without<ChaseCam>);
+type CameraFilter = (Without<Player>, Without<ChaseCam>);
 
 fn follow(
     time: Res<Time>,
@@ -134,7 +134,6 @@ fn follow(
     camera: Single<CameraItem, CameraFilter>,
     aim: Option<Res<crate::weapon::Aim>>,
     scoped: Option<Res<crate::scope::Scoped>>,
-    vehicles: Query<(&Transform, &Vehicle), Without<Player>>,
     chased: Query<(&Transform, &ChaseCam), Without<Player>>,
     menu: Option<Res<crate::menu::Menu>>,
     real: Res<Time<Real>>,
@@ -179,19 +178,6 @@ fn follow(
         tf.translation += dir * cam.boom;
     } else {
         cam.boom = 0.0;
-    }
-
-    // Driving: orbit behind the vehicle, never below the ground.
-    if let Some(Driving(v)) = driving
-        && let Ok((vtf, vehicle)) = vehicles.get(*v)
-    {
-        let (dist, height) = vehicle.spec.cam;
-        let look = Quat::from_euler(EulerRot::YXZ, view.yaw, view.pitch, 0.0);
-        let target = vtf.translation + Vec3::Y * height * 0.4;
-        let eye = target - look * Vec3::NEG_Z * dist + Vec3::Y * height * 0.6;
-        tf.translation = eye;
-        tf.rotation = Transform::from_translation(eye).looking_at(target, Vec3::Y).rotation;
-        cam.roll = 0.0;
     }
 
     // Flying: from the cockpit, or behind and above the craft, trailing its turns a little and

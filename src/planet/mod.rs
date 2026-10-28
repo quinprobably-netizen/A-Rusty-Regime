@@ -12,8 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::controller::{ControllerSet, Player, WorldBounds};
-use crate::surface::{Ground, Origin, Sphere, Surface, QUANTUM};
-use crate::system::System;
+use crate::surface::{Ground, Origin, Sphere, Surface};
 use crate::tuning::Tuning;
 use chunk::{build_chunk, leaves_near, ChunkMesh};
 use gravity::gravitate;
@@ -120,56 +119,6 @@ pub struct Chunk {
 /// Where the player will be in a second, in body coordinates: the quadtree refines around it.
 pub fn focus(player_world: Vec3, velocity: Vec3, origin: &Origin) -> Vec3 {
     origin.body(player_world + velocity)
-}
-
-/// A round body to stand on, streamed around the player: the debug level. The player starts on
-/// a parkour course at latitude 20°, longitude 0°.
-pub struct PlanetPlugin {
-    /// The `[body.<id>]` in `assets/system.toml`.
-    pub body: String,
-}
-
-/// The unit direction at `lat`, `lon` degrees: +Y is north, longitude 0 is +X and grows east,
-/// which is -Z there.
-fn lat_lon_dir(lat: f32, lon: f32) -> Vec3 {
-    let (lat, lon) = (lat.to_radians(), lon.to_radians());
-    Vec3::new(lat.cos() * lon.cos(), lat.sin(), -lat.cos() * lon.sin())
-}
-
-impl Plugin for PlanetPlugin {
-    fn build(&self, app: &mut App) {
-        let body = System::load().body(&self.body).cloned().unwrap_or_else(|| panic!("no [body.{}] in assets/system.toml", self.body));
-        let sphere = Arc::new(Sphere::new(body));
-        let surface = Surface::Sphere(sphere.clone());
-        let dir = lat_lon_dir(20.0, 0.0);
-        let at = sphere.surface_point(dir);
-        let spawn = at + surface.frame(at) * Vec3::new(0.0, COURSE_DECK + 0.95, 2.0);
-        let origin = Origin::at(spawn, QUANTUM);
-        app.insert_resource(surface.clone())
-            .insert_resource(Gravity(Vec3::ZERO))
-            .insert_resource(ClearColor(Color::srgb(0.02, 0.02, 0.05)))
-            .insert_resource(bevy::light::GlobalAmbientLight { brightness: 300.0, ..default() })
-            .insert_resource(origin)
-            .insert_resource(Seed { at })
-            // No sea on the moon and ±10 m of relief: anything 50 m under the datum has fallen through.
-            .insert_resource(WorldBounds { spawn, kill_altitude: -50.0 });
-        add_streaming(app);
-        app.add_systems(FixedUpdate, gravitate.before(ControllerSet)).add_systems(
-            Startup,
-            (seed_ground, move |world: &mut World| {
-                world.spawn((
-                    Name::new("Sun"),
-                    DirectionalLight { illuminance: 10_000.0, shadow_maps_enabled: true, ..default() },
-                    bevy::light::CascadeShadowConfigBuilder { maximum_distance: 500.0, ..default() }.build(),
-                    // Also sees the shadow-only layer, so the player's hidden head still casts a shadow.
-                    bevy::camera::visibility::RenderLayers::from_layers(&[0, crate::body::SHADOW_ONLY_LAYER]),
-                    Transform::default().looking_to(-(dir + Vec3::X).normalize(), Vec3::Y),
-                ));
-                spawn_course(world, &surface, &origin, at);
-            })
-                .chain(),
-        );
-    }
 }
 
 /// Where `seed_ground` builds: the surface point under the course, in body coordinates.

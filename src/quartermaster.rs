@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use crate::abilities::Class;
 use crate::character::Characters;
 use crate::gunsmith::{Loadout, PARTS, SLOTS};
-use crate::loot::{Save, SaveFile};
+use crate::save::{Save, SaveFile};
 use crate::weapon::{Arsenal, KNIFE, WEAPONS, WeaponKind};
 
 /// What a weapon costs, banked money. `None`: not for sale (the knife comes with you).

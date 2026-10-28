@@ -6,7 +6,7 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::loot::{Save, SaveFile};
+use crate::save::{Save, SaveFile};
 use crate::tuning::Gun;
 use crate::weapon::{WEAPONS, WeaponKind};
 
