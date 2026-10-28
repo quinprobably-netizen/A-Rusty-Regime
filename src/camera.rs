@@ -29,6 +29,14 @@ pub struct ChaseCam {
     pub height: f32,
     pub step: Vec3,
     pub turn: Quat,
+    /// The pilot's eyes in the craft's frame, for the cockpit view.
+    pub eye: Vec3,
+    /// Looking out of the cockpit rather than from behind (T / R3 while flying).
+    pub cockpit: bool,
+    /// How far the pilot is looking round, yaw and pitch, radians.
+    pub look: Vec2,
+    /// 0 to 1: how much the view widens for speed and boost.
+    pub kick: f32,
 }
 
 /// The third-person camera's offset from the eyes in view space (+X right, +Z back), pulled in
@@ -46,10 +54,25 @@ pub fn third_person(tuning: &Tuning, driving: bool, menu: Option<&crate::menu::M
     tuning.third_person && !driving && menu.is_none_or(|m| m.playing)
 }
 
-/// T or R3 flips between first and third person, and the settings remember it.
-fn toggle_view(mut input: ResMut<crate::input::PlayerInput>, menu: Option<Res<crate::menu::Menu>>, mut tuning: ResMut<Tuning>, settings: Option<ResMut<crate::menu::Settings>>) {
+/// T or R3 flips between first and third person, and the settings remember it. Flying, it flips
+/// between the cockpit and the chase view instead; driving, the camera is always behind.
+#[allow(clippy::too_many_arguments)]
+fn toggle_view(
+    mut input: ResMut<crate::input::PlayerInput>,
+    menu: Option<Res<crate::menu::Menu>>,
+    mut tuning: ResMut<Tuning>,
+    settings: Option<ResMut<crate::menu::Settings>>,
+    driving: Query<&Driving, With<Player>>,
+    mut chased: Query<&mut ChaseCam>,
+) {
     let pressed = std::mem::take(&mut input.view_pressed);
     if !pressed || menu.is_some_and(|m| !m.playing) {
+        return;
+    }
+    if let Ok(Driving(v)) = driving.single() {
+        if let Ok(mut chase) = chased.get_mut(*v) {
+            chase.cockpit = !chase.cockpit;
+        }
         return;
     }
     tuning.third_person = !tuning.third_person;
@@ -70,6 +93,10 @@ pub struct PlayerCamera {
     roll: f32,
     /// Distance from the eyes to the third-person camera: snaps in against walls, eases back out.
     boom: f32,
+    /// The chase camera's turn, trailing the craft's so it swings a little behind every manoeuvre.
+    chase: Option<Quat>,
+    /// The flight view's widening, eased.
+    kick: f32,
 }
 
 fn spawn_camera(mut commands: Commands, tuning: Res<Tuning>) {
@@ -164,17 +191,48 @@ fn follow(
         cam.roll = 0.0;
     }
 
-    // Flying: behind and above the craft, rolling with it.
+    // Flying: from the cockpit, or behind and above the craft, trailing its turns a little and
+    // pulled in ahead of anything behind it. Held free look turns either view.
+    let mut flying = None;
     if let Some(Driving(v)) = driving
         && let Ok((ctf, chase)) = chased.get(*v)
     {
         let behind = 1.0 - fixed.overstep_fraction();
         let rot = (chase.turn.inverse().slerp(Quat::IDENTITY, 1.0 - behind) * ctf.rotation).normalize();
         let at = ctf.translation - chase.step * behind;
-        tf.translation = at + rot * Vec3::new(0.0, chase.height, chase.dist);
-        tf.rotation = rot * Quat::from_rotation_x(-(chase.height / (chase.dist + 30.0)).atan());
+        let look = Quat::from_euler(EulerRot::YXZ, chase.look.x, chase.look.y, 0.0);
+        if chase.cockpit {
+            cam.chase = None;
+            tf.translation = at + rot * chase.eye;
+            tf.rotation = rot * look;
+        } else {
+            // A trailing turn, snapped back if the craft jumped (a handoff between frames).
+            let trail = match cam.chase {
+                Some(q) if q.angle_between(rot) < 0.8 => q.slerp(rot, 1.0 - (-9.0 * dt).exp()),
+                _ => rot,
+            };
+            cam.chase = Some(trail);
+            let view = (trail * look).normalize();
+            let want = view * Vec3::new(0.0, chase.height, chase.dist);
+            let (dir, max) = (want.normalize_or_zero(), want.length());
+            let reach = spatial
+                .as_ref()
+                .zip(Dir3::new(dir).ok())
+                .and_then(|(spatial, dir)| {
+                    let config = ShapeCastConfig { max_distance: max, ignore_origin_penetration: true, ..ShapeCastConfig::DEFAULT };
+                    let filter = SpatialQueryFilter::from_excluded_entities([*player_entity, *v]);
+                    spatial.cast_shape(&Collider::sphere(CAMERA_RADIUS * 2.0), at, Quat::IDENTITY, dir, &config, &filter)
+                })
+                .map_or(max, |hit| hit.distance);
+            tf.translation = at + dir * reach;
+            tf.rotation = view * Quat::from_rotation_x(-(chase.height / (chase.dist + 30.0)).atan());
+        }
         cam.roll = 0.0;
+        flying = Some(chase.kick);
+    } else {
+        cam.chase = None;
     }
+    cam.kick += (flying.unwrap_or(0.0) - cam.kick) * (1.0 - (-3.0 * dt).exp());
 
     // Wardrobe: stand in the dressing room beside the mannequin, drifting slowly.
     let dressing = menu.as_ref().is_some_and(|m| m.showcase() == crate::menu::Showcase::Body);
@@ -192,5 +250,7 @@ fn follow(
         // In third person there is no scope picture to look through: the view itself zooms.
         let zoom = if !third && scoped.is_some_and(|s| s.0.is_some()) { tuning.ads_fov_scoped } else { tuning.ads_fov };
         persp.fov = if dressing { crate::dressing::FOV } else { crate::scope::main_fov(tuning.fov_degrees.to_radians(), ads, zoom) };
+        // Flying fast or boosting, the view widens up to 12 degrees.
+        persp.fov += cam.kick * 12f32.to_radians();
     }
 }

@@ -69,6 +69,10 @@ pub enum Action {
     Lift,
     Roll,
     Boost,
+    /// Kill the ship's speed over the ground.
+    Stop,
+    /// Hold to look around the cockpit or the hull; let go and the view swings back.
+    FreeLook,
     // Menus
     Up,
     Down,
@@ -108,6 +112,8 @@ impl Action {
             Action::Lift => "Lift / sink",
             Action::Roll => "Roll",
             Action::Boost => "Boost",
+            Action::Stop => "Stop (match ground speed)",
+            Action::FreeLook => "Look around (hold)",
             Action::Up => "Up",
             Action::Down => "Down",
             Action::Left => "Left / decrease",
@@ -268,13 +274,18 @@ pub const BINDINGS: &[Bind] = &[
     bind(Fly, Lift, Source::PadAxis(GamepadAxis::LeftStickY)),
     key(Fly, Roll, K::KeyA),
     scaled(key(Fly, Roll, K::KeyD), -1.0),
-    scaled(bind(Fly, Roll, Source::PadAxis(GamepadAxis::LeftStickX)), -1.0),
+    pad(Fly, Roll, P::LeftTrigger),
+    scaled(pad(Fly, Roll, P::RightTrigger), -1.0),
     key(Fly, Boost, K::ShiftLeft),
     pad(Fly, Boost, P::South),
+    key(Fly, Stop, K::KeyX),
+    pad(Fly, Stop, P::North),
+    key(Fly, FreeLook, K::AltLeft),
+    pad(Fly, FreeLook, P::East),
     key(Fly, Use, K::KeyE),
     mode(pad(Fly, Use, P::West), Mode::Hold),
     key(Fly, ToggleView, K::KeyT),
-    pad(Fly, ToggleView, P::RightThumb),
+    mode(pad(Fly, ToggleView, P::RightThumb), Mode::Tap),
     key(Fly, Respawn, K::Backspace),
     pad(Fly, Respawn, P::Select),
     key(Fly, Pause, K::Escape),
@@ -314,6 +325,8 @@ pub struct ActionState {
     down: Vec<Source>,
     /// `Move`, after the dead zone (sticks) and normalising (keys), length <= 1.
     pub movement: Vec2,
+    /// Whether the pad was the last thing touched, so prompts name its buttons.
+    pub pad_last: bool,
 }
 
 impl ActionState {
@@ -334,6 +347,20 @@ impl ActionState {
 fn radial_deadzone(v: Vec2, dz: f32) -> Vec2 {
     let len = v.length();
     if len <= dz { Vec2::ZERO } else { v / len * ((len - dz) / (1.0 - dz)).min(1.0) }
+}
+
+/// One axis of a pad stick after that stick's round dead zone.
+fn stick_axis(g: &Gamepad, a: GamepadAxis, dz: f32) -> f32 {
+    match a {
+        GamepadAxis::LeftStickX => radial_deadzone(g.left_stick(), dz).x,
+        GamepadAxis::LeftStickY => radial_deadzone(g.left_stick(), dz).y,
+        GamepadAxis::RightStickX => radial_deadzone(g.right_stick(), dz).x,
+        GamepadAxis::RightStickY => radial_deadzone(g.right_stick(), dz).y,
+        _ => {
+            let v = g.get(a).unwrap_or(0.0);
+            if v.abs() <= dz { 0.0 } else { v.signum() * ((v.abs() - dz) / (1.0 - dz)).min(1.0) }
+        }
+    }
 }
 
 /// One frame of devices.
@@ -370,7 +397,9 @@ pub fn read(state: &mut ActionState, timers: &mut Timers, ctx: Ctx, d: &Devices)
             Source::WheelDown => (d.mouse_live && d.scroll.delta.y < 0.0) as u8 as f32,
             // A pressed button counts at least 0.75, so a pad that reports only the digital state works.
             Source::Pad(p) => d.pads.iter().map(|g| if g.pressed(p) { g.get(p).unwrap_or(0.0).max(0.75) } else { g.get(p).unwrap_or(0.0) }).fold(0.0, f32::max),
-            Source::PadAxis(a) => d.pads.iter().map(|g| g.get(a).unwrap_or(0.0)).map(|v| if v.abs() < d.dead_zone { 0.0 } else { v }).fold(0.0, |acc: f32, v| if v.abs() > acc.abs() { v } else { acc }),
+            // A stick axis goes through its stick's round dead zone and is rescaled past it, so
+            // it starts from zero and a push straight up does not also count a little sideways.
+            Source::PadAxis(a) => d.pads.iter().map(|g| stick_axis(g, a, d.dead_zone)).fold(0.0, |acc: f32, v| if v.abs() > acc.abs() { v } else { acc }),
             Source::LeftStick => {
                 for g in d.pads {
                     movement += radial_deadzone(g.left_stick(), d.dead_zone);
@@ -414,6 +443,13 @@ pub fn read(state: &mut ActionState, timers: &mut Timers, ctx: Ctx, d: &Devices)
         }
     }
     state.movement = movement.clamp_length_max(1.0);
+    if d.keys.get_just_pressed().next().is_some() || d.mouse.get_just_pressed().next().is_some() {
+        state.pad_last = false;
+    }
+    let pad_touched = d.pads.iter().any(|g| g.get_just_pressed().next().is_some() || g.left_stick().length() > 0.5 || g.right_stick().length() > 0.5);
+    if pad_touched {
+        state.pad_last = true;
+    }
     // Entering a new context (pause, boarding): an input that was already down in the last one is
     // not a fresh press here, or Esc would pause and un-pause in the same breath.
     if changed {
@@ -433,6 +469,7 @@ fn key_name(k: KeyCode) -> String {
     match s.as_str() {
         "ControlLeft" => "Ctrl".into(),
         "ShiftLeft" => "Shift".into(),
+        "AltLeft" => "Alt".into(),
         "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight" => s.replace("Arrow", "") + " arrow",
         _ => s.strip_prefix("Key").or_else(|| s.strip_prefix("Digit")).unwrap_or(&s).to_string(),
     }
@@ -487,6 +524,13 @@ impl Bind {
     pub fn on_pad(&self) -> bool {
         matches!(self.source, Source::Pad(_) | Source::PadAxis(_) | Source::LeftStick)
     }
+}
+
+/// What to press for `action` in `ctx` on the pad or the keyboard, every binding joined with "/"
+/// ("W/S", "RT/LT"), for on-screen prompts.
+pub fn hint(ctx: Ctx, action: Action, pad: bool) -> String {
+    let names: Vec<String> = BINDINGS.iter().filter(|b| b.ctx == ctx && b.action == action && b.on_pad() == pad).map(|b| b.name()).collect();
+    names.join("/")
 }
 
 /// The Controls screen and README rows for a context: (action, keyboard and mouse, pad). Slots
@@ -587,6 +631,14 @@ mod tests {
     }
 
     #[test]
+    fn prompts_name_the_keys_or_the_pad() {
+        assert_eq!(hint(Fly, Thrust, false), "W/S");
+        assert_eq!(hint(Fly, Thrust, true), "RT/LT");
+        assert_eq!(hint(Fly, Roll, true), "LB/RB");
+        assert_eq!(hint(Fly, FreeLook, false), "Alt");
+    }
+
+    #[test]
     fn rows_name_what_is_bound() {
         let foot = rows(Foot);
         let reload = foot.iter().find(|(l, ..)| *l == "Reload").unwrap();
@@ -649,11 +701,17 @@ mod tests {
         pad.analog_mut().set(GamepadButton::RightTrigger2, 0.6);
         pad.analog_mut().set(GamepadAxis::LeftStickX, 0.8);
         pad.analog_mut().set(GamepadAxis::LeftStickY, -0.5);
+        pad.analog_mut().set(GamepadButton::RightTrigger, 1.0);
         let mut state = ActionState::default();
         read_pad(Fly, &pad, &mut state);
         assert!((state.value(Thrust) - 0.6).abs() < 1e-4, "RT thrusts: {}", state.value(Thrust));
-        assert!(state.value(Roll) < -0.5, "stick right rolls right: {}", state.value(Roll));
+        assert!(state.value(Roll) < -0.5, "RB rolls right: {}", state.value(Roll));
         assert!(state.value(Lift) < -0.2, "stick down sinks: {}", state.value(Lift));
+        // Sideways on the stick no longer rolls: with RB let go, roll stays still.
+        pad.analog_mut().set(GamepadButton::RightTrigger, 0.0);
+        let mut state = ActionState::default();
+        read_pad(Fly, &pad, &mut state);
+        assert_eq!(state.value(Roll), 0.0, "the stick does not roll");
         let mut state = ActionState::default();
         read_pad(Drive, &pad, &mut state);
         assert!((state.value(Gas) - 0.6).abs() < 1e-4, "RT is gas: {}", state.value(Gas));

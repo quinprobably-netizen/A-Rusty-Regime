@@ -2,10 +2,12 @@
 //! them stand on Haven's apron, one per faction, each with its own handling from
 //! `assets/ships.toml` and its own hull from `models/ships/<id>.glb` (built by `tools/ships`).
 //! The mouse pitches and yaws, A and D roll, W and S thrust along the nose, Space and Ctrl
-//! lift and sink, Shift boosts. On a pad the right stick pitches and yaws, the left stick rolls
-//! and lifts, the triggers thrust and A boosts (Battlefield / Star Citizen style). Flight assist bleeds off sideways drift and, below a few
-//! kilometres, holds the ship against gravity and levels it over the ground, so landing is a
-//! matter of sinking onto a flat spot. Speed is capped by height over the ground, low near it
+//! lift and sink, Shift boosts from a tank, X stops, held Alt looks round. On a pad the right
+//! stick pitches and yaws, the bumpers roll, the left stick lifts, the triggers thrust, A boosts,
+//! Y stops and held B looks round (Battlefield / Star Citizen style). Flight assist bleeds off
+//! sideways drift and, below a few kilometres, holds the ship against gravity and levels it over
+//! the ground (fading out between 2.5 and 3.5 km), and slows the last metres of a descent to a
+//! soft touchdown, so landing is a matter of sinking onto a flat spot. Speed is capped by height over the ground, low near it
 //! and up to kilometres a second in space, and thick air drags at it and heats the nose.
 
 use avian3d::prelude::*;
@@ -25,11 +27,18 @@ use crate::vehicle::{Driving, VehicleSet};
 /// Closer than this to a ship's centre, E boards it.
 pub const BOARD_RADIUS: f32 = 8.0;
 /// The fastest a ship may be going for its pilot to leave it, m/s.
-const LEAVE_SPEED: f32 = 20.0;
-/// Mouse radians of a tick that make full stick.
-const MOUSE_FULL: f32 = 0.012;
-/// Below this height over the ground flight assist holds the ship up and levels it.
+pub const LEAVE_SPEED: f32 = 20.0;
+/// Mouse travel, radians a second, that makes full stick (times the flight mouse setting).
+const MOUSE_RATE: f32 = 2.4;
+/// Below this height over the ground flight assist holds the ship up and levels it; it fades out
+/// over `ASSIST_FADE` either side, so nothing changes all at once.
 const ASSIST_HEIGHT: f32 = 3000.0;
+const ASSIST_FADE: f32 = 500.0;
+/// Below this height over the gear, a sinking ship is slowed to a safe touchdown.
+const LANDING_HEIGHT: f32 = 30.0;
+/// Seconds of boost in a full tank, and how long it takes to refill once let go.
+const BOOST_TANK: f32 = 20.0;
+const BOOST_REFILL: f32 = 10.0;
 /// Drag area over mass, m²/kg: terminal speed at sea level on Haven is about 600 m/s.
 const DRAG: f32 = 4.4e-5;
 /// Air density times the cube of speed that makes the nose glow white hot.
@@ -76,6 +85,12 @@ pub struct ShipSpec {
     /// Speed caps, m/s: cruising near the ground, and the most a boost reaches in deep space.
     pub cruise: f32,
     pub boost_max: f32,
+    /// How fast the ship answers the stick, 1/s: heavy hulls swing round slowly.
+    #[serde(default = "default_response")]
+    pub response: f32,
+    /// Scales air drag: a boxy hull slows more.
+    #[serde(default = "default_drag")]
+    pub drag: f32,
     /// From the ship's centre down to the bottom of its landing gear.
     pub rest: f32,
     /// Where the pilot sits, and where they step out, in the ship's frame.
@@ -114,17 +129,30 @@ impl Ships {
     }
 }
 
+fn default_response() -> f32 {
+    8.0
+}
+fn default_drag() -> f32 {
+    1.0
+}
+
+/// How much flight assist holds the ship at `clearance` metres over the ground: fully below
+/// `ASSIST_HEIGHT - ASSIST_FADE`, not at all above `ASSIST_HEIGHT + ASSIST_FADE`.
+pub fn assist(clearance: f32) -> f32 {
+    1.0 - ((clearance - (ASSIST_HEIGHT - ASSIST_FADE)) / (2.0 * ASSIST_FADE)).clamp(0.0, 1.0)
+}
+
 impl ShipSpec {
     /// How fast flight assist lets the ship go at `clearance` metres over the ground: with the
     /// boost on, one and a half times the clearance a second, from twice cruising speed up to the
-    /// deep-space limit; off it, cruising speed near the ground and no limit higher up, where the
-    /// ship coasts.
+    /// deep-space limit; off it, cruising speed near the ground, then growing smoothly with height
+    /// (about seven times as fast for every kilometre) until there is no limit at all and the ship
+    /// coasts. Smooth, so coming down from space brakes the ship gradually instead of at once.
     pub fn speed_cap(&self, clearance: f32, boost: bool) -> f32 {
-        match (boost, clearance < ASSIST_HEIGHT) {
-            (true, _) => (clearance * 1.5).clamp(self.cruise * 2.0, self.boost_max),
-            (false, true) => self.cruise,
-            (false, false) => f32::INFINITY,
+        if boost {
+            return (clearance * 1.5).max(self.cruise * 2.0).min(self.boost_max.max(self.cruise * 2.0));
         }
+        self.cruise * ((clearance - ASSIST_HEIGHT).max(0.0) / 500.0).exp()
     }
 
     pub fn collider(&self) -> Collider {
@@ -168,6 +196,9 @@ pub struct Ship {
     pub burn: f32,
     /// When the pilot last stepped out, seconds since start; the newest parked ship is the respawn.
     pub landed_at: f64,
+    /// Boost burnt, 0 (full tank) to 1 (empty), and seconds since it last burnt.
+    pub boost_used: f32,
+    pub boost_idle: f32,
     before: (Vec3, Quat),
 }
 
@@ -181,8 +212,16 @@ pub struct ShipControls {
     /// Pitch up, yaw left and roll left, each -1 to 1.
     pub turn: Vec3,
     pub boost: bool,
+    /// Kill the speed over the ground.
+    pub stop: bool,
     /// Mouse travel since the last tick, radians: yaw (x) and pitch (y).
     pub mouse: Vec2,
+    /// The right stick, -1..1: pitch up (x) and yaw left (y).
+    pub stick: Vec2,
+    /// How far the pilot is looking round, yaw and pitch, radians (held Alt / B).
+    pub look: Vec2,
+    /// The mouse as a stick, smoothed over a few ticks so uneven frames do not jolt the ship.
+    mouse_stick: Vec2,
 }
 
 #[derive(Component)]
@@ -226,6 +265,7 @@ struct ShipMeshes {
 
 pub fn build(app: &mut App) {
     app.init_resource::<ShipControls>()
+        .init_resource::<crate::hud::FlightHud>()
         .insert_resource(Ships::load())
         .add_systems(Startup, spawn_fleet.after(crate::planet::seed_ground))
         .add_systems(Update, (controls, glow, stream, swing))
@@ -259,7 +299,7 @@ pub fn spawn(world: &mut World, spec: usize, transform: Transform) -> Entity {
         .spawn((
             Name::new(s.name.clone()),
             Ship { spec, ..default() },
-            ChaseCam { dist: s.cam[0], height: s.cam[1], ..default() },
+            ChaseCam { dist: s.cam[0], height: s.cam[1], eye: Vec3::from(s.seat) + Vec3::Y * 0.72, ..default() },
             RigidBody::Dynamic,
             s.collider(),
             Mass(s.mass),
@@ -367,23 +407,40 @@ fn swing(time: Res<Time>, ships: Query<&Ship>, mut ramps: Query<(&Ramp, &mut Tra
 /// Fills the stick from the keyboard, the mouse and the pad while the player flies, and keeps
 /// the view angles at rest so the mouse (and right stick) is read afresh each frame.
 fn controls(
+    time: Res<Time>,
     input: Res<PlayerInput>,
     mut controls: ResMut<ShipControls>,
     mut view: ResMut<ViewAngles>,
     flying: Query<(), (With<Player>, With<Driving>)>,
-    ships: Query<&Ship>,
+    mut ships: Query<(&Ship, &mut ChaseCam)>,
 ) {
-    if flying.is_empty() || ships.iter().all(|s| s.pilot.is_none()) {
+    if flying.is_empty() || ships.iter().all(|(s, _)| s.pilot.is_none()) {
+        controls.look = Vec2::ZERO;
         return;
     }
-    controls.mouse += Vec2::new(view.yaw, view.pitch);
+    let turned = Vec2::new(view.yaw, view.pitch);
     view.yaw = 0.0;
     view.pitch = 0.0;
-    // The stick comes from the bindings (see `controls`): keys, triggers and the left stick.
+    // Held Alt or B: the mouse and right stick look round the cabin; let go and the view swings back.
+    if input.free_look {
+        controls.look = (controls.look + turned).clamp(Vec2::new(-2.6, -1.2), Vec2::new(2.6, 1.2));
+    } else {
+        controls.mouse += turned;
+        controls.look *= (-8.0 * time.delta_secs()).exp();
+    }
+    for (ship, mut chase) in &mut ships {
+        if ship.pilot.is_some() {
+            chase.look = controls.look;
+        }
+    }
+    // The stick comes from the bindings (see `controls`): keys, triggers, the left stick and the
+    // bumpers. The left stick gets a gentle curve so small lift corrections are easy.
     controls.thrust = input.thrust;
-    controls.lift = input.lift;
+    controls.lift = input.lift.signum() * input.lift.abs().powf(1.5);
     controls.turn.z = input.roll;
     controls.boost = input.boost;
+    controls.stop = input.stop;
+    controls.stick = input.ship_stick;
 }
 
 /// E boards the nearest ship in reach, or leaves the one being flown: out at its exit point,
@@ -395,6 +452,7 @@ pub fn board(
     specs: Res<Ships>,
     mut input: ResMut<PlayerInput>,
     mut view: ResMut<ViewAngles>,
+    mut hud: ResMut<crate::hud::FlightHud>,
     surface: Res<Surface>,
     origin: Res<Origin>,
     mut players: Query<(Entity, &mut Player, &mut Transform, Option<&Driving>)>,
@@ -408,7 +466,10 @@ pub fn board(
             let Ok((se, mut ship, stf, vel)) = ships.get_mut(d.0) else { continue };
             input.interact_pressed = false;
             // No stepping out of a ship at flying speed: a held X or E must not drop the pilot.
+            // Speed is measured in the frame of the world below (it turns with the ground), so a
+            // ship hovering over a spinning planet is at rest. The HUD says why, and how to stop.
             if vel.0.length() > LEAVE_SPEED {
+                hud.too_fast = 3.0;
                 continue;
             }
             ship.pilot = None;
@@ -456,23 +517,32 @@ fn fly(
     tuning: Res<crate::tuning::Tuning>,
     specs: Res<Ships>,
     save: Option<Res<crate::loot::Save>>,
+    spatial: Option<SpatialQuery>,
     mut controls: ResMut<ShipControls>,
     mut input: ResMut<PlayerInput>,
-    mut ships: Query<(&mut Ship, Forces)>,
+    mut hud: ResMut<crate::hud::FlightHud>,
+    mut ships: Query<(Entity, &mut Ship, &mut ChaseCam, Forces)>,
     mut players: Query<(&mut Player, &mut Transform), With<Driving>>,
 ) {
     let dt = time.delta_secs();
     if dt <= 0.0 {
         return;
     }
+    // The mouse as a stick: how fast it moved against how fast makes full stick, eased over a few
+    // ticks, so the same flick turns the ship the same at any frame or tick rate.
     let mouse = std::mem::take(&mut controls.mouse);
+    let raw = (Vec2::new(mouse.y, mouse.x) / (MOUSE_RATE * dt) * tuning.flight_mouse).clamp(Vec2::NEG_ONE, Vec2::ONE);
+    controls.mouse_stick = controls.mouse_stick.lerp(raw, 1.0 - (-30.0 * dt).exp());
+    hud.too_fast = (hud.too_fast - dt).max(0.0);
+    hud.active = false;
     // The Yard's tuning rig: more thrust and speed, a little sharper turning.
     let (power, agility) = super::station::tune(save.map_or(0, |s| s.ship_level));
     let mut flown = false;
-    for (mut ship, mut forces) in &mut ships {
+    for (entity, mut ship, mut chase, mut forces) in &mut ships {
         let Some(pilot) = ship.pilot else {
             ship.burn = 0.0;
             ship.heat *= (-0.5 * dt).exp();
+            ship.boost_used = (ship.boost_used - dt / BOOST_REFILL).max(0.0);
             continue;
         };
         flown = true;
@@ -486,68 +556,107 @@ fn fly(
         // Over the sea the water is the ground.
         let floor = if sphere.body.land < 1.0 { sphere.height(up).max(0.0) } else { sphere.height(up) };
         let clearance = if anchored { surface.altitude(body) - floor } else { f32::MAX };
+        // Under the gear: close to the ground a ray finds the pads and decks the height map misses.
+        let reach = LANDING_HEIGHT * 2.0 + spec.rest;
+        let ray = (anchored && clearance < reach + 50.0)
+            .then(|| spatial.as_ref().zip(Dir3::new(-up).ok()))
+            .flatten()
+            .and_then(|(q, down)| q.cast_ray(pos, down, reach, true, &SpatialQueryFilter::from_excluded_entities([entity, pilot])));
+        let gear = ray.map_or(clearance - spec.rest, |hit| (hit.distance - spec.rest).min(clearance - spec.rest));
+        let assisted = if anchored { assist(clearance) } else { 0.0 };
         let air = sphere.body.air.as_ref().filter(|_| anchored).map_or(0.0, |a| a.density_at(surface.altitude(body)));
         let v = forces.linear_velocity();
-        let (fwd, ship_up) = (rot * Vec3::NEG_Z, rot * Vec3::Y);
+        let (fwd, ship_up, right) = (rot * Vec3::NEG_Z, rot * Vec3::Y, rot * Vec3::X);
 
-        // Turning: the mouse pitches and yaws, the keys roll; near the ground, assist levels.
-        let stick = Vec3::new(mouse.y / MOUSE_FULL, mouse.x / MOUSE_FULL, 0.0).clamp(Vec3::NEG_ONE, Vec3::ONE) + Vec3::new(controls.turn.x, controls.turn.y, controls.turn.z);
-        let mut w = rot * (stick.clamp(Vec3::NEG_ONE, Vec3::ONE) * Vec3::from(spec.rates) * agility);
-        let assisted = clearance < ASSIST_HEIGHT;
-        if assisted && controls.turn.z == 0.0 {
-            let strength = if clearance < 200.0 { 2.5 } else { 0.8 };
-            let level = ship_up.cross(up);
-            // Level pitch and roll but leave the heading alone.
-            w += (level - up * level.dot(up)) * strength;
+        // Boost burns from a tank that refills once let go, and never while reversing.
+        let boosting = controls.boost && controls.thrust >= 0.0 && ship.boost_used < 1.0;
+        if boosting {
+            ship.boost_used = (ship.boost_used + dt / BOOST_TANK).min(1.0);
+            ship.boost_idle = 0.0;
+        } else {
+            ship.boost_idle += dt;
+            if ship.boost_idle > 1.5 {
+                ship.boost_used = (ship.boost_used - dt / BOOST_REFILL).max(0.0);
+            }
         }
+
+        // Turning: the mouse or right stick pitches and yaws, the keys or bumpers roll; near the
+        // ground assist levels the ship, but never against the stick: pitching, it lets the nose
+        // be; rolling, it lets the wings be.
+        let stick = (Vec3::new(controls.mouse_stick.x + controls.stick.x, controls.mouse_stick.y + controls.stick.y, 0.0) + controls.turn).clamp(Vec3::NEG_ONE, Vec3::ONE);
+        let mut w = rot * (stick * Vec3::from(spec.rates) * agility);
+        if assisted > 0.0 {
+            let strength = assisted * (0.8 + 1.7 * (1.0 - (clearance / 400.0).clamp(0.0, 1.0)));
+            let level = ship_up.cross(up);
+            let free = |s: f32| (1.0 - s.abs() * 4.0).clamp(0.0, 1.0);
+            w += (right * level.dot(right) * free(stick.x) + fwd * level.dot(fwd) * free(stick.z)) * strength;
+        }
+        // Heavy hulls answer the stick slowly, light ones at once.
         let current = forces.angular_velocity();
-        *forces.angular_velocity_mut() = current.lerp(w, 1.0 - (-10.0 * dt).exp());
+        *forces.angular_velocity_mut() = current.lerp(w, 1.0 - (-spec.response * dt).exp());
 
         // Thrust, then assist: drift sideways bleeds off, gravity is held near the ground, and
         // the speed cap pulls back anything over it.
         let mut a = fwd * controls.thrust * spec.thrust * power + ship_up * controls.lift * spec.lift * power;
-        let cap = spec.speed_cap(clearance, controls.boost) * power;
-        if controls.boost {
+        let cap = spec.speed_cap(clearance, boosting) * power;
+        if boosting {
             a += fwd * (cap * 0.25).clamp(spec.thrust * power * 2.0, 400.0 * power);
         }
         let along = fwd * v.dot(fwd);
         // Sideways drift bleeds off, and up-and-down drift too unless the lift engines are on.
-        let right = rot * Vec3::X;
         let mut drift = right * v.dot(right);
         if controls.lift == 0.0 {
             drift += ship_up * v.dot(ship_up);
         }
         // In vacuum only while the engines push, so a coasting ship keeps to its path and a
         // handoff between frames, which changes what "sideways" is measured against, nudges nothing.
-        let pushing = controls.thrust != 0.0 || controls.boost;
+        let pushing = controls.thrust != 0.0 || boosting;
         a -= drift * if air > 0.01 { 1.5 } else if pushing { 0.4 } else { 0.0 };
+        // Reversing while moving forward also brakes, as hard as the trigger is pulled.
         if controls.thrust < 0.0 && v.dot(fwd) > 0.0 {
-            a -= along.normalize_or_zero() * spec.thrust * power;
+            a -= along.normalize_or_zero() * spec.thrust * power * -controls.thrust;
         }
-        if assisted && controls.lift == 0.0 {
-            a -= surface.gravity(body, tuning.gravity);
+        if assisted > 0.0 {
+            // Gravity is always held, so a part push on the lift climbs or sinks gently.
+            a -= surface.gravity(body, tuning.gravity) * assisted;
             // Hovering, it settles instead of bobbing.
-            a -= up * v.dot(up) * 0.8 * (controls.thrust == 0.0) as i32 as f32;
+            if controls.lift == 0.0 && controls.thrust == 0.0 {
+                a -= up * v.dot(up) * 0.8 * assisted;
+            }
+        }
+        let sinking = -v.dot(up);
+        // Sinking onto the ground: the last few metres slow to a soft touchdown, about 1.5 m/s,
+        // whatever the lift engines are doing.
+        if assisted > 0.0 && controls.lift <= 0.0 && gear < LANDING_HEIGHT {
+            let safe = 1.5 + 0.4 * gear.max(0.0);
+            if sinking > safe {
+                a += up * ((sinking - safe) * 6.0 + spec.lift * power * -controls.lift);
+            }
         }
         // Diving at the ground faster than the engines could stop in time, assist pulls out.
-        let sinking = -v.dot(up);
         if anchored && sinking > 0.0 && clearance < ASSIST_HEIGHT * 2.0 {
             let need = sinking * sinking / (2.0 * (clearance - 30.0).max(10.0));
             if need > PULL_OUT {
                 a += up * need.min(CAP_BRAKE * 5.0);
             }
         }
+        // Stop (X / Y): every engine turns against the motion until the ship hangs still.
+        if controls.stop {
+            a -= v.normalize_or_zero() * (v.length() * 2.0).min((spec.thrust + spec.lift) * power);
+        }
         let speed = v.length();
         if speed > cap {
             a -= v / speed * ((speed - cap) * 1.5).min(CAP_BRAKE);
         }
-        a -= v * (0.5 * air * speed * DRAG);
+        a -= v * (0.5 * air * speed * DRAG * spec.drag);
         forces.apply_linear_acceleration(a);
 
-        ship.burn = (controls.thrust.abs() + controls.lift.abs() + controls.boost as i32 as f32 * 2.0).min(1.0);
+        ship.burn = (controls.thrust.abs() + controls.lift.abs() + controls.stop as i32 as f32 + boosting as i32 as f32 * 2.0).min(1.0);
         // Ram heating: dense air times the cube of speed, normalised so 1 is a hard re-entry.
         let target = (air * speed * speed * speed / HOT).clamp(0.0, 1.0);
         ship.heat += (target - ship.heat) * (1.0 - (-3.0 * dt).exp());
+        // The chase camera widens with speed and more with the boost.
+        chase.kick = boosting as i32 as f32 * 0.7 + (speed / (spec.cruise * 3.0)).min(1.0) * 0.3;
 
         if let Ok((mut p, mut tf)) = players.get_mut(pilot) {
             tf.translation = pos + rot * Vec3::from(spec.seat);
@@ -556,7 +665,23 @@ fn fly(
             p.prev_pos = tf.translation;
             p.velocity = v;
             p.state = MoveState::Ground;
+            // The compass reads the nose against the same frame it reads the view on foot.
+            let nose = p.frame.inverse() * fwd;
+            hud.heading = (-nose.x).atan2(-nose.z);
         }
+        hud.active = true;
+        hud.speed = speed;
+        hud.climb = v.dot(up);
+        hud.altitude = anchored.then_some(gear.max(0.0));
+        hud.pitch = fwd.dot(up).clamp(-1.0, 1.0).asin();
+        hud.assist = assisted;
+        hud.boost = 1.0 - ship.boost_used;
+        hud.boosting = boosting;
+        hud.stopping = controls.stop;
+        hud.throttle = controls.thrust;
+        hud.velocity = v;
+        hud.nose = fwd;
+        hud.up = up;
     }
     if flown {
         input.fire_held = false;

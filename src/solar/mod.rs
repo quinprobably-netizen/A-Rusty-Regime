@@ -632,6 +632,8 @@ fn flight_text(
     base_specs: Res<base::Bases>,
     prompt: Res<station::Prompt>,
     save: Option<Res<crate::loot::Save>>,
+    hud: Option<Res<crate::hud::FlightHud>>,
+    actions: Option<Res<crate::controls::ActionState>>,
     mut text: Single<&mut Text, With<FlightText>>,
 ) {
     let (tf, p, driving) = *player;
@@ -644,7 +646,8 @@ fn flight_text(
         format!("DEEP SPACE   {}/s", km(velocity.length()))
     } else {
         let ground = solar.spheres[&solar.anchor].height(here.normalize_or(Vec3::Y));
-        let altitude = here.length() - (body.radius + body.sea_level) - ground.max(0.0);
+        // Flying, the height is the landing gear's over whatever is under it; on foot, the eyes'.
+        let altitude = hud.as_ref().filter(|h| h.active && flying.is_some()).and_then(|h| h.altitude).unwrap_or(here.length() - (body.radius + body.sea_level) - ground.max(0.0));
         format!("{}   ALT {}   {}/s   g {:.1}", body.name.to_uppercase(), km(altitude), km(velocity.length()), body.gravity)
     };
     for (at, base) in &bases {
@@ -671,13 +674,31 @@ fn flight_text(
         }
     }
     line.push_str(&prompt.text());
+    // Prompts name the keys or the pad buttons, whichever was touched last.
+    use crate::controls::{hint, Action, Ctx};
+    let pad = actions.as_ref().is_some_and(|a| a.pad_last);
+    let key = |ctx: Ctx, action: Action| hint(ctx, action, pad);
     if driving.is_none() {
         let near = ships.iter().map(|(s, _, ship)| (s.translation.distance(tf.translation), ship.spec)).filter(|(d, _)| *d < ship::BOARD_RADIUS).min_by(|a, b| a.0.total_cmp(&b.0));
         if let Some((_, spec)) = near {
-            line.push_str(&format!("\n[E] board {}", specs.ship[spec].name));
+            line.push_str(&format!("\n[{}] board {}", key(Ctx::Foot, Action::Use), specs.ship[spec].name));
         }
-    } else {
-        line.push_str("\n[W/S] thrust  [Space/Ctrl] up/down  [A/D] roll  [Shift] boost  [E] leave");
+    } else if flying.is_some() {
+        let f = |a: Action| key(Ctx::Ship, a);
+        let lift = if pad { "Left stick".to_string() } else { f(Action::Lift) };
+        line.push_str(&format!(
+            "\n[{}] thrust  [{lift}] up/down  [{}] roll  [{}] boost\n[{}] stop  [{}] look round  [{}] view  [{}] leave",
+            f(Action::Thrust),
+            f(Action::Roll),
+            f(Action::Boost),
+            f(Action::Stop),
+            f(Action::FreeLook),
+            f(Action::ToggleView),
+            f(Action::Use),
+        ));
+        if hud.as_ref().is_some_and(|h| h.too_fast > 0.0) {
+            line.push_str(&format!("\nTOO FAST TO LEAVE: slow under {:.0} m/s, [{}] stops", ship::LEAVE_SPEED, f(Action::Stop)));
+        }
     }
     if text.0 != line {
         text.0 = line;

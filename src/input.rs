@@ -50,6 +50,13 @@ pub struct PlayerInput {
     pub lift: f32,
     pub roll: f32,
     pub boost: bool,
+    /// The right stick while flying, curved, -1..1: pitch up (x) and yaw left (y). It does not
+    /// pass through the view, so it is a true stick rather than a mouse imitation.
+    pub ship_stick: Vec2,
+    /// Held: kill the ship's speed (X / Y).
+    pub stop: bool,
+    /// Held: look around instead of steering (Alt / B).
+    pub free_look: bool,
 }
 
 /// SDL mappings newer than the table gilrs ships: the 8BitDo Ultimate 2 over Bluetooth, USB
@@ -189,18 +196,26 @@ fn gather(
 
     // Looking: the mouse while the cursor is locked, and the right stick (every pad drives the
     // same player).
+    // Flying, the right stick is the ship's stick unless the pilot is looking around.
+    let invert = if t.invert_y { -1.0 } else { 1.0 };
+    let steering = ctx == Ctx::Ship && !held(Action::FreeLook);
     let mut look = Vec2::ZERO;
     if mouse_live {
-        look += pointer.motion.delta * t.mouse_sensitivity;
+        look += pointer.motion.delta * t.mouse_sensitivity * Vec2::new(1.0, invert);
     }
+    let mut ship_stick = Vec2::ZERO;
     for pad in &pads {
         let r = radial_deadzone(pad.right_stick(), t.stick_deadzone);
         // Response curve: fine aim near center, fast turns at full tilt.
         let curved = r.normalize_or_zero() * r.length().powf(t.stick_look_curve);
-        let invert = if t.invert_y { -1.0 } else { 1.0 };
+        if steering {
+            ship_stick += Vec2::new(curved.y * invert, -curved.x) * t.flight_stick;
+            continue;
+        }
         look.x += curved.x * t.stick_yaw_speed * dt;
         look.y -= curved.y * t.stick_pitch_speed * dt * invert;
     }
+    input.ship_stick = ship_stick.clamp(Vec2::NEG_ONE, Vec2::ONE);
     // Aiming down sights narrows the view (or a scope magnifies it), so the mouse turns it less.
     if let Some(aim) = aim.as_ref() {
         look *= crate::scope::look_scale(aim.level, t.ads_fov, scoped.as_ref().and_then(|s| s.0));
@@ -236,6 +251,8 @@ fn gather(
     input.lift = state.value(Action::Lift);
     input.roll = state.value(Action::Roll);
     input.boost = held(Action::Boost);
+    input.stop = held(Action::Stop);
+    input.free_look = held(Action::FreeLook);
 }
 
 fn grab_cursor(
