@@ -103,6 +103,7 @@ pub struct Settings {
     pub engine: f32,
     pub ambience: f32,
     pub atmosphere: bool,
+    pub toon: bool,
     pub bloom: bool,
     pub ssao: bool,
     pub taa: bool,
@@ -132,6 +133,7 @@ impl Settings {
             engine: s.engine,
             ambience: s.ambience,
             atmosphere: g.atmosphere,
+            toon: g.toon,
             bloom: g.bloom,
             ssao: g.ssao,
             taa: g.taa,
@@ -152,6 +154,7 @@ impl Settings {
         t.sound.engine = self.engine;
         t.sound.ambience = self.ambience;
         t.graphics.atmosphere = self.atmosphere;
+        t.graphics.toon = self.toon;
         t.graphics.bloom = self.bloom;
         t.graphics.ssao = self.ssao;
         t.graphics.taa = self.taa;
@@ -242,6 +245,7 @@ const SECTIONS: &[(&str, &[Field])] = &[
         "GRAPHICS",
         &[
             field("PHYSICAL SKY", Kind::Toggle, true, |s| bool_f(s.atmosphere), |s, v| s.atmosphere = v > 0.5),
+            field("COMIC SHADING", Kind::Toggle, false, |s| bool_f(s.toon), |s, v| s.toon = v > 0.5),
             field("BLOOM", Kind::Toggle, false, |s| bool_f(s.bloom), |s, v| s.bloom = v > 0.5),
             field("AMBIENT OCCLUSION", Kind::Toggle, false, |s| bool_f(s.ssao), |s, v| s.ssao = v > 0.5),
             field("ANTI-ALIASING", Kind::Toggle, false, |s| bool_f(s.taa), |s, v| s.taa = v > 0.5),
@@ -836,6 +840,7 @@ fn apply_live(
     volume: Option<ResMut<GlobalVolume>>,
     camera: Option<Single<Entity, With<PlayerCamera>>>,
     suns: Query<Entity, With<DirectionalLight>>,
+    toon: Option<ResMut<crate::comic::toon::Toon>>,
 ) {
     if !settings.is_changed() {
         return;
@@ -848,13 +853,17 @@ fn apply_live(
     if let Some(mut v) = volume {
         v.volume = Volume::Linear(settings.master);
     }
+    if let Some(mut toon) = toon {
+        toon.set_if_neq(crate::comic::toon::Toon(settings.toon));
+    }
     if let Some(camera) = camera {
         use bevy::anti_alias::taa::TemporalAntiAliasing;
         use bevy::pbr::ScreenSpaceAmbientOcclusion;
         use bevy::post_process::bloom::Bloom;
         let mut e = commands.entity(*camera);
-        if settings.bloom { e.insert(Bloom::NATURAL); } else { e.remove::<Bloom>(); }
-        if settings.ssao { e.insert((ScreenSpaceAmbientOcclusion::default(), Msaa::Off)); } else { e.remove::<ScreenSpaceAmbientOcclusion>(); }
+        if settings.bloom { e.insert(crate::comic::toon::bloom_for(settings.toon)); } else { e.remove::<Bloom>(); }
+        // Ambient occlusion muddies flat comic shading, so toon turns it off.
+        if settings.ssao && !settings.toon { e.insert((ScreenSpaceAmbientOcclusion::default(), Msaa::Off)); } else { e.remove::<ScreenSpaceAmbientOcclusion>(); }
         if settings.taa { e.insert((TemporalAntiAliasing::default(), Msaa::Off)); } else { e.remove::<TemporalAntiAliasing>(); }
     }
     for sun in &suns {
@@ -878,6 +887,16 @@ mod tests {
         let text = toml::to_string(&s).unwrap();
         let back: Settings = toml::from_str(&text).unwrap();
         assert_eq!(back, s);
+    }
+
+    #[test]
+    fn old_settings_without_toon_load_with_toon_on() {
+        let s: Settings = toml::from_str("bloom = true").unwrap();
+        assert!(s.toon);
+        let comic = fields().position(|f| f.label == "COMIC SHADING").expect("a Comic shading row");
+        let mut s = Settings::default();
+        step_field(comic, 1, &mut s);
+        assert!(!s.toon);
     }
 
     #[test]

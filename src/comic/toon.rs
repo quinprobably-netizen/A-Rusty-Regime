@@ -75,7 +75,14 @@ pub struct ToonPlugin;
 
 impl Plugin for ToonPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Toon>().add_systems(Update, sync_shader);
+        app.init_resource::<Toon>().add_systems(Startup, from_tuning).add_systems(Update, sync_shader);
+    }
+}
+
+/// `[graphics] toon` (with settings.toml laid over it) decides the start.
+fn from_tuning(tuning: Option<Res<crate::tuning::Tuning>>, mut toon: ResMut<Toon>) {
+    if let Some(t) = tuning {
+        toon.0 = t.graphics.toon;
     }
 }
 

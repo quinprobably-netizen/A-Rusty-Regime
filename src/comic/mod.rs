@@ -4,6 +4,7 @@
 #![allow(dead_code, unused_imports)]
 
 mod demo;
+pub mod edges;
 pub mod halftone;
 pub mod sfx;
 pub mod theme;
@@ -22,7 +23,7 @@ pub struct ComicPlugin;
 
 impl Plugin for ComicPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((UiMaterialPlugin::<Halftone>::default(), toon::ToonPlugin))
+        app.add_plugins((UiMaterialPlugin::<Halftone>::default(), toon::ToonPlugin, edges::EdgesPlugin))
             .init_resource::<ComicTheme>()
             .add_systems(Update, sfx::animate_pops);
         if std::env::var_os("RUST_REGIME_COMIC_DEMO").is_some() {

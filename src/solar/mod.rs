@@ -19,7 +19,6 @@ use bevy::light::atmosphere::ScatteringMedium;
 use bevy::light::{light_consts::lux, Atmosphere, AtmosphereEnvironmentMapLight, NotShadowCaster, SunDisk};
 use bevy::math::DVec3;
 use bevy::pbr::{AtmosphereMode, AtmosphereSettings};
-use bevy::post_process::bloom::Bloom;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::camera::Exposure;
 use std::collections::HashMap;
@@ -409,7 +408,7 @@ fn setup_camera(mut commands: Commands, tuning: Res<Tuning>, camera: Single<(Ent
         e.insert((AtmosphereSettings { aerial_view_lut_max_distance: 40_000.0, ..default() }, AtmosphereEnvironmentMapLight::default()));
     }
     if g.bloom {
-        e.insert(Bloom::NATURAL);
+        e.insert(crate::comic::toon::bloom_for(g.toon));
     }
 }
 
