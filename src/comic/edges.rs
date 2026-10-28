@@ -38,7 +38,7 @@ pub struct InkEdges {
 impl Default for InkEdges {
     fn default() -> Self {
         let ink = super::ComicTheme::look_a().ink.to_linear();
-        Self { ink: Vec4::new(ink.red, ink.green, ink.blue, 1.0), depth_threshold: 0.08, normal_threshold: 0.4, width: 1.0, normal_min_depth: 0.02 / 150.0, min_depth: 0.02 / 400_000.0, jump: 0.5 }
+        Self { ink: Vec4::new(ink.red, ink.green, ink.blue, 1.0), depth_threshold: 0.11, normal_threshold: 0.4, width: 1.0, normal_min_depth: 0.02 / 150.0, min_depth: 0.02 / 400_000.0, jump: 0.5 }
     }
 }
 
