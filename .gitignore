@@ -6,3 +6,4 @@ screenshots/characters/
 __pycache__/
 /tools/character/vendor/
 .worktrees/
+/save.toml
