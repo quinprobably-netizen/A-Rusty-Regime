@@ -32,6 +32,7 @@ mod sound;
 mod roads;
 mod world;
 mod menu;
+mod near;
 mod gunsmith;
 mod quartermaster;
 mod scope;
@@ -80,7 +81,7 @@ fn main() {
             mission::MissionPlugin,
             sound::SoundPlugin,
         ))
-        .add_plugins((abilities::AbilitiesPlugin, arms::ArmsPlugin, wardrobe::WardrobePlugin, dressing::DressingPlugin, gunsmith::GunsmithPlugin, menu::MenuPlugin, scope::ScopePlugin, fingers::FingersPlugin, aim_assist::AimAssistPlugin, comic::ComicPlugin))
+        .add_plugins((abilities::AbilitiesPlugin, arms::ArmsPlugin, wardrobe::WardrobePlugin, dressing::DressingPlugin, gunsmith::GunsmithPlugin, menu::MenuPlugin, scope::ScopePlugin, fingers::FingersPlugin, aim_assist::AimAssistPlugin, comic::ComicPlugin, near::NearPlugin))
         .add_plugins(level_plugin())
         .add_systems(Update, dev_screenshot.run_if(|| std::env::var_os("RUST_REGIME_SCREENSHOT").is_some()))
         .run();

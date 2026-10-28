@@ -1,0 +1,14 @@
+banked = 0
+runs = 0
+deaths = 0
+missions_done = 0
+presets = []
+preset = 0
+weapons = ["revolver", "knife"]
+parts = [0, 0, 0, 0]
+ship_level = 0
+contracts_done = 0
+
+[loadout]
+parts = []
+tune = []
