@@ -73,7 +73,8 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     var n2 = planar_normal(grass_n, grass_ns, p.xz, splat.scale.x) * w.x
         + planar_normal(dirt_n, dirt_ns, p.xz, splat.scale.y) * w.y
         + planar_normal(sand_n, sand_ns, p.xz, splat.scale.w) * w.w;
-    var normal = normalize(ng + vec3(n2.x, 0.0, n2.y) * 0.8);
+    // Detail normals are kept faint: under toon bands they would break the light into blotches.
+    var normal = normalize(ng + vec3(n2.x, 0.0, n2.y) * 0.3);
 
     // Rock, triplanar.
     if w.z > 0.001 {
@@ -95,8 +96,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         var rn = normalize(nx * bw.x + ny * bw.y + nz * bw.z);
         rn = normalize(vec3(rn.x, abs(rn.y) * sign(ng.y + 1e-3), rn.z) * vec3(1.0) + ng * 0.3);
         color = color + rock * w.z;
-        normal = normalize(mix(normal, rn, w.z));
+        normal = normalize(mix(normal, normalize(mix(ng, rn, 0.4)), w.z));
     }
+
+    // The photo textures are muted; comic paint is not. Push the layers' hue out from their grey.
+    let grey = dot(color, vec3(0.2126, 0.7152, 0.0722));
+    color = max(vec3(grey) + (color - vec3(grey)) * 1.7, vec3(0.0));
 
     pbr_input.material.base_color = vec4(color, 1.0);
     pbr_input.material.perceptual_roughness = dot(splat.rough, w);

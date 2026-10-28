@@ -15,6 +15,8 @@ struct InkEdges {
     width: f32,
     normal_min_depth: f32,
     min_depth: f32,
+    /// Share of the one-sided depth step the second difference must reach to count as a jump.
+    jump: f32,
 }
 @group(0) @binding(4) var<uniform> settings: InkEdges;
 
@@ -41,7 +43,11 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let du = d_at(c - dy, size);
     let dd = d_at(c + dy, size);
     let near = max(max(max(dc, dl), max(dr, du)), dd);
-    let lap = abs(dl + dr - 2.0 * dc) + abs(du + dd - 2.0 * dc);
+    // A silhouette is a jump: the second difference is about as big as the step into it. A crease
+    // or LOD fold in one continuous surface bends the depth by far less than its slope, so it stays clean.
+    let lap_x = abs(dl + dr - 2.0 * dc);
+    let lap_y = abs(du + dd - 2.0 * dc);
+    let lap = select(0.0, lap_x, lap_x > settings.jump * max(abs(dl - dc), abs(dr - dc))) + select(0.0, lap_y, lap_y > settings.jump * max(abs(du - dc), abs(dd - dc)));
     let depth_edge = smoothstep(settings.depth_threshold, settings.depth_threshold * 1.5, lap / max(near, 1e-7));
 
     var normal_edge = 0.0;

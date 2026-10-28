@@ -12,7 +12,7 @@ const PBR_FUNCTIONS: &str = "embedded://bevy_pbr/render/pbr_functions.wgsl";
 const BEGIN: &str = "\n// comic-toon begin\n";
 
 /// Bands by light ratio (exposed light over base colour, about 1 in full sun): shadow, mid, lit
-/// and a highlight. Shade keeps the paint's own hue, half tinted by the light, so a sky-lit side
+/// and a highlight. Shade keeps the paint's own hue, barely tinted by the light, so a sky-lit side
 /// doesn't turn blue. Only the deepest shade, close up, gets soft ink dots on a 45° screen; far
 /// off they would shimmer as the screen grid slides over the ground.
 const TOON_SHADE: &str = r#"
@@ -30,7 +30,7 @@ fn toon_shade(lit: vec3<f32>, in: pbr_types::PbrInput) -> vec3<f32> {
     band += 0.20 * smoothstep(1.7 - s, 1.7 + s, r);
     var hue = albedo / base;
     if l > 1e-5 {
-        hue = mix(hue, lit / l, 0.5);
+        hue = mix(hue, lit / l, 0.12);
     }
     hue = hue / max(dot(hue, w), 1e-5);
     var out = hue * base * band;
