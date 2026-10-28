@@ -14,6 +14,7 @@ struct InkEdges {
     normal_threshold: f32,
     width: f32,
     normal_min_depth: f32,
+    min_depth: f32,
 }
 @group(0) @binding(4) var<uniform> settings: InkEdges;
 
@@ -50,6 +51,6 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         normal_edge = smoothstep(settings.normal_threshold, settings.normal_threshold * 1.5, fold);
     }
 
-    let edge = max(depth_edge, normal_edge) * settings.ink.a;
+    let edge = max(depth_edge, normal_edge) * settings.ink.a * step(settings.min_depth, near);
     return vec4<f32>(mix(color.rgb, settings.ink.rgb, edge), color.a);
 }

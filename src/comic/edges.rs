@@ -28,12 +28,14 @@ pub struct InkEdges {
     pub width: f32,
     /// Normal folds only draw nearer than this (reverse-Z depth: near / distance).
     pub normal_min_depth: f32,
+    /// Nothing draws past this (reverse-Z depth): the star shell 1000 km out stays clean.
+    pub min_depth: f32,
 }
 
 impl Default for InkEdges {
     fn default() -> Self {
         let ink = super::ComicTheme::look_a().ink.to_linear();
-        Self { ink: Vec4::new(ink.red, ink.green, ink.blue, 1.0), depth_threshold: 0.08, normal_threshold: 0.4, width: 1.0, normal_min_depth: 0.02 / 150.0 }
+        Self { ink: Vec4::new(ink.red, ink.green, ink.blue, 1.0), depth_threshold: 0.08, normal_threshold: 0.4, width: 1.0, normal_min_depth: 0.02 / 150.0, min_depth: 0.02 / 400_000.0 }
     }
 }
 

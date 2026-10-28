@@ -25,6 +25,9 @@
 - Ruling: one depth/normal edge pass draws all outlines, with no inverted hulls. Inverted hulls on skinned characters would need a custom skinned vertex pipeline. Cost if wrong: line width is screen-constant, not per-object.
 - Ruling: the spec's four conversion groups land as commits on PR #41, not as four PRs, because Q asked for everything on one branch. Effects (group d) need no separate work: emissive stays smooth and the edge pass inks them like everything else, and `sfx_pop` on hits shipped in piece 3.
 
+- Ruling: no paper rim light. The ink edge pass already separates shapes, and a rim term would need the view vector inside the patched function. Cost if wrong: silhouettes against dark backgrounds read a little flatter.
+- Ruling (found in the render): ink stops past 400 km (`min_depth`), or the star shell 1000 km out drew as black specks.
+
 ## Review Focus
 
 1. Metallic surfaces (near-black diffuse) and fully unlit surfaces must not blow up the band ratio to white or NaN. Owned by Task 1 (`toon_shade` divides by `max(lum(base), 0.02)`).
