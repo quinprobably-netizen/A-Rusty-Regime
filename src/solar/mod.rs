@@ -19,7 +19,6 @@ use bevy::light::atmosphere::ScatteringMedium;
 use bevy::light::{light_consts::lux, Atmosphere, AtmosphereEnvironmentMapLight, NotShadowCaster, SunDisk};
 use bevy::math::DVec3;
 use bevy::pbr::{AtmosphereMode, AtmosphereSettings};
-use bevy::post_process::bloom::Bloom;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::camera::Exposure;
 use std::collections::HashMap;
@@ -131,6 +130,7 @@ impl Plugin for SolarPlugin {
         // agree: a handoff converts positions at the instant they hold.
         app.add_systems(FixedUpdate, gravitate.before(ControllerSet))
             .add_systems(FixedPostUpdate, (switch_anchor.before(rebase), tick_epoch.after(PhysicsSystems::Last)))
+            .init_resource::<crate::comic::ComicTheme>()
             .add_systems(Startup, (seed_ground, spawn_fixtures, spawn_sky, spawn_hud).chain())
             .add_systems(PostStartup, (setup_camera, dev_start.run_if(|| std::env::var_os("RUST_REGIME_AT").is_some())))
             .add_systems(Update, (place_bodies, light_and_stars, flight_text).chain());
@@ -408,7 +408,7 @@ fn setup_camera(mut commands: Commands, tuning: Res<Tuning>, camera: Single<(Ent
         e.insert((AtmosphereSettings { aerial_view_lut_max_distance: 40_000.0, ..default() }, AtmosphereEnvironmentMapLight::default()));
     }
     if g.bloom {
-        e.insert(Bloom::NATURAL);
+        e.insert(crate::comic::toon::bloom_for(g.toon));
     }
 }
 
@@ -614,10 +614,12 @@ fn dev_start(world: &mut World) {
     world.get_mut::<Player>(player).unwrap().prev_pos = at;
 }
 
-fn spawn_hud(mut commands: Commands) {
+fn spawn_hud(mut commands: Commands, theme: Res<crate::comic::ComicTheme>) {
+    // Below the objective caption, in the comic HUD's shadowed paper text; it hides with the HUD.
     commands.spawn((
-        Node { position_type: PositionType::Absolute, top: Val::Px(44.0), left: Val::Px(24.0), ..default() },
-        children![(FlightText, Text::new(""), TextFont { font_size: bevy::text::FontSize::Px(15.0), ..default() }, TextColor(Color::srgba(0.95, 0.93, 0.9, 0.9)))],
+        crate::hud::HudRoot,
+        Node { position_type: PositionType::Absolute, top: Val::Px(110.0), left: Val::Px(24.0), ..default() },
+        children![(FlightText, crate::comic::body_text("", 16.0, theme.paper, true, &theme), TextShadow { offset: Vec2::splat(2.0), color: theme.ink })],
     ));
 }
 

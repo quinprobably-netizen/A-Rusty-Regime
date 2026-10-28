@@ -683,6 +683,8 @@ impl Default for GrappleTuning {
 #[serde(default)]
 pub struct Graphics {
     pub atmosphere: bool,
+    /// Comic shading: banded light, shadow dots and ink outlines (turns SSAO off, bloom down).
+    pub toon: bool,
     pub ssao: bool,
     pub taa: bool,
     pub bloom: bool,
@@ -709,6 +711,7 @@ impl Default for Graphics {
     fn default() -> Self {
         Self {
             atmosphere: true,
+            toon: true,
             ssao: true,
             taa: true,
             bloom: true,

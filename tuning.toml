@@ -290,7 +290,8 @@ gravity_cancel = 0.8        # how much of gravity the taut rope carries while yo
 
 [graphics]                  # the look: sky and post effects, texture tiling, vegetation
 atmosphere = true           # physical sky and sun; off = plain blue sky, cheaper
-ssao = true                 # screen-space ambient occlusion
+toon = true                 # comic shading: banded light, shadow dots, ink outlines
+ssao = true                 # screen-space ambient occlusion (off under toon)
 taa = true                  # temporal anti-aliasing
 bloom = true
 exposure = 15               # camera EV100, 15 is full sun; lower = brighter

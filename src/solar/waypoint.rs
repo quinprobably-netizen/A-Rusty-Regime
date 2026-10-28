@@ -26,7 +26,7 @@ const HOVER: f32 = 14.0;
 const SIZE: f32 = 14.0;
 
 pub fn build(app: &mut App) {
-    app.add_systems(Startup, spawn_markers).add_systems(Update, update_markers);
+    app.init_resource::<crate::comic::ComicTheme>().add_systems(Startup, spawn_markers).add_systems(Update, update_markers);
 }
 
 /// What a marker points at.
@@ -72,7 +72,7 @@ fn km(m: f32) -> String {
 }
 
 /// One marker per base and one for the ship, hung off a root the menus can hide.
-fn spawn_markers(mut commands: Commands, bases: Res<Bases>) {
+fn spawn_markers(mut commands: Commands, bases: Res<Bases>, theme: Res<crate::comic::ComicTheme>) {
     let root = commands.spawn((HudRoot, Node { position_type: PositionType::Absolute, left: Val::Px(0.0), top: Val::Px(0.0), width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() })).id();
     let mut pins: Vec<(Target, Color, String)> = bases.base.iter().enumerate().map(|(i, b)| (Target::Base(i), Color::srgb(b.color[0], b.color[1], b.color[2]), b.name.to_uppercase())).collect();
     pins.push((Target::Ship, Color::WHITE, "KESTREL".into()));
@@ -82,19 +82,18 @@ fn spawn_markers(mut commands: Commands, bases: Res<Bases>) {
             .with_children(|p| {
                 p.spawn((
                     Diamond,
-                    Node { position_type: PositionType::Absolute, left: Val::Px(-SIZE / 2.0), top: Val::Px(-SIZE / 2.0), width: Val::Px(SIZE), height: Val::Px(SIZE), border: UiRect::all(Val::Px(2.0)), ..default() },
+                    Node { position_type: PositionType::Absolute, left: Val::Px(-SIZE / 2.0), top: Val::Px(-SIZE / 2.0), width: Val::Px(SIZE), height: Val::Px(SIZE), border: UiRect::all(Val::Px(3.0)), ..default() },
                     BackgroundColor(color),
-                    BorderColor::all(Color::srgba(0.0, 0.0, 0.0, 0.85)),
+                    BorderColor::all(theme.ink),
                     UiTransform::from_rotation(Rot2::degrees(45.0)),
                 ));
                 p.spawn((
                     Label,
-                    Node { position_type: PositionType::Absolute, left: Val::Px(SIZE), top: Val::Px(-SIZE), ..default() },
-                    Text::new(name),
-                    TextFont { font_size: bevy::text::FontSize::Px(15.0), ..default() },
-                    TextColor(color),
+                    // A black comic tag in the faction's colour.
+                    Node { position_type: PositionType::Absolute, left: Val::Px(SIZE), top: Val::Px(-SIZE), padding: UiRect::axes(Val::Px(6.0), Val::Px(1.0)), ..default() },
+                    crate::comic::body_text(name, 16.0, color, true, &theme),
+                    BackgroundColor(theme.ink),
                     TextLayout::no_wrap(),
-                    TextShadow { offset: Vec2::splat(1.5), color: Color::srgba(0.0, 0.0, 0.0, 0.9) },
                 ));
             })
             .id();

@@ -11,7 +11,6 @@ use bevy::image::{ImageAddressMode, ImageFilterMode, ImageLoaderSettings, ImageS
 use bevy::light::atmosphere::ScatteringMedium;
 use bevy::light::{light_consts::lux, Atmosphere, AtmosphereEnvironmentMapLight, SunDisk};
 use bevy::pbr::{AtmosphereSettings, ExtendedMaterial, MaterialExtension, ScreenSpaceAmbientOcclusion};
-use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy::shader::ShaderRef;
@@ -310,9 +309,9 @@ fn setup_view(mut commands: Commands, tuning: Res<Tuning>, camera: Single<Entity
         ));
     }
     if g.bloom {
-        e.insert(Bloom::NATURAL);
+        e.insert(crate::comic::toon::bloom_for(g.toon));
     }
-    if g.ssao {
+    if g.ssao && !g.toon {
         e.insert(ScreenSpaceAmbientOcclusion::default());
     }
     if g.taa {

@@ -2,16 +2,19 @@
 //! Bevy UI over the live world. Titanfall-style: a tall uppercase list on the left, the island
 //! behind it, button hints along the bottom. Time stands still while a menu is up.
 //!
-//! `RUST_REGIME_MENU=title|pause|settings|controls|maps|quartermaster|wardrobe` opens straight into a
+//! `RUST_REGIME_MENU=title|pause|settings|controls|maps|quartermaster|wardrobe|starmap|ship|contracts` opens straight into a
 //! screen (handy with `RUST_REGIME_SCREENSHOT`).
 
 use bevy::app::AppExit;
 use bevy::audio::{GlobalVolume, Volume};
 use bevy::light::CascadeShadowConfigBuilder;
 use bevy::prelude::*;
-use bevy::ui::{ColorStop, LinearGradient, BackgroundGradient};
 use bevy::window::{CursorGrabMode, CursorOptions};
 use serde::{Deserialize, Serialize};
+
+mod draw;
+mod space;
+use draw::rebuild;
 
 use crate::abilities::Class;
 use crate::camera::PlayerCamera;
@@ -44,6 +47,10 @@ pub enum Panel {
     /// The Roost's counter: guns and attachments, bought with banked money.
     Quartermaster,
     Wardrobe,
+    /// The pause menu's space screens: the worlds and bases, your ships, your courier job.
+    Starmap,
+    Ship,
+    Contracts,
 }
 
 /// What the camera presents while a panel is open.
@@ -107,6 +114,7 @@ pub struct Settings {
     pub engine: f32,
     pub ambience: f32,
     pub atmosphere: bool,
+    pub toon: bool,
     pub bloom: bool,
     pub ssao: bool,
     pub taa: bool,
@@ -141,6 +149,7 @@ impl Settings {
             engine: s.engine,
             ambience: s.ambience,
             atmosphere: g.atmosphere,
+            toon: g.toon,
             bloom: g.bloom,
             ssao: g.ssao,
             taa: g.taa,
@@ -167,6 +176,7 @@ impl Settings {
         t.sound.engine = self.engine;
         t.sound.ambience = self.ambience;
         t.graphics.atmosphere = self.atmosphere;
+        t.graphics.toon = self.toon;
         t.graphics.bloom = self.bloom;
         t.graphics.ssao = self.ssao;
         t.graphics.taa = self.taa;
@@ -270,6 +280,7 @@ const SECTIONS: &[(&str, &[Field])] = &[
         "GRAPHICS",
         &[
             field("PHYSICAL SKY", Kind::Toggle, true, |s| bool_f(s.atmosphere), |s, v| s.atmosphere = v > 0.5),
+            field("COMIC SHADING", Kind::Toggle, false, |s| bool_f(s.toon), |s, v| s.toon = v > 0.5),
             field("BLOOM", Kind::Toggle, false, |s| bool_f(s.bloom), |s, v| s.bloom = v > 0.5),
             field("AMBIENT OCCLUSION", Kind::Toggle, false, |s| bool_f(s.ssao), |s, v| s.ssao = v > 0.5),
             field("ANTI-ALIASING", Kind::Toggle, false, |s| bool_f(s.taa), |s, v| s.taa = v > 0.5),
@@ -323,6 +334,9 @@ enum Action {
     Back,
     /// A random look in the wardrobe.
     Randomize,
+    Starmap,
+    Ship,
+    Contracts,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -358,6 +372,11 @@ const MAPS: &[MapDef] = &[
 ];
 
 /// The [`MAPS`] entry this run was started with. An unknown level is the solar system, as in `main`.
+/// Whether the solar system is the level running, so the space screens have something to show.
+fn space_level() -> bool {
+    MAPS[current_map()].level == "system"
+}
+
 fn current_map() -> usize {
     let level = std::env::var("RUST_REGIME_LEVEL").ok();
     let level = match level.as_deref() {
@@ -403,6 +422,11 @@ fn rows(panel: Panel, screen: Screen, tuned: [bool; 4], fits: bool) -> Vec<Row> 
             rows.push(Row::Action("WARDROBE", Action::Wardrobe));
             rows.push(Row::Action("SETTINGS", Action::Settings));
             rows.push(Row::Action("CONTROLS", Action::Controls));
+            if screen == Screen::Paused && space_level() {
+                rows.push(Row::Action("STARMAP", Action::Starmap));
+                rows.push(Row::Action("SHIP", Action::Ship));
+                rows.push(Row::Action("CONTRACTS", Action::Contracts));
+            }
             rows.push(Row::Action("QUIT", Action::Quit));
         }
         Panel::Settings => {
@@ -416,7 +440,7 @@ fn rows(panel: Panel, screen: Screen, tuned: [bool; 4], fits: bool) -> Vec<Row> 
             }
             rows.push(Row::Action("BACK", Action::Back));
         }
-        Panel::Controls => rows.push(Row::Action("BACK", Action::Back)),
+        Panel::Controls | Panel::Starmap | Panel::Ship | Panel::Contracts => rows.push(Row::Action("BACK", Action::Back)),
         Panel::Maps => {
             rows.extend((0..MAPS.len()).map(Row::Map));
             rows.push(Row::Action("BACK", Action::Back));
@@ -452,6 +476,9 @@ fn main_cursor(panel: Panel) -> usize {
         Panel::Wardrobe => 2,
         Panel::Settings => 3,
         Panel::Controls => 4,
+        Panel::Starmap => 5,
+        Panel::Ship => 6,
+        Panel::Contracts => 7,
         Panel::Main | Panel::Quartermaster => 0,
     }
 }
@@ -480,7 +507,8 @@ pub struct MenuPlugin;
 impl Plugin for MenuPlugin {
     fn build(&self, app: &mut App) {
         let settings = Settings::load().unwrap_or_else(|| app.world().get_resource::<Tuning>().map_or_else(Settings::default, Settings::from_tuning));
-        app.insert_state(initial())
+        app.init_resource::<crate::comic::ComicTheme>()
+            .insert_state(initial())
             .insert_resource(settings)
             .init_resource::<Menu>()
             .init_resource::<Counter>()
@@ -496,7 +524,7 @@ impl Plugin for MenuPlugin {
 /// Boot to the title, unless a screenshot run asks for the game or a particular screen.
 fn initial() -> Screen {
     match std::env::var("RUST_REGIME_MENU").as_deref() {
-        Ok("pause" | "settings" | "controls" | "maps" | "quartermaster" | "wardrobe") => Screen::Paused,
+        Ok("pause" | "settings" | "controls" | "maps" | "quartermaster" | "wardrobe" | "starmap" | "ship" | "contracts") => Screen::Paused,
         Ok("play") => Screen::Playing,
         Ok(_) => Screen::Title,
         Err(_) if std::env::var_os("RUST_REGIME_SCREENSHOT").is_some() => Screen::Playing,
@@ -534,6 +562,9 @@ fn enter_menu(mut menu: ResMut<Menu>, mut counter: ResMut<Counter>, cursor: Opti
             Ok("maps") => Panel::Maps,
             Ok("quartermaster") => Panel::Quartermaster,
             Ok("wardrobe") => Panel::Wardrobe,
+            Ok("starmap") => Panel::Starmap,
+            Ok("ship") => Panel::Ship,
+            Ok("contracts") => Panel::Contracts,
             _ => Panel::Main,
         } };
     }
@@ -722,6 +753,9 @@ fn act(
                     }
                     Action::Settings => open(&mut menu, Panel::Settings),
                     Action::Controls => open(&mut menu, Panel::Controls),
+                    Action::Starmap => open(&mut menu, Panel::Starmap),
+                    Action::Ship => open(&mut menu, Panel::Ship),
+                    Action::Contracts => open(&mut menu, Panel::Contracts),
                 }
             }
         }
@@ -863,6 +897,7 @@ fn apply_live(
     volume: Option<ResMut<GlobalVolume>>,
     camera: Option<Single<Entity, With<PlayerCamera>>>,
     suns: Query<Entity, With<DirectionalLight>>,
+    toon: Option<ResMut<crate::comic::toon::Toon>>,
 ) {
     if !settings.is_changed() {
         return;
@@ -875,311 +910,22 @@ fn apply_live(
     if let Some(mut v) = volume {
         v.volume = Volume::Linear(settings.master);
     }
+    if let Some(mut toon) = toon {
+        toon.set_if_neq(crate::comic::toon::Toon(settings.toon));
+    }
     if let Some(camera) = camera {
         use bevy::anti_alias::taa::TemporalAntiAliasing;
         use bevy::pbr::ScreenSpaceAmbientOcclusion;
         use bevy::post_process::bloom::Bloom;
         let mut e = commands.entity(*camera);
-        if settings.bloom { e.insert(Bloom::NATURAL); } else { e.remove::<Bloom>(); }
-        if settings.ssao { e.insert((ScreenSpaceAmbientOcclusion::default(), Msaa::Off)); } else { e.remove::<ScreenSpaceAmbientOcclusion>(); }
+        if settings.bloom { e.insert(crate::comic::toon::bloom_for(settings.toon)); } else { e.remove::<Bloom>(); }
+        // Ambient occlusion muddies flat comic shading, so toon turns it off.
+        if settings.ssao && !settings.toon { e.insert((ScreenSpaceAmbientOcclusion::default(), Msaa::Off)); } else { e.remove::<ScreenSpaceAmbientOcclusion>(); }
         if settings.taa { e.insert((TemporalAntiAliasing::default(), Msaa::Off)); } else { e.remove::<TemporalAntiAliasing>(); }
     }
     for sun in &suns {
         commands.entity(sun).insert(CascadeShadowConfigBuilder { num_cascades: 4, maximum_distance: settings.shadow_distance, first_cascade_far_bound: 20.0, ..default() }.build());
     }
-}
-
-// ----------------------------------------------------------------------------------------- ui
-
-const AMBER: Color = Color::srgb(1.0, 0.72, 0.25);
-const WHITE: Color = Color::WHITE;
-const DIM: Color = Color::srgba(1.0, 1.0, 1.0, 0.55);
-const FAINT: Color = Color::srgba(1.0, 1.0, 1.0, 0.18);
-const PANEL: Color = Color::srgba(0.02, 0.03, 0.04, 0.72);
-const LEFT: f32 = 72.0;
-
-#[derive(Component)]
-struct MenuRoot;
-
-fn text(s: impl Into<String>, px: f32, color: Color) -> (Text, TextFont, TextColor) {
-    (Text::new(s), TextFont { font_size: FontSize::Px(px), ..default() }, TextColor(color))
-}
-
-fn abs(left: Option<f32>, right: Option<f32>, top: Option<f32>, bottom: Option<f32>) -> Node {
-    let v = |o: Option<f32>| o.map_or(Val::Auto, Val::Px);
-    Node { position_type: PositionType::Absolute, left: v(left), right: v(right), top: v(top), bottom: v(bottom), flex_direction: FlexDirection::Column, ..default() }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn rebuild(
-    mut commands: Commands,
-    roots: Query<Entity, With<MenuRoot>>,
-    menu: Res<Menu>,
-    screen: Res<State<Screen>>,
-    settings: Res<Settings>,
-    loadout: Res<Loadout>,
-    arsenal: Res<Arsenal>,
-    tuning: Res<Tuning>,
-    closet: Closet,
-    save: Option<Res<Save>>,
-) {
-    let wardrobe_changed = closet.wardrobe.as_ref().is_some_and(|w| w.is_changed());
-    let gun_changed = menu.panel == Panel::Quartermaster && (arsenal.is_changed() || save.as_ref().is_some_and(|s| s.is_changed()));
-    if !(menu.is_changed() || screen.is_changed() || settings.is_changed() || loadout.is_changed() || gun_changed || wardrobe_changed) {
-        return;
-    }
-    for e in &roots {
-        commands.entity(e).despawn();
-    }
-    let screen = *screen.get();
-    if screen == Screen::Playing {
-        return;
-    }
-    let kind = arsenal.kind();
-    let rows = rows(menu.panel, screen, tuned(&loadout, kind), gunsmith::customizable(kind));
-    let outfit = closet.outfit();
-    let base = tuning.gun(kind).cloned();
-    let fitted = base.as_ref().map(|g| loadout.gun(kind, g));
-
-    // Dark from the left so the list reads over the island, like a vignette.
-    let shade = |a: f32| ColorStop::auto(Color::srgba(0.0, 0.0, 0.0, a));
-    let gradient = BackgroundGradient(vec![LinearGradient::to_right(vec![shade(0.88), shade(0.7), shade(0.25), shade(0.15)]).into()]);
-    let mut root = commands.spawn((MenuRoot, Node { position_type: PositionType::Absolute, left: Val::Px(0.0), top: Val::Px(0.0), width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() }, gradient, ZIndex(10)));
-    root.with_children(|p| {
-        // Header.
-        p.spawn(abs(Some(LEFT), None, Some(48.0), None)).with_children(|h| {
-            let (small, big) = match (menu.panel, screen) {
-                (Panel::Main, Screen::Title) => ("ISLAND HUB  /  EXTRACTION", "RUST REGIME"),
-                (Panel::Main, _) => ("RUST REGIME", "PAUSED"),
-                (Panel::Settings, _) => ("RUST REGIME", "SETTINGS"),
-                (Panel::Controls, _) => ("RUST REGIME", "CONTROLS"),
-                (Panel::Maps, _) => ("RUST REGIME", "MAPS"),
-                (Panel::Quartermaster, _) => ("BANKED", "QUARTERMASTER"),
-                (Panel::Wardrobe, _) => ("RUST REGIME", "WARDROBE"),
-            };
-            if menu.panel == Panel::Quartermaster {
-                h.spawn(text(format!("BANKED  ${}", save.as_ref().map_or(0, |s| s.banked)), 14.0, AMBER));
-            } else {
-                h.spawn(text(small, 14.0, AMBER));
-            }
-            h.spawn(text(big, if big == "RUST REGIME" { 64.0 } else { 44.0 }, WHITE));
-            h.spawn((Node { width: Val::Px(320.0), height: Val::Px(2.0), margin: UiRect::top(Val::Px(6.0)), ..default() }, BackgroundColor(AMBER)));
-        });
-
-        // Rows.
-        let top = if menu.panel == Panel::Main && screen == Screen::Title { 190.0 } else { 140.0 };
-        let width = match menu.panel {
-            Panel::Main => 360.0,
-            Panel::Wardrobe => 620.0,
-            _ => 560.0,
-        };
-        p.spawn(Node { position_type: PositionType::Absolute, left: Val::Px(LEFT), top: Val::Px(top), bottom: Val::Px(44.0), width: Val::Px(width), flex_direction: FlexDirection::Column, row_gap: Val::Px(2.0), overflow: Overflow::clip_y(), ..default() }).with_children(|list| {
-            if menu.panel == Panel::Wardrobe {
-                let preset = save.as_ref().map_or(0, |s| s.preset);
-                list.spawn(Node { display: Display::Grid, grid_template_columns: RepeatedGridTrack::px(4, 146.0), row_gap: Val::Px(6.0), column_gap: Val::Px(6.0), ..default() }).with_children(|grid| {
-                    let mut index = 0;
-                    for row in &rows {
-                        if let Row::Preset | Row::Look(_) = row {
-                            tile(grid, *row, index, index == menu.cursor, outfit.as_ref(), closet.characters.as_deref(), preset);
-                            index += 1;
-                        }
-                    }
-                });
-                list.spawn(Node { height: Val::Px(10.0), ..default() });
-                let mut index = selectable(&rows).filter(|r| matches!(r, Row::Preset | Row::Look(_))).count();
-                for row in &rows {
-                    if let Row::Action(label, _) = row {
-                        action_row(list, label, index, menu.cursor == index, 22.0);
-                        index += 1;
-                    }
-                }
-                return;
-            }
-            let mut index = 0;
-            for row in &rows {
-                match *row {
-                    Row::Section(name) => {
-                        list.spawn((text(name, 13.0, AMBER), Node { margin: UiRect::top(Val::Px(8.0)), ..default() }));
-                    }
-                    Row::Action(label, _) => {
-                        let big = menu.panel == Panel::Main;
-                        if !big {
-                            list.spawn(Node { height: Val::Px(6.0), ..default() });
-                        }
-                        action_row(list, label, index, index == menu.cursor, if big { 40.0 } else { 22.0 });
-                        index += 1;
-                    }
-                    Row::Field(i) => {
-                        let f = fields().nth(i).unwrap();
-                        let (value, fill) = field_value(f, &settings);
-                        let label = if f.restart { format!("{} *", f.label) } else { f.label.to_string() };
-                        value_row(list, &label, &value, fill, None, index, index == menu.cursor, true);
-                        index += 1;
-                    }
-                    Row::Weapon => {
-                        let value = match (quartermaster::owns_weapon(save.as_deref(), kind), quartermaster::price(kind)) {
-                            (false, Some(cost)) => format!("{}  ${cost}", kind.name()),
-                            _ => format!("{}  OWNED", kind.name()),
-                        };
-                        let note = (!quartermaster::owns_weapon(save.as_deref(), kind)).then_some("ENTER buys it");
-                        value_row(list, "WEAPON", &value, None, note, index, index == menu.cursor, true);
-                        list.spawn(Node { height: Val::Px(10.0), ..default() });
-                        index += 1;
-                    }
-                    Row::Slot(slot) => {
-                        let at = loadout.part(kind, slot);
-                        let part = &PARTS[slot][at];
-                        let owned = quartermaster::owns_part(save.as_deref(), slot, at);
-                        let value = if owned { part.name.to_string() } else { format!("{}  ${}", part.name, quartermaster::PART_PRICES[slot][at]) };
-                        let note = if owned { part.desc.to_string() } else { format!("{}.  ENTER buys it", part.desc) };
-                        value_row(list, SLOTS[slot], &value, None, Some(&note), index, index == menu.cursor, true);
-                        index += 1;
-                    }
-                    Row::Tune(slot) => {
-                        let t = loadout.tuning(kind, slot);
-                        let (l, r) = TUNES[slot];
-                        value_row(list, &format!("  TUNE  {l} / {r}"), &format!("{t:+}"), Some((t + TUNE_MAX) as f32 / (2 * TUNE_MAX) as f32), None, index, index == menu.cursor, true);
-                        index += 1;
-                    }
-                    Row::Map(i) => {
-                        let m = &MAPS[i];
-                        value_row(list, m.name, if i == current_map() { "LOADED" } else { "" }, None, Some(m.desc), index, index == menu.cursor, false);
-                        index += 1;
-                    }
-                    Row::Preset | Row::Look(_) => {}
-                }
-            }
-            if menu.panel == Panel::Quartermaster && !menu.note.is_empty() {
-                list.spawn((text(menu.note.clone(), 15.0, AMBER), Node { margin: UiRect::top(Val::Px(10.0)), ..default() }));
-            }
-            if menu.panel == Panel::Settings {
-                list.spawn((text("* takes effect after a restart.  Saved to settings.toml.", 12.0, DIM), Node { margin: UiRect::top(Val::Px(4.0)), ..default() }));
-            }
-            if menu.panel == Panel::Controls {
-                list.spawn((text(controls_sheet(), 14.0, WHITE), Node { margin: UiRect::vertical(Val::Px(8.0)), ..default() }));
-            }
-        });
-
-        // The gun's stat bars, bottom right.
-        if let (Panel::Quartermaster, Some(base), Some(fitted)) = (menu.panel, &base, &fitted) {
-            p.spawn((Node { width: Val::Px(360.0), padding: UiRect::all(Val::Px(16.0)), row_gap: Val::Px(8.0), border: UiRect::all(Val::Px(1.0)), ..abs(None, Some(LEFT), Some(56.0), None) }, BackgroundColor(PANEL), BorderColor::all(FAINT))).with_children(|s| {
-                s.spawn(text(format!("{}  STATS", kind.name()), 14.0, AMBER));
-                for ((name, b), (_, f)) in gunsmith::stats(base).into_iter().zip(gunsmith::stats(fitted)) {
-                    s.spawn(Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: Val::Px(12.0), ..default() }).with_children(|r| {
-                        r.spawn((text(name, 13.0, DIM), Node { width: Val::Px(90.0), ..default() }));
-                        r.spawn((Node { width: Val::Px(200.0), height: Val::Px(8.0), ..default() }, BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.08)))).with_children(|bar| {
-                            bar.spawn((Node { position_type: PositionType::Absolute, left: Val::Px(0.0), top: Val::Px(0.0), height: Val::Percent(100.0), width: Val::Percent(b * 100.0), ..default() }, BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.3))));
-                            bar.spawn((Node { position_type: PositionType::Absolute, left: Val::Px(0.0), top: Val::Px(0.0), height: Val::Percent(100.0), width: Val::Percent(f * 100.0), ..default() }, BackgroundColor(if f + 0.001 < b { Color::srgb(0.9, 0.35, 0.25) } else { AMBER })));
-                        });
-                    });
-                }
-                s.spawn(text("grey: bare gun   amber: with parts   red: worse", 12.0, DIM));
-            });
-        }
-
-        // Version, then the hint bar along the bottom.
-        p.spawn((Node { position_type: PositionType::Absolute, left: Val::Px(0.0), right: Val::Px(0.0), bottom: Val::Px(0.0), height: Val::Px(40.0), padding: UiRect::left(Val::Px(LEFT)), flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: Val::Px(28.0), ..default() }, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)))).with_children(|bar| {
-            let hints: &[(&str, &str)] = match menu.panel {
-                Panel::Main if screen == Screen::Paused => &[("ENTER / A", "SELECT"), ("ESC / B", "RESUME")],
-                Panel::Main => &[("ENTER / A", "SELECT"), ("W S", "MOVE")],
-                Panel::Settings => &[("A D", "ADJUST"), ("ENTER / A", "TOGGLE"), ("ESC / B", "BACK")],
-                Panel::Quartermaster => &[("Q E / LB RB", "WEAPON"), ("A D", "PART / TUNE"), ("ENTER / A", "BUY"), ("ESC / B", "BACK")],
-                Panel::Wardrobe => &[("W S", "SLOT"), ("A D", "CHANGE"), ("ESC / B", "BACK")],
-                Panel::Controls => &[("ESC / B", "BACK")],
-                Panel::Maps => &[("ENTER / A", "PLAY"), ("ESC / B", "BACK")],
-            };
-            for (key, what) in hints {
-                bar.spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(8.0), ..default() }).with_children(|c| {
-                    c.spawn(text(format!("[{key}]"), 13.0, AMBER));
-                    c.spawn(text(*what, 13.0, DIM));
-                });
-            }
-            bar.spawn((text("v0.1  ISLAND HUB", 12.0, DIM), Node { margin: UiRect::left(Val::Auto).with_right(Val::Px(LEFT)), ..default() }));
-        });
-    });
-}
-
-fn action_row(p: &mut ChildSpawnerCommands, label: &str, index: usize, selected: bool, px: f32) {
-    p.spawn((
-        Button,
-        RowId(index),
-        Node { padding: UiRect::axes(Val::Px(14.0), Val::Px(4.0)), border: UiRect::left(Val::Px(4.0)), ..default() },
-        BorderColor::all(if selected { AMBER } else { Color::NONE }),
-        BackgroundColor(if selected { Color::srgba(1.0, 1.0, 1.0, 0.06) } else { Color::NONE }),
-    ))
-    .with_child(text(label, px, if selected { WHITE } else { DIM }));
-}
-
-/// A label on the left, `<` value `>` on the right, an optional bar and a note underneath.
-/// `arrows` shows the < > steppers; a row that only launches something leaves them off.
-fn value_row(p: &mut ChildSpawnerCommands, label: &str, value: &str, fill: Option<f32>, note: Option<&str>, index: usize, selected: bool, arrows: bool) {
-    p.spawn((
-        Button,
-        RowId(index),
-        Node { flex_direction: FlexDirection::Column, padding: UiRect::axes(Val::Px(14.0), Val::Px(2.0)), border: UiRect::left(Val::Px(4.0)), ..default() },
-        BorderColor::all(if selected { AMBER } else { Color::NONE }),
-        BackgroundColor(if selected { Color::srgba(1.0, 1.0, 1.0, 0.06) } else { Color::NONE }),
-    ))
-    .with_children(|row| {
-        row.spawn(Node { flex_direction: FlexDirection::Row, justify_content: JustifyContent::SpaceBetween, align_items: AlignItems::Center, width: Val::Percent(100.0), ..default() }).with_children(|r| {
-            r.spawn(text(label, 17.0, if selected { WHITE } else { DIM }));
-            r.spawn(Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: Val::Px(10.0), ..default() }).with_children(|v| {
-                if arrows {
-                    arrow(v, index, -1, selected);
-                }
-                if let Some(fill) = fill {
-                    v.spawn((Node { width: Val::Px(130.0), height: Val::Px(6.0), ..default() }, BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.12))))
-                        .with_child((Node { width: Val::Percent(fill.clamp(0.0, 1.0) * 100.0), height: Val::Percent(100.0), ..default() }, BackgroundColor(if selected { AMBER } else { Color::srgba(1.0, 0.72, 0.25, 0.6) })));
-                    v.spawn((text(value, 18.0, WHITE), Node { width: Val::Px(52.0), justify_content: JustifyContent::FlexEnd, ..default() }, TextLayout { justify: Justify::Right, ..default() }));
-                } else {
-                    v.spawn((text(value, 18.0, if selected { AMBER } else { WHITE }), Node { width: Val::Px(190.0), justify_content: JustifyContent::Center, ..default() }, TextLayout { justify: Justify::Center, ..default() }));
-                }
-                if arrows {
-                    arrow(v, index, 1, selected);
-                }
-            });
-        });
-        if let Some(note) = note {
-            row.spawn(text(note, 13.0, DIM));
-        }
-    });
-}
-
-fn arrow(p: &mut ChildSpawnerCommands, index: usize, dir: i32, selected: bool) {
-    p.spawn((Button, Arrow(index, dir), Node { width: Val::Px(24.0), height: Val::Px(24.0), justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() }, BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.08))))
-        .with_child(text(if dir < 0 { "<" } else { ">" }, 16.0, if selected { AMBER } else { DIM }));
-}
-
-/// A wardrobe tile: the preset in use, or one slot's value (with a swatch when it is a colour).
-fn tile(p: &mut ChildSpawnerCommands, row: Row, index: usize, selected: bool, outfit: Option<&OutfitDef>, characters: Option<&Characters>, preset: usize) {
-    let (name, worn, swatch) = match row {
-        Row::Preset => ("PRESET".to_string(), format!("{} / {}", preset + 1, wardrobe::PRESETS), None),
-        Row::Look(i) => {
-            let slot = wardrobe::SLOTS[i];
-            let (worn, swatch) = match (outfit, characters) {
-                (Some(o), Some(c)) => (slot.value(o, c), slot.swatch(o)),
-                _ => ("none".into(), None),
-            };
-            (slot.label().to_string(), worn, swatch)
-        }
-        _ => return,
-    };
-    p.spawn((
-        Button,
-        RowId(index),
-        Node { height: Val::Px(64.0), padding: UiRect::all(Val::Px(8.0)), flex_direction: FlexDirection::Column, justify_content: JustifyContent::SpaceBetween, border: UiRect::all(Val::Px(1.0)), overflow: Overflow::clip(), ..default() },
-        BorderColor::all(if selected { AMBER } else { FAINT }),
-        BackgroundColor(if selected { Color::srgba(1.0, 0.72, 0.25, 0.12) } else { PANEL }),
-    ))
-    .with_children(|t| {
-        t.spawn(text(name, 12.0, if selected { AMBER } else { DIM }));
-        t.spawn(Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: Val::Px(8.0), ..default() }).with_children(|r| {
-            if let Some(c) = swatch {
-                r.spawn((Node { width: Val::Px(18.0), height: Val::Px(18.0), ..default() }, BackgroundColor(c)));
-            }
-            r.spawn(text(worn, 16.0, WHITE));
-        });
-    });
 }
 
 #[cfg(test)]
@@ -1198,6 +944,30 @@ mod tests {
         let text = toml::to_string(&s).unwrap();
         let back: Settings = toml::from_str(&text).unwrap();
         assert_eq!(back, s);
+    }
+
+    #[test]
+    fn space_rows_only_on_the_paused_solar_list() {
+        let names = |screen| selectable(&rows(Panel::Main, screen, [false; 4], false)).map(|r| format!("{r:?}")).collect::<Vec<_>>().join(" ");
+        assert!(!names(Screen::Title).contains("STARMAP"));
+        let paused = rows(Panel::Main, Screen::Paused, [false; 4], false);
+        let at = |i| selectable(&paused).nth(i);
+        if space_level() {
+            assert_eq!(at(5), Some(Row::Action("STARMAP", Action::Starmap)));
+            assert_eq!(at(6), Some(Row::Action("SHIP", Action::Ship)));
+            assert_eq!(at(7), Some(Row::Action("CONTRACTS", Action::Contracts)));
+        }
+        assert!(matches!(selectable(&paused).last(), Some(Row::Action("QUIT", _))));
+    }
+
+    #[test]
+    fn old_settings_without_toon_load_with_toon_on() {
+        let s: Settings = toml::from_str("bloom = true").unwrap();
+        assert!(s.toon);
+        let comic = fields().position(|f| f.label == "COMIC SHADING").expect("a Comic shading row");
+        let mut s = Settings::default();
+        step_field(comic, 1, &mut s);
+        assert!(!s.toon);
     }
 
     #[test]
@@ -1222,7 +992,10 @@ mod tests {
 
     #[test]
     fn every_panel_has_rows_and_back_lands_on_its_opener() {
-        for panel in [Panel::Main, Panel::Maps, Panel::Settings, Panel::Controls, Panel::Quartermaster, Panel::Wardrobe] {
+        for panel in [Panel::Main, Panel::Maps, Panel::Settings, Panel::Controls, Panel::Quartermaster, Panel::Wardrobe, Panel::Starmap, Panel::Ship, Panel::Contracts] {
+            if matches!(panel, Panel::Starmap | Panel::Ship | Panel::Contracts) && !space_level() {
+                continue;
+            }
             let panel_rows = rows(panel, Screen::Paused, [true; 4], true);
             assert!(selectable(&panel_rows).count() > 0, "{panel:?}");
             if !matches!(panel, Panel::Main | Panel::Quartermaster) {

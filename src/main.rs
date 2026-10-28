@@ -40,6 +40,7 @@ mod system;
 mod surface;
 mod planet;
 mod solar;
+mod comic;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -79,7 +80,7 @@ fn main() {
             mission::MissionPlugin,
             sound::SoundPlugin,
         ))
-        .add_plugins((abilities::AbilitiesPlugin, arms::ArmsPlugin, wardrobe::WardrobePlugin, dressing::DressingPlugin, gunsmith::GunsmithPlugin, menu::MenuPlugin, scope::ScopePlugin, fingers::FingersPlugin, aim_assist::AimAssistPlugin))
+        .add_plugins((abilities::AbilitiesPlugin, arms::ArmsPlugin, wardrobe::WardrobePlugin, dressing::DressingPlugin, gunsmith::GunsmithPlugin, menu::MenuPlugin, scope::ScopePlugin, fingers::FingersPlugin, aim_assist::AimAssistPlugin, comic::ComicPlugin))
         .add_plugins(level_plugin())
         .add_systems(Update, dev_screenshot.run_if(|| std::env::var_os("RUST_REGIME_SCREENSHOT").is_some()))
         .run();
