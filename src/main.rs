@@ -11,10 +11,7 @@ mod health;
 mod hud;
 mod controls;
 mod input;
-mod island;
-mod level;
 mod targets;
-mod terrain;
 mod tuning;
 mod viewmodel;
 mod wardrobe;
@@ -23,14 +20,8 @@ mod weapon;
 mod tests;
 mod vehicle;
 mod loot;
-mod mission;
-mod bots;
 mod boot;
-mod look;
-mod veg;
 mod sound;
-mod roads;
-mod world;
 mod menu;
 mod near;
 mod gunsmith;
@@ -63,7 +54,7 @@ fn main() {
         // TF2 simulates at 66 ticks per second.
         .insert_resource(Time::<Fixed>::from_hz(66.0))
         .insert_resource(Gravity(Vec3::NEG_Y * tuning.gravity))
-        .add_plugins(boot::BootPlugin { island: is_island() })
+        .add_plugins(boot::BootPlugin)
         .add_plugins((
             tuning::TuningPlugin,
             input::InputPlugin,
@@ -78,7 +69,6 @@ fn main() {
             hud::HudPlugin,
             vehicle::VehiclePlugin,
             loot::LootPlugin,
-            mission::MissionPlugin,
             sound::SoundPlugin,
         ))
         .add_plugins((abilities::AbilitiesPlugin, arms::ArmsPlugin, wardrobe::WardrobePlugin, dressing::DressingPlugin, gunsmith::GunsmithPlugin, menu::MenuPlugin, scope::ScopePlugin, fingers::FingersPlugin, aim_assist::AimAssistPlugin, comic::ComicPlugin, near::NearPlugin))
@@ -91,30 +81,9 @@ fn main() {
     }
 }
 
-/// Only the island builds on a loading screen; the solar system, the arena and the debug moon start ready.
-fn is_island() -> bool {
-    std::env::var("RUST_REGIME_LEVEL").is_ok_and(|l| l == "island")
-}
-
-/// The solar system is the default. `RUST_REGIME_LEVEL=island` runs the 4 km island,
-/// `RUST_REGIME_LEVEL=arena` the old walled arena, `RUST_REGIME_LEVEL=moon` the debug moon.
-fn level_plugin() -> bevy::app::PluginGroupBuilder {
-    use bevy::app::PluginGroup;
-    struct Level(Option<String>);
-    impl PluginGroup for Level {
-        fn build(self) -> bevy::app::PluginGroupBuilder {
-            let group = bevy::app::PluginGroupBuilder::start::<Self>();
-            let island = self.0.as_deref() == Some("island");
-            let group = match self.0.as_deref() {
-                Some("arena") => group.add(level::LevelPlugin),
-                Some("moon") => group.add(planet::PlanetPlugin { body: "moon".into() }),
-                Some("island") => group.add(terrain::TerrainPlugin).add(look::LookPlugin).add(veg::VegPlugin).add(world::WorldPlugin),
-                _ => group.add(solar::SolarPlugin),
-            };
-            if island && std::env::var("RUST_REGIME_MODE").is_ok_and(|m| m == "6v6") { group.add(bots::MatchPlugin) } else { group }
-        }
-    }
-    Level(std::env::var("RUST_REGIME_LEVEL").ok()).build()
+/// The solar system is the only level.
+fn level_plugin() -> solar::SolarPlugin {
+    solar::SolarPlugin
 }
 
 /// Dev aid: `RUST_REGIME_SCREENSHOT=shot.png` saves a frame after a few
@@ -130,7 +99,6 @@ fn dev_screenshot(
     mut arsenal: ResMut<weapon::Arsenal>,
     mut view: ResMut<input::ViewAngles>,
     mut player: Single<(&mut controller::Player, &mut Transform)>,
-    heightmap: Option<Res<terrain::Heightmap>>,
     surface: Res<surface::Surface>,
     origin: Option<Res<surface::Origin>>,
     vehicles: Query<(&Transform, &vehicle::Vehicle, Option<&Children>), Without<controller::Player>>,
@@ -167,9 +135,6 @@ fn dev_screenshot(
             if matches!(*surface, surface::Surface::Sphere(_)) {
                 let frame = surface.frame(origin.map_or(tf.translation, |o| o.body(tf.translation)));
                 tf.translation += frame * Vec3::new(x, 0.0, z);
-            } else {
-                let y = heightmap.as_ref().map_or(0.0, |hm| hm.height_at(x, z)) + 1.0;
-                tf.translation = Vec3::new(x, y, z);
             }
             p.prev_pos = tf.translation;
         }

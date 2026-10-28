@@ -8,7 +8,6 @@
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
-use crate::bots::MatchState;
 use crate::comic::widgets::{filled_segments, pips, MAX_PIPS};
 use crate::comic::{body_text, display_text, panel, sfx_pop, ComicTheme, Halftone};
 use crate::controller::{MoveState, Player};
@@ -16,7 +15,6 @@ use crate::gunsmith::{Loadout, PARTS, SLOTS};
 use crate::health::PlayerHealth;
 use crate::input::ViewAngles;
 use crate::loot::{Inventory, Save};
-use crate::mission::ObjectiveHud;
 use crate::targets::Score;
 use crate::tuning::Tuning;
 use crate::weapon::{Aim, Arsenal, Recoil, WEAPONS, WeaponKind};
@@ -29,7 +27,7 @@ impl Plugin for HudPlugin {
             .init_resource::<ComicTheme>()
             .init_resource::<FlightHud>()
             .add_systems(Startup, spawn_hud)
-            .add_systems(Update, (update_speed, update_weapon, update_crosshair, update_health, update_objective, update_compass, update_grapple, update_hint, pop_on_hits, update_reticle));
+            .add_systems(Update, (update_speed, update_weapon, update_crosshair, update_health, update_haul, update_compass, update_grapple, update_hint, pop_on_hits, update_reticle));
     }
 }
 
@@ -118,10 +116,6 @@ struct HealthTag;
 #[derive(Component)]
 struct HitFlash(Option<Handle<Halftone>>);
 #[derive(Component)]
-struct ObjectiveText;
-#[derive(Component)]
-struct ObjectiveBox;
-#[derive(Component)]
 struct HaulText;
 #[derive(Component)]
 struct GrappleBar;
@@ -129,8 +123,6 @@ struct GrappleBar;
 struct GrappleFill;
 #[derive(Component)]
 struct CompassTick(f32);
-#[derive(Component)]
-struct ObjectiveMark;
 #[derive(Component)]
 struct HintText;
 
@@ -177,7 +169,7 @@ fn spawn_hud(mut commands: Commands, theme: Res<ComicTheme>, halftones: Option<R
             None => p.spawn((HitFlash(None), full, BackgroundColor(Color::NONE), ZIndex(-1))),
         };
 
-        // Compass strip, top centre: cardinal letters slide past an ink notch; the objective rides on it.
+        // Compass strip, top centre: cardinal letters slide past an ink notch.
         let tape_w = TAPE_HALF * 2.0 * TAPE_PX;
         p.spawn((
             Node { position_type: PositionType::Absolute, top: Val::Px(14.0), left: Val::Percent(50.0), width: Val::Px(tape_w), height: Val::Px(34.0), margin: UiRect::left(Val::Px(-tape_w / 2.0)), overflow: Overflow::clip(), border: UiRect::all(Val::Px(t.ink_px)), ..default() },
@@ -205,16 +197,7 @@ fn spawn_hud(mut commands: Commands, theme: Res<ComicTheme>, halftones: Option<R
                     }
                 }
             }
-            c.spawn((ObjectiveMark, Node { position_type: PositionType::Absolute, top: Val::Px(18.0), width: Val::Px(8.0), height: Val::Px(8.0), ..default() }, BackgroundColor(t.red), UiTransform::from_rotation(Rot2::degrees(45.0)), Visibility::Hidden));
             c.spawn((Node { position_type: PositionType::Absolute, left: Val::Px(tape_w / 2.0 - t.ink_px - 1.5), top: Val::Px(0.0), width: Val::Px(3.0), height: Val::Px(26.0), ..default() }, BackgroundColor(t.ink)));
-        });
-
-        // Objective: a yellow caption top left, hidden while there is nothing to say.
-        p.spawn((ObjectiveBox, abs_node(Some(24.0), None, Some(20.0), None, 420.0), Visibility::Hidden)).with_children(|b| {
-            let t2 = t.clone();
-            panel(b, &t, t.yellow, -2.0, move |c| {
-                c.spawn((ObjectiveText, body_text("", 18.0, t2.ink, true, &t2), Node { width: Val::Percent(100.0), ..default() }));
-            });
         });
 
         // Top right: score, the haul (the world clock sits under them, from `world`), the menu hint.
@@ -477,30 +460,7 @@ fn update_crosshair(
     }
 }
 
-fn update_objective(
-    tuning: Res<Tuning>,
-    objective: Option<Res<ObjectiveHud>>,
-    inventory: Option<Res<Inventory>>,
-    save: Option<Res<Save>>,
-    match_state: Option<Res<MatchState>>,
-    mut texts: ParamSet<(Single<&mut Text, With<ObjectiveText>>, Single<&mut Text, With<HaulText>>)>,
-    mut objective_box: Single<&mut Visibility, With<ObjectiveBox>>,
-) {
-    let mut line = String::new();
-    if let Some(m) = &match_state {
-        line = match m.over {
-            Some((0, _)) => "BLUE WINS".to_string(),
-            Some(_) => "RED WINS".to_string(),
-            None => format!("BLUE {}   RED {}", m.score[0], m.score[1]),
-        };
-    } else if let Some(o) = &objective {
-        line = o.text.clone();
-        if let Some(d) = o.distance {
-            line = format!("{line}   {d:.0} m");
-        }
-    }
-    **objective_box = if line.is_empty() { Visibility::Hidden } else { Visibility::Inherited };
-    texts.p0().0 = line;
+fn update_haul(tuning: Res<Tuning>, inventory: Option<Res<Inventory>>, save: Option<Res<Save>>, mut haul_text: Single<&mut Text, With<HaulText>>) {
     let mut haul = String::new();
     if let (Some(inv), Some(save)) = (&inventory, &save) {
         haul = format!("CARRY {}   BANK {}   RUNS {}", inv.carried, save.banked, save.runs);
@@ -508,11 +468,11 @@ fn update_objective(
             haul = format!("EXTRACTING {:.0}/{:.0} s   {haul}", inv.extracting, tuning.loot.extract_time);
         }
     }
-    texts.p1().0 = haul;
+    haul_text.0 = haul;
 }
 
 /// Slide the compass ticks past the notch; yaw 0 looks down -Z, which is north.
-fn update_compass(view: Res<ViewAngles>, flight: Res<FlightHud>, objective: Option<Res<ObjectiveHud>>, mut ticks: Query<(&CompassTick, &mut Node)>, mut mark: Single<(&mut Node, &mut Visibility), (With<ObjectiveMark>, Without<CompassTick>)>) {
+fn update_compass(view: Res<ViewAngles>, flight: Res<FlightHud>, mut ticks: Query<(&CompassTick, &mut Node)>) {
     // Flying, the tape follows the nose.
     let yaw = if flight.active { flight.heading } else { view.yaw };
     let heading = (-yaw.to_degrees()).rem_euclid(360.0);
@@ -525,15 +485,6 @@ fn update_compass(view: Res<ViewAngles>, flight: Res<FlightHud>, objective: Opti
     for (tick, mut node) in &mut ticks {
         let offset = (tick.0 - heading + 540.0).rem_euclid(360.0) - 180.0;
         place(offset, &mut node, 8.0);
-    }
-    let (node, vis) = &mut *mark;
-    match objective.as_ref().and_then(|o| o.distance.map(|_| o.bearing)) {
-        Some(bearing) => {
-            let offset = bearing.to_degrees().clamp(-TAPE_HALF + 3.0, TAPE_HALF - 3.0);
-            place(offset, node, 7.0);
-            **vis = Visibility::Inherited;
-        }
-        None => **vis = Visibility::Hidden,
     }
 }
 

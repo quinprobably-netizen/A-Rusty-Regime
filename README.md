@@ -1,7 +1,7 @@
 # Rust Regime
 
 FPS movement prototype in Rust: Bevy 0.19 + Avian 0.7 physics. TF2-style
-movement and parkour, four weapons, a physics playground and a shooting range.
+movement and parkour, a solar system to fly around and a set of weapons.
 
 ## One-click update and play
 Set up once, then you never redownload the whole game:
@@ -83,10 +83,10 @@ First build takes a while. Linux needs `libasound2-dev libudev-dev libwayland-de
 <!-- controls:end -->
 
 ## Menus
-The game boots to a title screen over the live island; Esc pauses (time stops, the cursor comes
+The game boots to a title screen over the live world; Esc pauses (time stops, the cursor comes
 back). Both lists lead to the same screens: **Wardrobe** (character, head, colours, camo, skin, gloves, boots, webbing, metal, lights, visor, wear and three presets, shown on a mannequin), **Settings** (mouse sensitivity, invert Y, FOV, five volumes, sky, bloom, ambient
-occlusion, anti-aliasing, shadow distance, grass, trees; saved to `settings.toml`, which lays over
-`tuning.toml` so F5 keeps your choices), **Maps** (island, island 6v6, arena, solar system, moon: picking another map restarts the game straight into it, no env vars needed) and **Controls**. Navigate with W/S or arrows, adjust with
+occlusion, anti-aliasing, shadow distance; saved to `settings.toml`, which lays over
+`tuning.toml` so F5 keeps your choices), **Maps** (the solar system) and **Controls**. Navigate with W/S or arrows, adjust with
 A/D, Enter picks, Esc backs out; the d-pad, A and B do the same on a pad; the mouse works too.
 `RUST_REGIME_MENU=title|pause|maps|settings|controls|quartermaster|wardrobe|play` opens straight into a screen
 (with `RUST_REGIME_SCREENSHOT` it skips the title unless set). Design notes:
@@ -165,112 +165,22 @@ Hits push physics props and damage targets. Each gun has its own `[rifle]`,
 `[shotgun]`, `[pistol]` table in `tuning.toml` (damage, cooldown, pellets, spread,
 range, prop impulse, automatic, recoil kick).
 
-Rifle, shotgun and pistol fire real bullets: they drop, slow down, drift in the
-wind and take time to arrive. Wood walls, crates and thin metal let them through
+Rifle, shotgun and pistol fire real bullets: they drop, slow down, take time to arrive. Wood walls, crates and thin metal let them through
 with less damage, stone and concrete stop them. Head hits do 2.5x, legs 0.6x.
 Recoil climbs with sustained fire and settles when you stop; aiming down sights
 zooms in and tightens the spread.
 
 ## Survival and the world
-- **Health**: heavy hits make you bleed until a medkit (green boxes at camp and five
-  sites). Health regenerates only up to 60% and not while bleeding.
-- **Soldiers** hear gunshots up to 150 m, call nearby squadmates, and run to cover
-  that hides them from you when hit.
-- **Roads**: dirt roads link camp to every site. Tyres grip better on them than off.
-- **Vehicles** burn fuel and take damage from crashes and bullets (HUD shows speed,
-  gear, fuel and hull). A wreck throws you out and respawns at camp after 30 s.
-  Park within 15 m of your vehicle's home spot to refuel and repair.
-- **Day and night**: a 48-minute day (`[world] day_minutes`, 0 stops the clock) with
-  a moon, headlights and an F flashlight.
-- **Weather**: clear, overcast, rain and fog roll through, with wet ground and rain.
-  `[world] sky` can hold one.
+- **Health**: heavy hits make you bleed until a medkit. Health regenerates only up to 60% and not while bleeding.
+- **Save**: banked money, runs and deaths persist in `save.toml` next to the binary (`RUST_REGIME_SAVE` overrides the path).
 - **Sound** is synthesized at startup. Put a CC0 `.ogg` with the same name in
   `assets/sounds/` (rifle, shotgun, pistol, rocket, explosion, hit, hurt, jump, land,
-  engine_big, engine_small, engine_bike, wind, surf) to replace one.
+  engine_big, engine_small, engine_bike, wind) to replace one.
 
 All numbers live in `tuning.toml`.
 
-## Island
-`RUST_REGIME_LEVEL=island` runs a 4 km seeded island (`[island]` in `tuning.toml`: seed,
-size, cell size, peak height, water level), now off the menu and no longer the default
-(the solar system is). Fall in the water and you respawn on the spawn pad.
-`RUST_REGIME_LEVEL=arena` runs the original arena below, which the tests also use.
-
-Six sites sit in the island's core, each a parkour toy first and a fight second:
-base camp (spawn, no enemies, the physics playground), the radio tower on the
-highest peak (a spiral of ledges to mantle up, drones circling), the fort to the
-east (walls to run, the mantle tower and wall-jump chimney, four soldiers), the
-quarry to the west (terraces to slide and surf down, soldiers on every ring), the
-ruins to the north (a wall-run gap, two soldiers) and the lighthouse on the south
-coast (a spiral around the tower, drones).
-
-Soldiers patrol a route and shoot when they have a clear line to you within
-`soldier.sight` meters; they lose interest after `soldier.forget` seconds. You
-have `player.health` hit points that regenerate after `player.regen_delay`
-seconds; dying puts you back at base camp. Everything is in `tuning.toml`.
-
-### Vehicles
-Three vehicles sit in a row south of base camp, with a Humvee outside the fort
-gate, a jeep on the quarry rim and a bike at the lighthouse: a Humvee (2.6 t,
-4WD, 4-speed auto), a Willys-style jeep (1.1 t, 4WD, 3-speed) and a military
-dirt bike (150 kg, 5-speed, leans into its turns). Walk up and press E; the
-camera swings behind, the mouse orbits it, W/S accelerate and brake (S from a
-standstill reverses), Space is the handbrake, E steps out. Fall off the island
-and the vehicle respawns where it started. The physics is a raycast-wheel port
-of the tyre, suspension and engine models from Q's Regolith Rally, stepped at
-66 Hz on an Avian body (`src/vehicle/`); the bodies are built from scaled cubes
-and cylinders in code. `[vehicle]` in `tuning.toml` sets grip and the enter
-radius.
-
-
-### Extraction loop
-Caches (brown boxes) lie around every site and out in the wilderness ring;
-walk over one to carry its value. Three extraction pads (yellow discs with
-lit posts) sit in the ring between the core and the coast; stand on one for
-`loot.extract_time` seconds to bank your haul and start a new run from base
-camp. Die and you lose what you carry. Banked value, runs, deaths and
-mission progress persist in `save.toml` next to the binary
-(`RUST_REGIME_SAVE` overrides the path).
-
-### Missions
-A chain of six objectives shows at the top of the screen with its distance
-and a bearing mark (`^` ahead, `<` `>` to a side, `v` behind): climb the
-radio tower, clear the fort, recover the quarry cache and extract with it,
-drive a Humvee to the ruins, reach the lighthouse top. Soldiers now chase
-the last place they saw you and close to `soldier.hold` meters.
-
-### 6v6 (optional)
-`RUST_REGIME_LEVEL=island RUST_REGIME_MODE=6v6` starts you at the fort gate with five blue bots
-against six red bots. Bots fight each other and you; first team to
-`match.kills_to_win` kills wins and the scores reset. There is no netcode:
-this is the bot mode the open-world design called for, and the spec leaves
-networking for later only if still wanted.
-
-### The look
-The island renders with a physical sky and sun (Bevy's atmosphere), sunlight exposure,
-AgX tonemapping, bloom, screen-space ambient occlusion and temporal anti-aliasing. The
-ground is a four-layer PBR splat (grass, dirt, rock, sand; rock is triplanar on cliffs)
-and the site walls, crates and posts use triplanar concrete, wood and rusty metal, so
-nothing stretches. The sea has moving waves and foam where it meets the shore. Pines,
-scrub and boulders are generated meshes placed by noise (about 5500 trees), and grass
-blades are built in cells around you. `[graphics]` in `tuning.toml` turns each effect
-off, scales the textures and the vegetation, and sets the exposure.
-
-### Debug moon
-`RUST_REGIME_LEVEL=moon` drops you on the moon from `assets/system.toml`: a bare 2 km
-sphere with ±10 m of grey rolling ground, a black sky and a visibly curved horizon. You
-start on a small parkour course (a step, a wall to run, a ledge to mantle, a roof to
-slide under) on a deck at latitude 20°. Gravity points at the centre wherever you walk,
-terrain chunks stream in around you on worker threads, only the ground within
-`terrain.bubble` is solid, and the world re-centres on you every 2 km. There is nothing
-to fight yet; it is the test bed for the round home world. Measured on a Ryzen 5 8500G
-(release, headless, 4 workers, 66 updates a second, running east at 7.5 m/s for 30 s
-once the first tiling had loaded): at `terrain.cell = 0.5` a chunk builds in 0.49 ms
-on average (0.79 ms at most over the first 200) and 21.0 chunks a second are applied;
-at `terrain.cell = 1` 0.48 ms (0.71 ms max) and 10.1 a second.
-
 ### Solar system
-`./play.sh system` (`play.bat system` on Windows) starts you on a landing pad on
+`./play.sh` (`play.bat` on Windows) starts you on a landing pad on
 Haven, a 17.5 km world with seas, beside your ship. Press E to board. The mouse pitches
 and yaws, A and D roll, W and S thrust, Space and Ctrl lift and sink, Shift boosts (from a
 tank that refills), X stops, held Alt looks round, T swaps cockpit and chase view, and E
@@ -340,26 +250,11 @@ any world, for screenshots (`home`, `ash`, `bastion`, `cinder`, `frost`), or ove
 degree across, within 50 km: name, parents, size, colour) and a `STARS` line if the star shell drifts
 off the camera, to name a stray box seen in flight.
 
-Not in yet: the island's sites, soldiers and missions on Haven, swimming and buoyancy
-(the seas are only drawn) and Coriolis drift.
-
-## Arena
-- Spawn area: dominoes, crate pyramid, barrels, balls, heavy crates
-- Ramps at 15, 30 and 45 degrees, a long wall for wall running, box steps
-- Parkour course (far side): wall-run gap, wall-jump chimney, mantle tower, slide tunnel
-- Shooting range (south wall): six soldier dummies that fall over when killed and
-  drones that circle overhead and pop; everything respawns after `target_respawn` seconds.
-  The HUD counts hits and kills and the crosshair flashes on a hit.
-- Props: columns, statues, trees, banners, weapon racks, plus blocks and brick
-  piles you can shoot around.
+Not in yet: swimming and buoyancy (the seas are only drawn) and Coriolis drift.
 
 ## Assets
-All models are CC0 glTF files by [Kenney](https://kenney.nl) (thanks!), taken from
-the MIT-licensed [Starter Kit FPS](https://github.com/KenneyNL/Starter-Kit-FPS)
-(flying enemy) and [Starter Kit Basic Scene](https://github.com/KenneyNL/Starter-Kit-Basic-Scene)
-(Mini Arena: columns, statue, trees, banners, racks, blocks, bricks).
+The flying enemy is a CC0 glTF file by [Kenney](https://kenney.nl) (thanks!), taken from
+the MIT-licensed [Starter Kit FPS](https://github.com/KenneyNL/Starter-Kit-FPS).
 The character and clothes are generated by our own Blender script (see above).
 They live in `assets/models/` and must sit next to the binary. The rocket launcher
-viewmodel and the effects are generated meshes. The textures in `assets/textures/` are
-CC0 1K sets from [ambientCG](https://ambientcg.com) (Grass004, Ground103, Rock035,
-Ground054, Concrete034, Planks037A, Metal063). Trees, rocks and grass are generated.
+viewmodel and the effects are generated meshes. 

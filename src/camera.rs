@@ -3,7 +3,6 @@ use bevy::prelude::*;
 
 use crate::controller::{MoveState, Player};
 use crate::input::ViewAngles;
-use crate::terrain::Heightmap;
 use crate::tuning::Tuning;
 use crate::vehicle::{Driving, Vehicle};
 
@@ -137,7 +136,6 @@ fn follow(
     scoped: Option<Res<crate::scope::Scoped>>,
     vehicles: Query<(&Transform, &Vehicle), Without<Player>>,
     chased: Query<(&Transform, &ChaseCam), Without<Player>>,
-    heightmap: Option<Res<Heightmap>>,
     menu: Option<Res<crate::menu::Menu>>,
     real: Res<Time<Real>>,
     spatial: Option<SpatialQuery>,
@@ -190,10 +188,7 @@ fn follow(
         let (dist, height) = vehicle.spec.cam;
         let look = Quat::from_euler(EulerRot::YXZ, view.yaw, view.pitch, 0.0);
         let target = vtf.translation + Vec3::Y * height * 0.4;
-        let mut eye = target - look * Vec3::NEG_Z * dist + Vec3::Y * height * 0.6;
-        if let Some(hm) = &heightmap {
-            eye.y = eye.y.max(hm.height_at(eye.x, eye.z) + 0.7);
-        }
+        let eye = target - look * Vec3::NEG_Z * dist + Vec3::Y * height * 0.6;
         tf.translation = eye;
         tf.rotation = Transform::from_translation(eye).looking_at(target, Vec3::Y).rotation;
         cam.roll = 0.0;

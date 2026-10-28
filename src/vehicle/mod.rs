@@ -213,7 +213,6 @@ fn drive(
     bounds: Res<WorldBounds>,
     surface: Res<crate::surface::Surface>,
     origin: Res<crate::surface::Origin>,
-    roads: Option<Res<crate::roads::Roads>>,
     fx: Option<Res<crate::weapon::FxAssets>>,
     mut materials: Option<ResMut<Assets<StandardMaterial>>>,
     mut input: ResMut<PlayerInput>,
@@ -293,7 +292,7 @@ fn drive(
             v.fuel = (v.fuel + 2.0 * dt).min(v.spec.tank);
             v.health = (v.health + 10.0 * dt).min(v.spec.hp);
         }
-        step(&mut v, &mut forces, &spatial, entity, driver, ctl, t, roads.as_deref(), power, g, dt);
+        step(&mut v, &mut forces, &spatial, entity, driver, ctl, t, power, g, dt);
 
         if surface.altitude(origin.body(forces.position().0)) < bounds.kill_altitude {
             let home = v.home;
@@ -330,7 +329,6 @@ fn step(
     driver: Option<Entity>,
     ctl: Controls,
     t: &VehicleTuning,
-    roads: Option<&crate::roads::Roads>,
     power: f32,
     g: f32,
     dt: f32,
@@ -470,9 +468,8 @@ fn step(
             w.alpha = damp(w.alpha, v_lat.atan2(v_long.abs() + 0.8), relax, dt);
             let slip_v = om * ws.radius - v_long;
             w.kappa = damp(w.kappa, slip_v / v_long.abs().max(3.0), relax, dt);
-            // Packed road: the tarmac curve at full grip; grass and dirt hold less.
-            let (curve, mu) = if roads.is_some_and(|r| r.on_road(contact.xz())) { (&TyreCurve::TARMAC, t.mu) } else { (&TyreCurve::GRAVEL, t.mu * t.offroad_grip) };
-            let tf = tyre_force(curve, mu * load, w.kappa, w.alpha);
+            // There are no roads: every surface is loose ground.
+            let tf = tyre_force(&TyreCurve::GRAVEL, t.mu * t.offroad_grip * load, w.kappa, w.alpha);
             // Neither force may reverse the slip it acts on within one tick.
             let lim_y = m_k * v_lat.abs() / dt;
             let lim_x = (m_k + i_w / (ws.radius * ws.radius)) * slip_v.abs() / dt;

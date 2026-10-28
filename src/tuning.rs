@@ -96,17 +96,13 @@ pub struct Tuning {
     pub target_respawn: f32,
     pub drone_speed: f32,
 
-    // Island level (table `[island]`)
-    pub island: Island,
     pub soldier: Soldier,
     pub player: PlayerTuning,
     pub vehicle: VehicleTuning,
     pub loot: LootTuning,
-    pub r#match: MatchTuning,
     pub grapple: GrappleTuning,
     pub graphics: Graphics,
     pub sound: Sound,
-    pub world: WorldTuning,
     pub terrain: TerrainTuning,
 
     // Look
@@ -323,17 +319,14 @@ impl Default for Tuning {
             target_respawn: 3.0,
             drone_speed: 2.5,
 
-            island: Island::default(),
             soldier: Soldier::default(),
             terrain: TerrainTuning::default(),
             player: PlayerTuning::default(),
             vehicle: VehicleTuning::default(),
             loot: LootTuning::default(),
-            r#match: MatchTuning::default(),
             grapple: GrappleTuning::default(),
             graphics: Graphics::default(),
             sound: Sound::default(),
-            world: WorldTuning::default(),
 
             mouse_sensitivity: 0.002,
             stick_yaw_speed: 4.5,
@@ -477,26 +470,6 @@ impl Default for Gun {
     }
 }
 
-/// The island level: a seeded heightmap `size` meters square sampled every
-/// `cell` meters, peaks up to `height`, water at `water_level`. The stage 1
-/// sites stay inside `core` meters of the center.
-#[derive(Deserialize, Clone, Debug, PartialEq)]
-#[serde(default)]
-pub struct Island {
-    pub seed: u32,
-    pub size: f32,
-    pub cell: f32,
-    pub core: f32,
-    pub height: f32,
-    pub water_level: f32,
-}
-
-impl Default for Island {
-    fn default() -> Self {
-        Self { seed: 7, size: 4096.0, cell: 4.0, core: 1500.0, height: 260.0, water_level: 0.0 }
-    }
-}
-
 /// Patrolling soldiers (table `[soldier]`).
 #[derive(Deserialize, Clone, Debug, PartialEq)]
 #[serde(default)]
@@ -537,8 +510,6 @@ pub struct TerrainTuning {
     pub split: f32,
     /// Solid ground and awake physics within this of the player (m).
     pub bubble: f32,
-    /// Sites load within this (m) and unload 500 m further out.
-    pub site_range: f32,
     /// The world re-centres on the player after this far (m).
     pub origin_step: f32,
     /// Chunk builds in flight.
@@ -547,7 +518,7 @@ pub struct TerrainTuning {
 
 impl Default for TerrainTuning {
     fn default() -> Self {
-        Self { cell: 0.5, split: 2.5, bubble: 400.0, site_range: 1500.0, origin_step: 2000.0, workers: 4 }
+        Self { cell: 0.5, split: 2.5, bubble: 400.0, origin_step: 2000.0, workers: 4 }
     }
 }
 
@@ -622,20 +593,6 @@ impl Default for LootTuning {
     }
 }
 
-/// The 6v6 mode (table `[match]`).
-#[derive(Deserialize, Clone, Debug, PartialEq)]
-#[serde(default)]
-pub struct MatchTuning {
-    pub kills_to_win: u32,
-    pub bots_per_team: u32,
-}
-
-impl Default for MatchTuning {
-    fn default() -> Self {
-        Self { kills_to_win: 30, bots_per_team: 6 }
-    }
-}
-
 /// The grapple ability (table `[grapple]`). Titanfall 2 ships 50 power to fire of 100, 50/s while
 /// pulling and a 28 m rope; we keep the meter but make it nearly free.
 #[derive(Deserialize, Clone, Debug, PartialEq)]
@@ -678,7 +635,7 @@ impl Default for GrappleTuning {
     }
 }
 
-/// The look (table `[graphics]`): the physical sky and post effects, texture tiling and the vegetation.
+/// The look (table `[graphics]`): the physical sky and post effects.
 #[derive(Deserialize, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct Graphics {
@@ -691,20 +648,6 @@ pub struct Graphics {
     /// Camera EV100; 15 is full sun.
     pub exposure: f32,
     pub shadow_distance: f32,
-    /// Metres per texture tile.
-    pub grass_tile: f32,
-    pub dirt_tile: f32,
-    pub rock_tile: f32,
-    pub sand_tile: f32,
-    pub wave_height: f32,
-    pub wave_length: f32,
-    /// Multiplies the tree and scrub density; 0 for none.
-    pub trees: f32,
-    pub grass: bool,
-    /// Grass blades per 24 m cell.
-    pub grass_density: u32,
-    /// Trees fade out past this (m).
-    pub tree_range: f32,
 }
 
 impl Default for Graphics {
@@ -717,39 +660,7 @@ impl Default for Graphics {
             bloom: true,
             exposure: 15.0,
             shadow_distance: 500.0,
-            grass_tile: 3.0,
-            dirt_tile: 4.0,
-            rock_tile: 6.0,
-            sand_tile: 3.0,
-            wave_height: 0.25,
-            wave_length: 9.0,
-            trees: 1.0,
-            grass: true,
-            grass_density: 4000,
-            tree_range: 900.0,
         }
-    }
-}
-
-/// Time and weather (table `[world]`).
-#[derive(Deserialize, Clone, Debug, PartialEq)]
-#[serde(default)]
-pub struct WorldTuning {
-    /// The hour the game starts at.
-    pub start_hour: f32,
-    /// Real minutes per game day; 0 stops the clock.
-    pub day_minutes: f32,
-    /// Weather changes; false keeps it clear.
-    pub weather: bool,
-    /// Roughly how long each sky lasts (real minutes).
-    pub weather_minutes: f32,
-    /// "auto", or hold one sky: clear, overcast, rain or fog.
-    pub sky: String,
-}
-
-impl Default for WorldTuning {
-    fn default() -> Self {
-        Self { start_hour: 15.0, day_minutes: 48.0, weather: true, weather_minutes: 6.0, sky: "auto".into() }
     }
 }
 
@@ -826,7 +737,7 @@ mod tests {
     #[test]
     fn terrain_table_defaults() {
         let t = TerrainTuning::default();
-        assert_eq!((t.cell, t.split, t.bubble, t.site_range, t.origin_step, t.workers), (0.5, 2.5, 400.0, 1500.0, 2000.0, 4));
+        assert_eq!((t.cell, t.split, t.bubble, t.origin_step, t.workers), (0.5, 2.5, 400.0, 2000.0, 4));
         assert_eq!(t.merge(), 3.0);
     }
 }

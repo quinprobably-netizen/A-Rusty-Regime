@@ -10,7 +10,6 @@ use bevy::prelude::*;
 use crate::character::{Pose, Rig, RigPose};
 use crate::controller::{ControllerSet, Player};
 use crate::health::{PlayerHealth, PlayerHit};
-use crate::terrain::Heightmap;
 use crate::tuning::Tuning;
 use crate::weapon::{self, Damage, FxAssets};
 
@@ -363,7 +362,6 @@ fn soldier_ai(
     time: Res<Time>,
     tuning: Res<Tuning>,
     spatial: SpatialQuery,
-    heightmap: Option<Res<Heightmap>>,
     health: Res<PlayerHealth>,
     fx: Option<Res<FxAssets>>,
     mut materials: Option<ResMut<Assets<StandardMaterial>>>,
@@ -384,7 +382,7 @@ fn soldier_ai(
             enemies.push(Enemy { entity, team: *team, eye: tf.translation + Vec3::Y * SOLDIER_EYE });
         }
     }
-    let feet_y = |pos: Vec3| heightmap.as_ref().map_or(pos.y, |hm| hm.height_at(pos.x, pos.z));
+    let feet_y = |pos: Vec3| pos.y;
 
     for (entity, target, team, mut soldier, mut tf) in &mut soldiers {
         if !target.alive() || soldier.route.is_empty() {

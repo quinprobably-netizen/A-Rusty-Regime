@@ -920,7 +920,6 @@ fn fly_bullets(
     fx: Option<Res<FxAssets>>,
     mut materials: Option<ResMut<Assets<StandardMaterial>>>,
     player: Single<Entity, With<Player>>,
-    wind: Option<Res<crate::world::Wind>>,
     mut bullets: Query<(Entity, &mut Bullet, &mut Transform)>,
     targets: Query<(&crate::targets::Target, &Transform), Without<Bullet>>,
     cover: Query<&Penetrable>,
@@ -939,10 +938,9 @@ fn fly_bullets(
             commands.entity(entity).despawn();
             continue;
         }
-        // Drag acts on the bullet's speed through the air, so a crosswind pushes it sideways.
-        let air = wind.as_ref().map_or(Vec3::ZERO, |w| w.0);
-        let rel = b.velocity - air;
-        b.velocity = air + rel * (-b.drag * rel.length() * dt).exp();
+        // Drag acts on the bullet's speed through the air.
+        let drag = b.drag * b.velocity.length();
+        b.velocity *= (-drag * dt).exp();
         let speed = b.velocity.length();
         let mut pos = tf.translation;
         let mut remaining = speed * dt;

@@ -1,7 +1,7 @@
 //! Sound (hyper-realism stage R2), all synthesized at startup so the download stays small:
 //! gunshots with a crack, a thump and a tail; footsteps, landings and hits; looping engines
-//! pitched by rpm on each vehicle; wind that grows with height and speed; surf by the shore;
-//! and short jingles for loot, extraction and missions. Drop CC0 samples in `assets/sounds/`
+//! pitched by rpm on each vehicle; wind that grows with height and speed;
+//! and short jingles for loot and extraction. Drop CC0 samples in `assets/sounds/`
 //! later and `load` picks them over the synthesis.
 
 use std::f32::consts::{PI, TAU};
@@ -14,9 +14,7 @@ use crate::camera::PlayerCamera;
 use crate::controller::{MoveState, Player};
 use crate::health::{PlayerHealth, PlayerHit};
 use crate::loot::Inventory;
-use crate::mission::Missions;
 use crate::targets::{Shot, Target};
-use crate::terrain::Heightmap;
 use crate::tuning::Tuning;
 use crate::vehicle::{Kind, Vehicle};
 use crate::weapon::{Arsenal, Bullet, Damage, Explosion, HitConfirm, WeaponFired, WeaponKind, WEAPONS};
@@ -50,11 +48,8 @@ pub struct Sounds {
     engine_small: Handle<AudioSource>,
     engine_bike: Handle<AudioSource>,
     wind: Handle<AudioSource>,
-    surf: Handle<AudioSource>,
-    rain: Handle<AudioSource>,
     pickup: Handle<AudioSource>,
     extract: Handle<AudioSource>,
-    mission: Handle<AudioSource>,
     /// Three takes of each gun's shot, by weapon slot (empty for the rest).
     shots: Vec<Vec<Handle<AudioSource>>>,
     soldier: Handle<AudioSource>,
@@ -359,43 +354,6 @@ fn wind(seed: u64) -> Vec<f32> {
     looped(v, 0.5)
 }
 
-/// Rain: bright noise with scattered drop ticks.
-fn rain(seed: u64) -> Vec<f32> {
-    let mut rng = Rng(seed);
-    let mut lp = LowPass::new(5000.0);
-    let mut lp2 = LowPass::new(300.0);
-    let n = (3.0 * RATE as f32) as usize;
-    let mut v: Vec<f32> = (0..n)
-        .map(|_| {
-            let x = rng.next();
-            let hi = lp.run(x) - lp2.run(x);
-            hi * 0.5
-        })
-        .collect();
-    for _ in 0..300 {
-        let at = ((rng.next() * 0.5 + 0.5) * (n - 200) as f32) as usize;
-        let amp = 0.2 + 0.3 * rng.next().abs();
-        for k in 0..120 {
-            v[at + k] += amp * (-(k as f32) / 18.0).exp() * rng.next();
-        }
-    }
-    looped(v.into_iter().map(soft).collect(), 0.3)
-}
-
-fn surf(seed: u64) -> Vec<f32> {
-    let mut rng = Rng(seed);
-    let mut lp = LowPass::new(900.0);
-    let n = (9.0 * RATE as f32) as usize;
-    let v = (0..n)
-        .map(|i| {
-            let t = i as f32 / RATE as f32;
-            let swell = (0.5 + 0.5 * (TAU * t / 8.5 - PI / 2.0).sin()).powf(2.5);
-            lp.run(rng.next()) * (0.15 + 0.85 * swell) * 1.3
-        })
-        .collect();
-    looped(v, 0.5)
-}
-
 /// Sine notes in a row, each `len` s with a soft decay.
 fn jingle(notes: &[f32], len: f32) -> Vec<f32> {
     let per = (len * RATE as f32) as usize;
@@ -477,11 +435,8 @@ fn load(mut commands: Commands, tuning: Res<Tuning>, server: Res<AssetServer>, m
         engine_small: clip("engine_small", engine(36.0, 10, 0.2, 121)),
         engine_bike: clip("engine_bike", engine(58.0, 8, 0.3, 131)),
         wind: clip("wind", wind(141)),
-        surf: clip("surf", surf(151)),
-        rain: clip("rain", rain(161)),
         pickup: clip("pickup", jingle(&[660.0, 880.0], 0.09)),
         extract: clip("extract", jingle(&[523.0, 659.0, 784.0, 1047.0], 0.13)),
-        mission: clip("mission", jingle(&[392.0, 523.0, 659.0, 784.0, 1047.0], 0.12)),
         shots,
         soldier: clip("soldier_shot", shot(&Voice { crack: 0.014, body: 0.04, cutoff: 5500.0, sub_hz: 90.0, sub: 0.5, tail: 0.2, click: 0.2 }, 1, 71)),
         soldier_far: clip("soldier_shot_far", shot(&Voice { crack: 0.004, body: 0.12, cutoff: 1500.0, sub_hz: 60.0, sub: 0.2, tail: 0.5, click: 0.0 }, 1, 72)),
@@ -705,64 +660,38 @@ fn engines(
 
 #[derive(Component)]
 struct Wind;
-#[derive(Component)]
-struct Surf;
-#[derive(Component)]
-struct RainSound;
 
-/// Wind grows with height and speed; surf is heard near the water line.
+/// Wind grows with height and speed.
 fn ambience(
     mut commands: Commands,
     s: Res<Sounds>,
     tuning: Res<Tuning>,
-    hm: Option<Res<Heightmap>>,
     player: Single<(&Transform, &Player)>,
-    mut wind: Query<&mut AudioSink, (With<Wind>, Without<Surf>, Without<RainSound>)>,
-    mut surf: Query<&mut AudioSink, (With<Surf>, Without<Wind>, Without<RainSound>)>,
-    mut rain: Query<&mut AudioSink, (With<RainSound>, Without<Wind>, Without<Surf>)>,
-    weather: Option<Res<crate::world::Weather>>,
+    mut wind: Query<&mut AudioSink, With<Wind>>,
     mut started: Local<bool>,
 ) {
     if !*started {
         *started = true;
         commands.spawn((Wind, AudioPlayer(s.wind.clone()), PlaybackSettings::LOOP.with_volume(Volume::Linear(0.0))));
-        commands.spawn((Surf, AudioPlayer(s.surf.clone()), PlaybackSettings::LOOP.with_volume(Volume::Linear(0.0))));
-        commands.spawn((RainSound, AudioPlayer(s.rain.clone()), PlaybackSettings::LOOP.with_volume(Volume::Linear(0.0))));
         return;
     }
     let (tf, p) = *player;
     let a = tuning.sound.ambience;
-    let water = tuning.island.water_level;
-    let height = tf.translation.y - water;
+    let height = tf.translation.y;
     let speed = p.velocity.length();
     for mut sink in &mut wind {
-        let storm = weather.as_ref().map_or(0.0, |w| w.cloud * 0.3 + w.rain * 0.3);
-        let v = 0.15 + storm + (height / 120.0).clamp(0.0, 1.0) * 0.5 + (speed / 25.0).clamp(0.0, 1.0) * 0.6;
+        let v = 0.15 + (height / 120.0).clamp(0.0, 1.0) * 0.5 + (speed / 25.0).clamp(0.0, 1.0) * 0.6;
         sink.set_volume(Volume::Linear(a * v.min(1.2)));
         sink.set_speed(0.9 + (speed / 30.0).min(0.6));
-    }
-    // How close the sea is: the ground falls to the water line within a short walk.
-    let shore = hm.as_ref().map_or(0.0, |hm| {
-        let (x, z) = (tf.translation.x, tf.translation.z);
-        let lowest = [(60.0, 0.0), (-60.0, 0.0), (0.0, 60.0), (0.0, -60.0), (0.0, 0.0)].iter().map(|(dx, dz)| hm.height_at(x + dx, z + dz) - water).fold(f32::MAX, f32::min);
-        (1.0 - lowest / 12.0).clamp(0.0, 1.0)
-    });
-    for mut sink in &mut surf {
-        sink.set_volume(Volume::Linear(a * shore * 0.9));
-    }
-    let wet = weather.as_ref().map_or(0.0, |w| w.rain);
-    for mut sink in &mut rain {
-        sink.set_volume(Volume::Linear(a * wet));
     }
 }
 
 #[derive(Default)]
 struct JingleState {
     carried: u32,
-    mission: usize,
 }
 
-fn jingles(mut commands: Commands, s: Res<Sounds>, tuning: Res<Tuning>, inv: Option<Res<Inventory>>, missions: Option<Res<Missions>>, mut st: Local<JingleState>) {
+fn jingles(mut commands: Commands, s: Res<Sounds>, tuning: Res<Tuning>, inv: Option<Res<Inventory>>, mut st: Local<JingleState>) {
     let v = tuning.sound.effects;
     if let Some(inv) = inv {
         if inv.just_extracted {
@@ -771,12 +700,6 @@ fn jingles(mut commands: Commands, s: Res<Sounds>, tuning: Res<Tuning>, inv: Opt
             oneshot(&mut commands, &s.pickup, v * 0.8, 1.0);
         }
         st.carried = inv.carried;
-    }
-    if let Some(m) = missions {
-        if m.current > st.mission && st.mission > 0 || (m.current > st.mission && m.flash > 0.0) {
-            oneshot(&mut commands, &s.mission, v, 1.0);
-        }
-        st.mission = m.current;
     }
 }
 
@@ -811,8 +734,6 @@ mod tests {
         assert!((e[0] - e[n - 1]).abs() < 0.2, "the cycle closes: {} vs {}", e[0], e[n - 1]);
         let w = wind(3);
         assert_eq!(w.len(), (4.0 * RATE as f32) as usize - (0.5 * RATE as f32) as usize);
-        let s = surf(5);
-        assert!(s.iter().all(|x| x.abs() <= 1.0));
     }
 
     #[test]

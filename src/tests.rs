@@ -12,17 +12,14 @@ use crate::controller::{self, ControllerPlugin, MoveState, Player};
 use crate::input::{PlayerInput, ViewAngles};
 use crate::health::{HealthPlugin, PlayerHealth, PlayerHit};
 use crate::targets::Soldier;
-use crate::terrain;
-use crate::tuning::{Island, Tuning};
+use crate::tuning::Tuning;
 use crate::targets::{self, Target, TargetsPlugin};
-use crate::island::{Placed, Sites};
 use crate::planet::{self, chunk::{self, ChunkMesh}, quadtree::{self, NodeId}};
 use crate::planet::gravity::gravitate;
 use crate::surface::testing::random_dirs;
 use crate::surface::{Origin, Sphere, Surface, QUANTUM};
 use crate::system::Body;
 use crate::loot::{self, ExtractPad, Inventory, Loot, LootPlugin, Save, SaveFile};
-use crate::mission::{MissionPlugin, Missions};
 use crate::targets::{Killed, Team};
 use crate::weapon::Damage;
 use crate::vehicle::{self, Driving, Kind, Vehicle, VehiclePlugin};
@@ -47,9 +44,9 @@ fn build_app(tuning: Tuning) -> App {
         .insert_resource(SaveFile(None))
         .init_resource::<PlayerInput>()
         .init_resource::<ViewAngles>()
-        .add_plugins(crate::boot::BootPlugin { island: false })
+        .add_plugins(crate::boot::BootPlugin)
         .insert_resource(crate::character::Characters::load())
-        .add_plugins((ControllerPlugin, WeaponPlugin, TargetsPlugin, HealthPlugin, VehiclePlugin, LootPlugin, MissionPlugin, crate::abilities::AbilitiesPlugin));
+        .add_plugins((ControllerPlugin, WeaponPlugin, TargetsPlugin, HealthPlugin, VehiclePlugin, LootPlugin, crate::abilities::AbilitiesPlugin));
     app.world_mut().spawn((RigidBody::Static, Collider::cuboid(200.0, 1.0, 200.0), Transform::from_xyz(0.0, -0.5, 0.0)));
     app
 }
@@ -311,9 +308,8 @@ fn full_game_boots_headless() {
         crate::hud::HudPlugin,
         VehiclePlugin,
         LootPlugin,
-        MissionPlugin,
-        crate::boot::BootPlugin { island: false },
-        crate::level::LevelPlugin,
+        crate::boot::BootPlugin,
+        solar::SolarPlugin,
     ));
     app.finish();
     app.cleanup();
@@ -462,90 +458,11 @@ fn body_pose_follows_movement() {
 
 // --- Island terrain ---
 
-#[test]
-fn heightmap_is_deterministic_and_island_shaped() {
-    let island = Island::default();
-    let a = terrain::generate(&island);
-    let b = terrain::generate(&island);
-    assert_eq!(a.heights, b.heights);
-    let other = terrain::generate(&Island { seed: 8, ..island.clone() });
-    assert_ne!(a.heights, other.heights);
-    assert_eq!(a.n, 1025);
-    assert!(a.height_at(0.0, 0.0) > island.water_level + 5.0, "center is land");
-    let half = island.size / 2.0;
-    for (x, z) in [(-half, -half), (half, -half), (-half, half), (half, half), (0.0, half), (half, 0.0)] {
-        assert!(a.height_at(x, z) < island.water_level - 1.0, "coast is under water at {x},{z}");
-    }
-    let peak = a.heights.iter().cloned().fold(f32::MIN, f32::max);
-    assert!(peak > 0.6 * island.height && peak <= island.height, "peak {peak}");
-}
-
-#[test]
-fn heightmap_handles_odd_sizes_and_out_of_range() {
-    let hm = terrain::generate(&Island { size: 100.0, cell: 3.0, ..Island::default() });
-    assert_eq!(hm.n, 100 / 3 + 1);
-    assert_eq!(hm.height_at(1e6, -1e6), hm.height_at(hm.size / 2.0, -hm.size / 2.0));
-    let n = hm.normal_at(0.0, 0.0);
-    assert!((n.length() - 1.0).abs() < 1e-3 && n.y > 0.0);
-}
-
-#[test]
-fn stamp_flattens_a_pad() {
-    let mut hm = terrain::generate(&Island::default());
-    hm.stamp_flat(Vec2::new(200.0, -300.0), 30.0, 50.0, 20.0);
-    for (dx, dz) in [(0.0, 0.0), (29.0, 0.0), (0.0, -29.0), (20.0, 20.0)] {
-        assert!((hm.height_at(200.0 + dx, -300.0 + dz) - 50.0).abs() < 0.05);
-    }
-    let untouched = terrain::generate(&Island::default());
-    assert_eq!(hm.height_at(200.0 + 60.0, -300.0), untouched.height_at(200.0 + 60.0, -300.0), "unaffected beyond radius + blend");
-}
-
-#[test]
-fn site_pads_are_flat_and_above_water() {
-    let island = Island::default();
-    let mut hm = terrain::generate(&island);
-    let sites = crate::island::place(&mut hm, &island);
-    assert_eq!(sites.len(), 9, "six sites and three extraction pads");
-    assert_eq!(crate::island::extract_pads(&sites).count(), 3);
-    for site in &sites {
-        assert!(site.height > island.water_level, "{} above water", site.name);
-        assert!(site.pad <= site.radius);
-        for (dx, dz) in [(0.0, 0.0), (0.7, 0.0), (0.0, -0.7), (0.5, 0.5), (-0.6, 0.3)] {
-            let h = hm.height_at(site.center.x + dx * site.pad, site.center.y + dz * site.pad);
-            assert!((h - site.height).abs() < 0.05, "{} pad flat at {dx},{dz}: {h} vs {}", site.name, site.height);
-        }
-    }
-    assert_eq!(sites[0].name, "Base camp");
-    assert!(sites[5].center.y > island.core * 0.6, "lighthouse is on the south coast");
-}
-
 /// Drops make_app's flat floor so only the terrain under test can be hit.
 fn drop_flat_floor(app: &mut App) {
     let floor: Vec<Entity> = app.world_mut().query_filtered::<Entity, (With<Collider>, Without<Player>)>().iter(app.world()).collect();
     for e in floor {
         app.world_mut().despawn(e);
-    }
-}
-
-#[test]
-fn colliders_match_heightmap() {
-    // 500 m at 4 m cells is 125 cells: three full chunks and a short one per side.
-    let island = Island { size: 500.0, ..Island::default() };
-    let hm = terrain::generate(&island);
-    let mut app = make_app(Tuning::default());
-    drop_flat_floor(&mut app);
-    terrain::spawn_colliders(app.world_mut(), &hm);
-    app.update();
-    for (x, z) in [(0.0, 0.0), (100.0, -37.0), (-211.0, 180.0), (245.0, 3.0), (-3.0, -245.0), (130.0, 130.0), (240.0, -240.0)] {
-        let got = app
-            .world_mut()
-            .run_system_once(move |q: SpatialQuery| {
-                q.cast_ray(Vec3::new(x, 400.0, z), Dir3::NEG_Y, 800.0, true, &SpatialQueryFilter::default()).map(|hit| 400.0 - hit.distance)
-            })
-            .unwrap()
-            .expect("ray hits terrain");
-        let want = hm.height_at(x, z);
-        assert!((got - want).abs() < 0.1, "at {x},{z}: collider {got} vs heightmap {want}");
     }
 }
 
@@ -1059,24 +976,6 @@ fn a_player_high_over_the_ground_is_not_held_and_falls() {
     assert!(fell > 10.0, "fell {fell} m in 2 s");
 }
 
-#[test]
-fn the_moon_level_starts_the_player_on_the_course() {
-    let mut app = build_app(Tuning::default());
-    drop_flat_floor(&mut app);
-    app.add_plugins(planet::PlanetPlugin { body: "moon".into() });
-    app.finish();
-    app.update();
-    let spawn = app.world().resource::<controller::WorldBounds>().spawn;
-    assert!(is_solid(&app, spawn), "seeded ground under the spawn after startup");
-    run(&mut app, 1.0);
-    let id = app.world_mut().query_filtered::<Entity, With<Player>>().single(app.world()).unwrap();
-    assert!(app.world().get::<planet::bubble::Held>(id).is_none(), "not held");
-    let (pos, _, state) = player(&mut app);
-    let body = app.world().resource::<Origin>().body(pos);
-    assert_eq!(state, MoveState::Ground);
-    assert!(body.distance(spawn) < 0.1, "standing on the deck at the spawn, {} m off", body.distance(spawn));
-}
-
 // --- Health and soldiers ---
 
 fn hit_player(app: &mut App, amount: f32) {
@@ -1347,8 +1246,8 @@ fn vehicle_respawns_after_falling_off_the_world() {
     assert!(pos.y > -15.0 && (pos.xz() - Vec2::new(300.0, 300.0)).length() < 0.5, "back home, got {pos}");
 }
 
-/// The island level as `main` runs it, headless: the loading screen, then the terrain and the player.
-fn island_app() -> App {
+/// The solar system as `main` runs it, headless: the world, the ship and the player.
+fn solar_app() -> App {
     use bevy::render::{RenderPlugin, settings::WgpuSettings};
     let mut app = App::new();
     app.add_plugins((
@@ -1363,7 +1262,7 @@ fn island_app() -> App {
     .insert_resource(Gravity(Vec3::NEG_Y * Tuning::default().gravity))
     .insert_resource(SaveFile(None))
     .add_plugins((
-        crate::boot::BootPlugin { island: true },
+        crate::boot::BootPlugin,
         crate::tuning::TuningPlugin,
         crate::input::InputPlugin,
         ControllerPlugin,
@@ -1375,72 +1274,27 @@ fn island_app() -> App {
         crate::hud::HudPlugin,
         VehiclePlugin,
         LootPlugin,
-        MissionPlugin,
-        terrain::TerrainPlugin,
+        solar::SolarPlugin,
     ));
     app.finish();
     app.cleanup();
     app
 }
 
-/// Run until the loading screen has let go and the world has spawned. The island builds on a
-/// background thread, so this runs in real time, up to a minute.
-fn wait_for_world(app: &mut App) {
-    let start = std::time::Instant::now();
-    while *app.world().resource::<State<crate::boot::Boot>>().get() != crate::boot::Boot::Ready {
-        assert!(start.elapsed().as_secs() < 60, "the island never finished loading");
-        app.update();
-        std::thread::sleep(Duration::from_millis(5));
-    }
-}
-
-#[test]
-fn nothing_spawns_before_the_loading_screen_lets_go() {
-    let mut app = island_app();
-    app.update();
-    assert_eq!(*app.world().resource::<State<crate::boot::Boot>>().get(), crate::boot::Boot::Loading);
-    assert!(app.world().get_resource::<terrain::Heightmap>().is_none(), "the island is still being built");
-    assert_eq!(app.world_mut().query_filtered::<Entity, With<Player>>().iter(app.world()).count(), 0);
-    wait_for_world(&mut app);
-    assert!(app.world().get_resource::<terrain::Heightmap>().is_some());
-    assert_eq!(app.world_mut().query_filtered::<Entity, With<Player>>().iter(app.world()).count(), 1);
-}
-
 /// The first-person guns must stay hidden for the whole time the player is in a vehicle.
 #[test]
 fn viewmodel_stays_hidden_while_driving() {
-    let mut app = island_app();
-    wait_for_world(&mut app);
+    let mut app = solar_app();
     run(&mut app, 0.5);
     let visible = |app: &mut App| app.world_mut().query_filtered::<&Visibility, With<crate::viewmodel::ViewModel>>().single(app.world()).map(|v| *v != Visibility::Hidden).unwrap();
     assert!(visible(&mut app), "the guns show on foot");
-    let vehicle = app.world_mut().query_filtered::<Entity, With<Vehicle>>().iter(app.world()).next().expect("the island has vehicles");
+    let vehicle = ship_entity(&mut app);
     let player = app.world_mut().query_filtered::<Entity, With<Player>>().single(app.world()).unwrap();
     app.world_mut().entity_mut(player).insert(Driving(vehicle));
     for _ in 0..30 {
         app.update();
         assert!(!visible(&mut app), "the guns showed while driving");
     }
-}
-
-#[test]
-fn vehicles_park_on_the_island() {
-    let mut app = island_app();
-    wait_for_world(&mut app);
-    run(&mut app, 10.0);
-    let mut q = app.world_mut().query::<(&Transform, &Vehicle)>();
-    let mut n = 0;
-    let mut bad = Vec::new();
-    for (tf, v) in q.iter(app.world()) {
-        n += 1;
-        let home = v.home.translation;
-        let up = tf.rotation * Vec3::Y;
-        if tf.translation.distance(home) > 1.0 || up.y < 0.95 {
-            bad.push(format!("{} from {home} to {} up {up} grounded {}", v.spec.name, tf.translation, v.grounded_wheels()));
-        }
-    }
-    assert_eq!(n, 7);
-    assert!(bad.is_empty(), "every vehicle stays parked and upright:\n{}", bad.join("\n"));
 }
 
 // ---------------------------------------------------------------------------
@@ -1461,21 +1315,6 @@ fn inventory(app: &mut App) -> (u32, Vec<usize>) {
 
 fn save(app: &mut App) -> Save {
     app.world().resource::<Save>().clone()
-}
-
-/// Six fake sites on the test floor, in `island::place` order, plus one extraction pad.
-fn fake_sites(app: &mut App) {
-    let site = |name, x: f32, z: f32| Placed { name, center: Vec2::new(x, z), height: 0.0, pad: 10.0, radius: 20.0 };
-    app.insert_resource(Sites(vec![
-        site("Base camp", 0.0, 60.0),
-        site("Radio tower", 60.0, -60.0),
-        site("Fort", 80.0, 0.0),
-        site("Quarry", -80.0, 0.0),
-        site("Ruins", 0.0, -80.0),
-        site("Lighthouse", 0.0, 90.0),
-        site("Extract north", -60.0, 60.0),
-    ]));
-    spawn_pad(app, Vec3::new(-60.0, 0.0, 60.0));
 }
 
 #[test]
@@ -1513,87 +1352,11 @@ fn loot_is_carried_banked_on_extraction_and_lost_on_death() {
 fn save_round_trips_through_a_file() {
     let path = std::env::temp_dir().join(format!("rust-regime-save-{}.toml", std::process::id()));
     let file = SaveFile(Some(path.clone()));
-    let s = Save { banked: 1234, runs: 7, deaths: 2, missions_done: 3, ..default() };
+    let s = Save { banked: 1234, runs: 7, deaths: 2, ..default() };
     file.write(&s);
     assert_eq!(file.load(), s);
     std::fs::remove_file(&path).ok();
     assert_eq!(file.load(), Save::default(), "missing file is a fresh save");
-}
-
-fn mission(app: &mut App) -> usize {
-    app.world().resource::<Missions>().current
-}
-
-#[test]
-fn missions_progress_in_order() {
-    let mut app = make_app(Tuning::default());
-    fake_sites(&mut app);
-    assert_eq!(mission(&mut app), 0);
-
-    // 0: reach the tower top.
-    set_player(&mut app, Vec3::new(60.0, 41.4, -60.0), Vec3::ZERO);
-    run(&mut app, 0.1);
-    assert_eq!(mission(&mut app), 1, "reached the tower");
-    set_player(&mut app, Vec3::new(0.0, 1.0, 0.0), Vec3::ZERO);
-
-    // 1: kill four soldiers at the fort (and one elsewhere that must not count).
-    for i in 0..4 {
-        soldier(&mut app, vec![Vec3::new(80.0 + i as f32 * 2.0, 0.0, 10.0)]);
-    }
-    soldier(&mut app, vec![Vec3::new(-20.0, 0.0, -60.0)]);
-    let mut q = app.world_mut().query_filtered::<(Entity, &Transform), With<Soldier>>();
-    let soldiers: Vec<(Entity, Vec3)> = q.iter(app.world()).map(|(e, tf)| (e, tf.translation)).collect();
-    for (e, pos) in &soldiers {
-        if pos.x < 0.0 {
-            app.world_mut().resource_mut::<Messages<Damage>>().write(Damage { entity: *e, amount: 1000.0, impulse: Vec3::ZERO });
-        }
-    }
-    run(&mut app, 0.1);
-    assert_eq!(mission(&mut app), 1, "a kill away from the fort does not count");
-    for (e, pos) in &soldiers {
-        if pos.x > 0.0 {
-            app.world_mut().resource_mut::<Messages<Damage>>().write(Damage { entity: *e, amount: 1000.0, impulse: Vec3::ZERO });
-        }
-    }
-    run(&mut app, 0.1);
-    assert_eq!(mission(&mut app), 2, "fort cleared");
-
-    // 2 and 3: the quarry cache, carried to the pad; dying with it sends you back a step.
-    let cache = spawn_loot(&mut app, Vec3::new(-80.0, 0.0, 0.0), 100, Some(0));
-    set_player(&mut app, Vec3::new(-80.0, 1.0, 0.0), Vec3::ZERO);
-    run(&mut app, 0.1);
-    assert_eq!(mission(&mut app), 3, "cache collected");
-    hit_player(&mut app, 500.0);
-    run(&mut app, 0.1);
-    assert_eq!(mission(&mut app), 2, "lost the cache with your life");
-    run(&mut app, 2.5);
-    assert!(app.world().get::<Loot>(cache).unwrap().available(), "the cache is back quickly");
-    set_player(&mut app, Vec3::new(-80.0, 1.0, 0.0), Vec3::ZERO);
-    run(&mut app, 0.1);
-    assert_eq!(mission(&mut app), 3);
-    set_player(&mut app, Vec3::new(-60.0, 1.0, 60.0), Vec3::ZERO);
-    run(&mut app, 8.5);
-    assert_eq!(mission(&mut app), 4, "extracted with the cache");
-    assert_eq!(save(&mut app).missions_done, 4);
-
-    // 4: drive a Humvee to the ruins.
-    app.insert_resource(Gravity(Vec3::NEG_Y * Tuning::default().gravity));
-    let humvee = spawn_vehicle(&mut app, Kind::Humvee, Vec3::new(0.0, 0.0, -50.0), 0.0);
-    run(&mut app, 1.0);
-    set_player(&mut app, Vec3::new(3.0, 1.0, -50.0), Vec3::ZERO);
-    input(&mut app).interact_pressed = true;
-    run(&mut app, 0.1);
-    assert_eq!(driving(&mut app), Some(humvee));
-    assert_eq!(mission(&mut app), 5, "drove to the ruins");
-    input(&mut app).interact_pressed = true;
-    run(&mut app, 0.1);
-
-    // 5: the lighthouse top, and then there is nothing left.
-    set_player(&mut app, Vec3::new(0.0, 25.3, 90.0), Vec3::ZERO);
-    run(&mut app, 0.1);
-    assert_eq!(mission(&mut app), 6, "all done");
-    run(&mut app, 1.0);
-    assert_eq!(mission(&mut app), 6);
 }
 
 #[test]
@@ -1621,27 +1384,6 @@ fn soldiers_of_different_teams_fight_each_other() {
     assert_eq!(hp, 100.0, "nobody shot the far-off player");
     let mut kills = app.world_mut().resource_mut::<Messages<Killed>>();
     kills.clear();
-}
-
-#[test]
-fn match_mode_spawns_two_teams_and_scores() {
-    let mut app = build_app(Tuning::default());
-    fake_sites(&mut app);
-    app.add_plugins(crate::bots::MatchPlugin);
-    app.finish();
-    run(&mut app, 0.1);
-    let mut q = app.world_mut().query::<&Team>();
-    let (mut blue, mut red) = (0, 0);
-    for team in q.iter(app.world()) {
-        if team.0 == 0 { blue += 1 } else { red += 1 }
-    }
-    assert_eq!((blue, red), (5, 6));
-    assert_eq!(app.world().resource::<controller::WorldBounds>().spawn.x, 28.0, "spawn moved to the fort gate");
-    let mut q = app.world_mut().query::<(Entity, &Team)>();
-    let red_bot = q.iter(app.world()).find(|(_, t)| t.0 == 1).map(|(e, _)| e).unwrap();
-    app.world_mut().resource_mut::<Messages<Damage>>().write(Damage { entity: red_bot, amount: 1000.0, impulse: Vec3::ZERO });
-    run(&mut app, 0.1);
-    assert_eq!(app.world().resource::<crate::bots::MatchState>().score, [1, 0]);
 }
 
 // ---------------------------------------------------------------------------
@@ -1733,46 +1475,6 @@ fn grapple_needs_the_class_and_a_target_in_range() {
     app.finish();
     app.update();
     assert!(!app.world().resource::<GrappleState>().enabled);
-}
-
-#[test]
-fn splat_weights_sum_to_one_and_follow_the_ground() {
-    let island = Island::default();
-    let sum = |w: [f32; 4]| w.iter().sum::<f32>();
-    for (p, h, ny) in [(Vec2::ZERO, 40.0, 1.0), (Vec2::new(300.0, -200.0), 2.0, 0.95), (Vec2::new(-50.0, 90.0), 120.0, 0.5), (Vec2::new(17.0, 400.0), 240.0, 0.9)] {
-        let w = terrain::splat_weights(p, h, ny, &island);
-        assert!((sum(w) - 1.0).abs() < 1e-4, "weights {w:?} sum to one");
-        assert!(w.iter().all(|x| *x >= -1e-6), "no negative weight in {w:?}");
-    }
-    let cliff = terrain::splat_weights(Vec2::ZERO, 60.0, 0.5, &island);
-    assert!(cliff[2] > 0.9, "a cliff is rock: {cliff:?}");
-    let beach = terrain::splat_weights(Vec2::ZERO, island.water_level + 1.0, 1.0, &island);
-    assert!(beach[3] > 0.9, "the shore is sand: {beach:?}");
-    let meadow = terrain::splat_weights(Vec2::new(500.0, 500.0), 40.0, 1.0, &island);
-    assert!(meadow[0] + meadow[1] > 0.95, "flat land is grass or dirt: {meadow:?}");
-}
-
-#[test]
-fn vegetation_keeps_off_the_pads_the_water_and_the_cliffs() {
-    use crate::veg::{self, Plant};
-    let island = Island::default();
-    let mut hm = terrain::generate(&island);
-    let sites = crate::island::place(&mut hm, &island);
-    let placed = veg::place(&hm, &island, &sites, 1.0);
-    let pines = placed.iter().filter(|p| p.kind == Plant::Pine).count();
-    let rocks = placed.iter().filter(|p| p.kind == Plant::Rock).count();
-    assert!(pines > 2000 && rocks > 200, "{pines} pines, {rocks} rocks");
-    for p in &placed {
-        let q = p.pos.xz();
-        assert!(hm.height_at(q.x, q.y) > island.water_level + 2.0, "{:?} at {q} is on land", p.kind);
-        for s in &sites {
-            assert!(s.center.distance(q) > s.radius + 10.0, "{:?} at {q} is clear of {}", p.kind, s.name);
-        }
-        if p.kind == Plant::Pine {
-            assert!(hm.normal_at(q.x, q.y).y > 0.75, "pines stand on gentle ground");
-        }
-    }
-    assert!(veg::place(&hm, &island, &sites, 0.0).is_empty(), "density 0 grows nothing");
 }
 
 fn dummy_at(app: &mut App, feet: Vec3) -> Entity {
@@ -1943,65 +1645,6 @@ fn a_hit_soldier_runs_for_cover() {
 
 
 #[test]
-fn roads_join_camp_to_every_site_and_leave_the_pads_alone() {
-    let island = Island::default();
-    let mut hm = terrain::generate(&island);
-    let sites = crate::island::place(&mut hm, &island);
-    let pads = hm.clone();
-    let roads = crate::roads::carve(&mut hm, &sites, &island);
-    assert!(roads.segments.len() > 40, "{} segments", roads.segments.len());
-    for site in sites.iter().take(6) {
-        // The pads are where they were.
-        for (dx, dz) in [(0.0, 0.0), (0.5, 0.5), (-0.6, 0.3)] {
-            let (x, z) = (site.center.x + dx * site.pad, site.center.y + dz * site.pad);
-            assert_eq!(hm.height_at(x, z), pads.height_at(x, z), "{} pad untouched", site.name);
-        }
-        // A road reaches each site's edge.
-        let near = roads.segments.iter().flat_map(|(a, b)| [a.xz(), b.xz()]).map(|p| p.distance(site.center)).fold(f32::MAX, f32::min);
-        assert!(near < site.radius + 10.0, "{} is {near} m from the nearest road", site.name);
-    }
-    // Driveable: the carved surface along every road is gentle and above the sea.
-    for (a, b) in &roads.segments {
-        let grade = (b.y - a.y).abs() / a.xz().distance(b.xz()).max(1.0);
-        assert!(grade < 0.16, "grade {grade} between {a} and {b}");
-        let mid = (a.xz() + b.xz()) / 2.0;
-        assert!(hm.height_at(mid.x, mid.y) > island.water_level, "road above water at {mid}");
-        assert!(roads.on_road(mid));
-    }
-    assert!(!roads.on_road(Vec2::new(5000.0, 5000.0)));
-}
-
-#[test]
-fn roads_grip_better_than_grass() {
-    // The same hard brake from 15 m/s stops shorter on a road.
-    let stop = |road: bool| {
-        let mut app = vehicle_app();
-        if road {
-            app.insert_resource(crate::roads::Roads { segments: vec![(Vec3::new(40.0, 0.0, 100.0), Vec3::new(40.0, 0.0, -200.0))] });
-        }
-        let e = spawn_vehicle(&mut app, Kind::Jeep, Vec3::new(40.0, 0.0, 40.0), 0.0);
-        run(&mut app, 1.0);
-        set_player(&mut app, Vec3::new(42.0, 1.0, 40.0), Vec3::ZERO);
-        input(&mut app).interact_pressed = true;
-        run(&mut app, 0.1);
-        app.world_mut().entity_mut(e).insert(LinearVelocity(Vec3::new(0.0, 0.0, -15.0)));
-        input(&mut app).movement = Vec2::new(0.0, -1.0);
-        run(&mut app, 0.05);
-        let (start, _, _, _) = vehicle_state(&mut app, e);
-        for _ in 0..100 {
-            run(&mut app, 0.05);
-            let (end, _, vel, _) = vehicle_state(&mut app, e);
-            if vel.length() < 1.0 {
-                return start.z - end.z;
-            }
-        }
-        panic!("never stopped");
-    };
-    let (road, grass) = (stop(true), stop(false));
-    assert!(road < grass * 0.9, "road {road} m vs grass {grass} m");
-}
-
-#[test]
 fn fuel_burns_and_an_empty_tank_stops_the_engine() {
     let mut app = vehicle_app();
     let e = spawn_vehicle(&mut app, Kind::Jeep, Vec3::new(40.0, 0.0, 40.0), 0.0);
@@ -2049,50 +1692,6 @@ fn shot_up_vehicles_wreck_throw_the_driver_and_come_back() {
     run(&mut app, Tuning::default().vehicle.wreck_time);
     let v = app.world().get::<Vehicle>(e).unwrap();
     assert!(v.wreck.is_none() && v.health == v.spec.hp && v.fuel == v.spec.tank, "replaced with a fresh one");
-}
-
-#[test]
-fn the_sun_rises_sets_and_the_night_is_dark() {
-    use crate::world::Clock;
-    let noon = Clock { hour: 12.0 };
-    let midnight = Clock { hour: 0.0 };
-    assert!(noon.sun_dir().y > 0.7 && noon.daylight() == 1.0);
-    assert!(midnight.sun_dir().y < -0.7 && midnight.daylight() == 0.0);
-    assert!(Clock { hour: 7.0 }.sun_dir().x > 0.5, "rises in the east");
-    assert!(Clock { hour: 17.0 }.sun_dir().x < -0.5, "sets in the west");
-    let dusk = Clock { hour: 18.2 }.daylight();
-    assert!(dusk > 0.0 && dusk < 1.0, "dusk is a ramp: {dusk}");
-}
-
-#[test]
-fn weather_changes_smoothly_and_rain_wets_the_ground() {
-    use crate::world::{Sky, Weather};
-    let mut w = Weather::default();
-    let mut seen = std::collections::HashSet::new();
-    let mut prev = w.clone();
-    for _ in 0..(4 * 3600) {
-        w.step(1.0, 6.0);
-        assert!((w.rain - prev.rain).abs() < 0.03 && (w.fog - prev.fog).abs() < 0.03, "no jumps");
-        seen.insert(format!("{:?}", w.sky));
-        if w.sky == Sky::Rain && w.rain > 0.8 {
-            assert!(w.wet > 0.0);
-        }
-        prev = w.clone();
-    }
-    assert!(seen.len() == 4, "every sky turns up in four hours: {seen:?}");
-}
-
-#[test]
-fn a_crosswind_pushes_bullets_sideways() {
-    use crate::weapon::Bullet;
-    let mut app = make_app(Tuning::default());
-    app.insert_resource(crate::world::Wind(Vec3::new(10.0, 0.0, 0.0)));
-    select_weapon(&mut app, WeaponKind::Pistol);
-    input(&mut app).fire_pressed = true;
-    run(&mut app, 0.5);
-    let mut q = app.world_mut().query::<&Bullet>();
-    let b = q.single(app.world()).expect("a bullet in the air");
-    assert!(b.velocity.x > 0.3, "drifting downwind: {}", b.velocity);
 }
 
 // ------------------------------------------------------------------------------------ menus
