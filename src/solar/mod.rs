@@ -685,11 +685,10 @@ fn flight_text(
         }
     } else if flying.is_some() {
         let f = |a: Action| key(Ctx::Ship, a);
-        let lift = if pad { "Left stick".to_string() } else { f(Action::Lift) };
+        let steer = if pad { format!("[Left stick] pitch/roll  [{}] yaw  [Right stick] up/down", f(Action::Yaw)) } else { format!("[{}] up/down  [{}] roll", f(Action::Lift), f(Action::Roll)) };
         line.push_str(&format!(
-            "\n[{}] thrust  [{lift}] up/down  [{}] roll  [{}] boost\n[{}] stop  [{}] look round  [{}] view  [{}] leave",
+            "\n[{}] thrust  {steer}  [{}] boost\n[{}] stop  [{}] look round  [{}] view  [{}] leave",
             f(Action::Thrust),
-            f(Action::Roll),
             f(Action::Boost),
             f(Action::Stop),
             f(Action::FreeLook),

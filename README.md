@@ -66,8 +66,10 @@ First build takes a while. Linux needs `libasound2-dev libudev-dev libwayland-de
 | Action | Keyboard / mouse | Gamepad |
 |---|---|---|
 | Thrust / reverse | W, S | RT, LT |
-| Lift / sink | Space, Ctrl | Left stick up / down |
-| Roll | A, D | LB, RB |
+| Lift / sink | Space, Ctrl | Right stick up / down |
+| Roll | A, D | Left stick left / right |
+| Pitch (pull back: nose up) |  | Left stick up / down |
+| Yaw |  | LB, RB |
 | Boost | Shift | A |
 | Stop (match ground speed) | X | Y |
 | Look around (hold) | Alt | B |

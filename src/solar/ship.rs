@@ -2,9 +2,9 @@
 //! them stand on Haven's apron, one per faction, each with its own handling from
 //! `assets/ships.toml` and its own hull from `models/ships/<id>.glb` (built by `tools/ships`).
 //! The mouse pitches and yaws, A and D roll, W and S thrust along the nose, Space and Ctrl
-//! lift and sink, Shift boosts from a tank, X stops, held Alt looks round. On a pad the right
-//! stick pitches and yaws, the bumpers roll, the left stick lifts, the triggers thrust, A boosts,
-//! Y stops and held B looks round (Battlefield / Star Citizen style). Flight assist bleeds off
+//! lift and sink, Shift boosts from a tank, X stops, held Alt looks round. On a pad the left
+//! stick is a flight joystick (pull back for nose up, sideways to roll), the bumpers yaw, the
+//! right stick lifts, the triggers thrust, A boosts, Y stops and held B looks round. Flight assist bleeds off
 //! sideways drift and, below a few kilometres, holds the ship against gravity and levels it over
 //! the ground (fading out between 2.5 and 3.5 km), and slows the last metres of a descent to a
 //! soft touchdown, so landing is a matter of sinking onto a flat spot. Speed is capped by height over the ground, low near it
@@ -216,7 +216,7 @@ pub struct ShipControls {
     pub stop: bool,
     /// Mouse travel since the last tick, radians: yaw (x) and pitch (y).
     pub mouse: Vec2,
-    /// The right stick, -1..1: pitch up (x) and yaw left (y).
+    /// The pad's stick, -1..1: pitch up (x) and yaw left (y).
     pub stick: Vec2,
     /// How far the pilot is looking round, yaw and pitch, radians (held Alt / B).
     pub look: Vec2,
@@ -436,7 +436,9 @@ fn controls(
     // The stick comes from the bindings (see `controls`): keys, triggers, the left stick and the
     // bumpers. The left stick gets a gentle curve so small lift corrections are easy.
     controls.thrust = input.thrust;
-    controls.lift = input.lift.signum() * input.lift.abs().powf(1.5);
+    // Looking round with the right stick must not also lift the ship.
+    let lift = if input.free_look { 0.0 } else { input.lift };
+    controls.lift = lift.signum() * lift.abs().powf(1.5);
     controls.turn.z = input.roll;
     controls.boost = input.boost;
     controls.stop = input.stop;

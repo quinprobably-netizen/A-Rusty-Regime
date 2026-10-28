@@ -50,8 +50,8 @@ pub struct PlayerInput {
     pub lift: f32,
     pub roll: f32,
     pub boost: bool,
-    /// The right stick while flying, curved, -1..1: pitch up (x) and yaw left (y). It does not
-    /// pass through the view, so it is a true stick rather than a mouse imitation.
+    /// The pad's flight stick, -1..1: pitch up (x, left stick) and yaw left (y, bumpers). It does
+    /// not pass through the view, so it is a true stick rather than a mouse imitation.
     pub ship_stick: Vec2,
     /// Held: kill the ship's speed (X / Y).
     pub stop: bool,
@@ -203,19 +203,17 @@ fn gather(
     if mouse_live {
         look += pointer.motion.delta * t.mouse_sensitivity * Vec2::new(1.0, invert);
     }
-    let mut ship_stick = Vec2::ZERO;
     for pad in &pads {
+        // Flying, the right stick lifts (through the bindings) unless the pilot is looking round.
+        if steering {
+            continue;
+        }
         let r = radial_deadzone(pad.right_stick(), t.stick_deadzone);
         // Response curve: fine aim near center, fast turns at full tilt.
         let curved = r.normalize_or_zero() * r.length().powf(t.stick_look_curve);
-        if steering {
-            ship_stick += Vec2::new(curved.y * invert, -curved.x) * t.flight_stick;
-            continue;
-        }
         look.x += curved.x * t.stick_yaw_speed * dt;
         look.y -= curved.y * t.stick_pitch_speed * dt * invert;
     }
-    input.ship_stick = ship_stick.clamp(Vec2::NEG_ONE, Vec2::ONE);
     // Aiming down sights narrows the view (or a scope magnifies it), so the mouse turns it less.
     if let Some(aim) = aim.as_ref() {
         look *= crate::scope::look_scale(aim.level, t.ads_fov, scoped.as_ref().and_then(|s| s.0));
@@ -249,7 +247,12 @@ fn gather(
     input.handbrake = held(Action::Handbrake);
     input.thrust = state.value(Action::Thrust);
     input.lift = state.value(Action::Lift);
-    input.roll = state.value(Action::Roll);
+    // The left stick is a flight joystick (pitch and roll) with the look curve, so small
+    // corrections are fine and full tilt is full rate; Invert Y flips the pitch.
+    let joystick = Vec2::new(state.value(Action::Pitch) * invert, state.value(Action::Roll));
+    let joystick = joystick.normalize_or_zero() * joystick.length().min(1.0).powf(t.stick_look_curve) * t.flight_stick;
+    input.ship_stick = Vec2::new(joystick.x, state.value(Action::Yaw) * t.flight_stick).clamp(Vec2::NEG_ONE, Vec2::ONE);
+    input.roll = joystick.y.clamp(-1.0, 1.0);
     input.boost = held(Action::Boost);
     input.stop = held(Action::Stop);
     input.free_look = held(Action::FreeLook);

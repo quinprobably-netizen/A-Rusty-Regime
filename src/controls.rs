@@ -68,6 +68,9 @@ pub enum Action {
     Thrust,
     Lift,
     Roll,
+    /// Pad only (the mouse pitches and yaws on a keyboard): pitch up and yaw left are positive.
+    Pitch,
+    Yaw,
     Boost,
     /// Kill the ship's speed over the ground.
     Stop,
@@ -111,6 +114,8 @@ impl Action {
             Action::Thrust => "Thrust / reverse",
             Action::Lift => "Lift / sink",
             Action::Roll => "Roll",
+            Action::Pitch => "Pitch (pull back: nose up)",
+            Action::Yaw => "Yaw",
             Action::Boost => "Boost",
             Action::Stop => "Stop (match ground speed)",
             Action::FreeLook => "Look around (hold)",
@@ -271,11 +276,14 @@ pub const BINDINGS: &[Bind] = &[
     scaled(pad(Fly, Thrust, P::LeftTrigger2), -1.0),
     key(Fly, Lift, K::Space),
     scaled(key(Fly, Lift, K::ControlLeft), -1.0),
-    bind(Fly, Lift, Source::PadAxis(GamepadAxis::LeftStickY)),
+    bind(Fly, Lift, Source::PadAxis(GamepadAxis::RightStickY)),
     key(Fly, Roll, K::KeyA),
     scaled(key(Fly, Roll, K::KeyD), -1.0),
-    pad(Fly, Roll, P::LeftTrigger),
-    scaled(pad(Fly, Roll, P::RightTrigger), -1.0),
+    // The left stick is a flight joystick: pull back for nose up, push sideways to roll.
+    scaled(bind(Fly, Roll, Source::PadAxis(GamepadAxis::LeftStickX)), -1.0),
+    scaled(bind(Fly, Pitch, Source::PadAxis(GamepadAxis::LeftStickY)), -1.0),
+    pad(Fly, Yaw, P::LeftTrigger),
+    scaled(pad(Fly, Yaw, P::RightTrigger), -1.0),
     key(Fly, Boost, K::ShiftLeft),
     pad(Fly, Boost, P::South),
     key(Fly, Stop, K::KeyX),
@@ -511,6 +519,8 @@ impl Bind {
             Source::Pad(p) => pad_name(p).into(),
             Source::PadAxis(GamepadAxis::LeftStickX) => "Left stick left / right".into(),
             Source::PadAxis(GamepadAxis::LeftStickY) => "Left stick up / down".into(),
+            Source::PadAxis(GamepadAxis::RightStickX) => "Right stick left / right".into(),
+            Source::PadAxis(GamepadAxis::RightStickY) => "Right stick up / down".into(),
             Source::PadAxis(_) => "Stick".into(),
             Source::LeftStick => "Left stick".into(),
         };
@@ -634,7 +644,7 @@ mod tests {
     fn prompts_name_the_keys_or_the_pad() {
         assert_eq!(hint(Fly, Thrust, false), "W/S");
         assert_eq!(hint(Fly, Thrust, true), "RT/LT");
-        assert_eq!(hint(Fly, Roll, true), "LB/RB");
+        assert_eq!(hint(Fly, Yaw, true), "LB/RB");
         assert_eq!(hint(Fly, FreeLook, false), "Alt");
     }
 
@@ -701,17 +711,16 @@ mod tests {
         pad.analog_mut().set(GamepadButton::RightTrigger2, 0.6);
         pad.analog_mut().set(GamepadAxis::LeftStickX, 0.8);
         pad.analog_mut().set(GamepadAxis::LeftStickY, -0.5);
+        pad.analog_mut().set(GamepadAxis::RightStickY, -0.6);
         pad.analog_mut().set(GamepadButton::RightTrigger, 1.0);
         let mut state = ActionState::default();
         read_pad(Fly, &pad, &mut state);
         assert!((state.value(Thrust) - 0.6).abs() < 1e-4, "RT thrusts: {}", state.value(Thrust));
-        assert!(state.value(Roll) < -0.5, "RB rolls right: {}", state.value(Roll));
-        assert!(state.value(Lift) < -0.2, "stick down sinks: {}", state.value(Lift));
-        // Sideways on the stick no longer rolls: with RB let go, roll stays still.
-        pad.analog_mut().set(GamepadButton::RightTrigger, 0.0);
-        let mut state = ActionState::default();
-        read_pad(Fly, &pad, &mut state);
-        assert_eq!(state.value(Roll), 0.0, "the stick does not roll");
+        // The left stick is a joystick: right rolls right, pulled back pitches the nose up.
+        assert!(state.value(Roll) < -0.5, "stick right rolls right: {}", state.value(Roll));
+        assert!(state.value(Pitch) > 0.3, "stick back pitches up: {}", state.value(Pitch));
+        assert!(state.value(Yaw) < -0.5, "RB yaws right: {}", state.value(Yaw));
+        assert!(state.value(Lift) < -0.2, "right stick down sinks: {}", state.value(Lift));
         let mut state = ActionState::default();
         read_pad(Drive, &pad, &mut state);
         assert!((state.value(Gas) - 0.6).abs() < 1e-4, "RT is gas: {}", state.value(Gas));
