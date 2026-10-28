@@ -297,7 +297,7 @@ the floor, walls, ceiling and open ramp you walk between.
 
 Each faction has a base on its world, from `assets/bases.toml` and
 `assets/models/bases/<id>.glb` (built like the ships: `tools/bases/build.sh [ids]
-[--no-bake] [--preview] [--check] [--toml]`, each under 90 k triangles with one 2048² baked
+[--no-bake] [--preview] [--check] [--toml]`, each under 115 k triangles with one 2048² baked
 texture, and `--toml` rewrites `bases.toml` from the SPEC in `tools/bases/bases/<id>.py`,
 which is the single source of truth for a base's site and collision boxes). The Deserters'
 **Roost** stands on the flat south-east of Haven's apron past the course: a two-storey hangar

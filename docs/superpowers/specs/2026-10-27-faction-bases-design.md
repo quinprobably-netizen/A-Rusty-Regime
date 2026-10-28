@@ -10,7 +10,7 @@ and runtime shape.
 - Each world has somewhere to fly to: a landing pad and a building the faction reads from a
   kilometre away, with an interior to walk through. Haven's base stands beside the apron.
 - Titanfall 2 hard-kit look, the faction colours of the ships and roster. Zero third-party assets.
-- Budget for an Arc A580: one base loaded at a time (the anchor world's), each under 90 k
+- Budget for an Arc A580: one base loaded at a time (the anchor world's), each under 115 k
   triangles, one 2048² baked colour texture, at most six meshes.
 
 ## The bases
@@ -28,7 +28,7 @@ level under the building's centre. The glTF export makes that +X right, +Y up, d
 ## Pipeline: `tools/bases`
 
 `build.sh` shares the weapons' `bpy` venv and runs `build.py`, which builds every base (or the ids
-given) to `assets/models/bases/<id>.glb`; `--check` verifies each glb (triangles under 90 k, size
+given) to `assets/models/bases/<id>.glb`; `--check` verifies each glb (triangles under 115 k, size
 within 10 %, lowest vertex at ground level, the named nodes present); `--preview` renders
 `screenshots/bases/<id>.png` (and `<id>-inside.png`). `kit.py` imports the ship kit and interior
 kit from `tools/ships` and adds a `Base` class (a `Ship` that exports to the bases folder and bakes

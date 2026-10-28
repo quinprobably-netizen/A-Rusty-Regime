@@ -7,8 +7,8 @@ container made into quarters with bunks."""
 
 import math
 
-from basekit import Base, box, container, floodlight, hall, ladder, mast, railing, room, room_boxes, slab, tank, truss, wall_lamp
-from kit import block, cyl, label, seams, stripe
+from basekit import ring, Base, box, container, floodlight, hall, ladder, mast, railing, room, room_boxes, slab, tank, truss, wall_lamp
+from kit import join, block, chain, cyl, label, rivets, seams, sphere, stripe
 from interior import (barrel, cabinet, cable_bundle, cargo_net, crate, dash, extinguisher, gas_bottle, grating, gun_rack, hoist, lamp, pipe_run, turn, tyre,
                       wheel, workbench)
 from mathutils import Vector
@@ -50,7 +50,7 @@ def build():
             b.add(stripe("gatechev", (sx * 3.3, -12.0, z), (0.6, 0.6, 0.5), hazard))
     truss(b, (-3.6, -12.0, 5.8), (3.6, -12.0, 5.8), s=0.6)
     b.add(block("sign", (0, -12.0, 4.6), (4.4, 0.08, 0.9), "canvas", bevel=0.01))
-    b.add(turn(label("THE YARD", (0, -12.05, 4.6), 0.45, hazard, side=-1, depth=0.02), (0, -12.05, 4.6), 90))
+    b.add(turn(label("THE YARD", (0, -12.05, 4.6), 0.65, hazard, side=-1, depth=0.03), (0, -12.05, 4.6), 90))
     for sx in (-1, 1):
         b.add(cyl("signchain", (sx * 1.8, -12.0, 5.05), (sx * 1.8, -12.0, 5.5), 0.02, "steel", segs=6, bevel=0))
     b.add(cyl("bell", (3.9, -12.3, 3.3), (3.9, -12.3, 2.9), 0.14, brass, r1=0.22, segs=12, bevel=0.01))
@@ -143,8 +143,101 @@ def build():
         lamp(b, f"lamp.{i}", (x, y, 5.24), rim="black", r=0.2, cage=True)
     wall_lamp(b, "lamp.4", (-12.0, -8.5, 10.4), rim="black")
     wall_lamp(b, "lamp.5", (-8.0, 11.5, 2.2), rim="black")
+    detail(b)
     garage(b)
     return b
+
+
+def tyre0(name, c):
+    """A flat tyre with sharp edges, for the stacks."""
+    return join([ring(name, c, (0, 0, 1), 0.42, 0.23, 0.28, "black", segs=16), ring("hubring", c, (0, 0, 1), 0.23, 0.12, 0.17, "steel", segs=10)], name)
+
+
+def coil(b, p0, p1, n, r=0.3):
+    """A coil of razor wire: `n` loops from p0 to p1 on a wire."""
+    a, z = Vector(p0), Vector(p1)
+    d = (z - a).normalized()
+    for i in range(n):
+        b.add(ring("razor", a.lerp(z, (i + 0.5) / n), tuple(d), r, r - 0.025, 0.03, "steel", segs=9))
+    b.add(cyl("razorwire", a, z, 0.015, "steel", segs=4, bevel=0))
+    b.add(cyl("razorwire", a + Vector((0, 0, r * 0.9)), z + Vector((0, 0, r * 0.9)), 0.012, "steel", segs=4, bevel=0))
+
+
+def festoon(b, p0, p1, sag, bulbs):
+    """A string of bulbs on a sagging wire from p0 to p1."""
+    a, z = Vector(p0), Vector(p1)
+    pts = []
+    for i in range(bulbs + 1):
+        t = i / bulbs
+        pts.append(a.lerp(z, t) - Vector((0, 0, sag * 4 * t * (1 - t))))
+    for q0, q1 in zip(pts, pts[1:]):
+        b.add(cyl("wire", q0, q1, 0.012, "black", segs=4, bevel=0))
+    for q in pts[1:-1]:
+        b.add(sphere("bulb", q - Vector((0, 0, 0.1)), 0.07, "lamp", segs=6), "lights")
+
+
+def detail(b):
+    """The second pass: razor wire along the container walls, festoon lights across the yard, a burn
+    barrel with a bench, tyre stacks, a crane cab, welded patches and junk on the shed and the
+    scrap heap, roof clutter."""
+    top = 2.6 + 0.02
+    for y in (-9.0, 9.0):
+        coil(b, (-17.6, y, top + 0.28), (-12.4, y, top + 0.28), 9)
+    for y in (-3.0, 3.0):
+        coil(b, (12.4, y, top + 0.28), (17.6, y, top + 0.28), 9)
+    for x in (-6.0, 6.0):
+        coil(b, (x, 9.4, top + 0.28), (x, 14.6, top + 0.28), 9)
+    for x in (-12.0, 12.0):
+        coil(b, (x, -14.6, top + 0.28), (x, -9.4, top + 0.28), 9)
+    # Festoon lights from the crane to the gate and to the shed.
+    festoon(b, (-8.0, -9.0, 7.0), (-3.3, -12.0, 5.5), 0.7, 8)
+    festoon(b, (-8.0, 9.0, 7.0), (-2.9, 1.1, 5.4), 0.9, 12)
+    festoon(b, (3.3, -12.0, 5.5), (11.0, -7.0, 5.0), 0.8, 11)
+    b.add(block("festoonpole", (11.0, -7.0, 2.5), (0.1, 0.1, 5.0), "black", bevel=0))
+    # A burn barrel with a bench of scaffold planks, a crate each side.
+    b.add(barrel("burnbarrel", (-1.5, -4.5, 0), r=0.32, h=0.95, material="rust"))
+    b.add(cyl("burncoals", (-1.5, -4.5, 0.93), (-1.5, -4.5, 0.97), 0.28, "lamp", segs=10, bevel=0), "lights")
+    for i, (dx, dy, h) in enumerate(((0.0, 0.0, 0.5), (0.12, 0.1, 0.35), (-0.1, -0.08, 0.28))):
+        b.add(cyl("flame", (-1.5 + dx, -4.5 + dy, 0.95), (-1.5 + dx, -4.5 + dy, 0.95 + h), 0.09, "lamp", r1=0.0, segs=6, bevel=0), "lights")
+    b.add(block("plank", (-1.5, -3.2, 0.42), (2.2, 0.35, 0.06), "tan", bevel=0.01))
+    for dx in (-0.9, 0.9):
+        b.add(block("plankleg", (-1.5 + dx, -3.2, 0.2), (0.1, 0.3, 0.4), "black", bevel=0))
+    b.add(crate("seat", (-2.9, -4.2, 0.3), (0.6, 0.6, 0.6), material="olive"))
+    # Tyre stacks by the gate and a heap of wheels on the scrap.
+    for x, y, n in ((4.2, -7.0, 4), (5.0, -7.4, 3), (-3.8, -8.0, 5)):
+        for i in range(n):
+            b.add(tyre0("tyre", (x, y, 0.14 + 0.28 * i)))
+    for i in range(6):
+        x, y = -12.2 + 0.7 * (i % 3), 2.4 + 1.5 * (i // 3) + 0.4 * (i % 2)
+        b.add(tyre0("tyre", (x, y, 2.1)))
+    for i, (x, y, rot, sz) in enumerate(((-12.0, 3.2, 20, (1.6, 0.06, 0.9)), (-10.2, 5.0, -35, (1.4, 0.06, 0.8)), (-10.6, 2.8, 50, (1.1, 0.08, 1.0)))):
+        b.add(block("junkplate", (x, y, 2.3 + 0.15 * i), sz, [rust, brass, "grey"][i], bevel=0.02, rot=rot))
+    b.add(cyl("junkpipe", (-12.5, 5.6, 2.1), (-9.6, 3.6, 2.6), 0.1, copper, segs=8, bevel=0))
+    b.add(cyl("junkpipe", (-12.4, 5.9, 2.0), (-9.5, 5.2, 2.3), 0.07, "steel", segs=8, bevel=0))
+    # The crane: an operator's cab under the truss and a cable to the hoist.
+    b.add(block("cab", (-8.0, -7.0, 6.05), (1.3, 1.3, 1.3), hazard, bevel=0.04))
+    b.add(block("cabglass", (-7.34, -7.0, 6.2), (0.02, 1.0, 0.6), "glass", bevel=0), "glass")
+    b.add(block("cabroof", (-8.0, -7.0, 6.75), (1.5, 1.5, 0.08), "black", bevel=0.01))
+    b.add(chain("cabhanger", (-8.0, -7.0, 6.7), (-8.0, -7.0, 6.98), links=3, r=0.04))
+    # Welded patch plates and rivets on the shed's side walls, vents and a TV aerial on its roof.
+    for sx, x in ((-1, -3.04), (1, 11.04)):
+        for i, (y, z, w, h) in enumerate(((4.0, 2.2, 1.4, 0.9), (7.5, 3.4, 0.9, 1.1), (9.0, 1.6, 1.0, 0.7))):
+            b.add(block("patch", (x, y, z), (0.04, w, h), [brass, copper, "grey"][i], bevel=0.01))
+            b.add(rivets("patchrivets", (x + sx * 0.03, y - w / 2 + 0.1, z + h / 2 - 0.08), (x + sx * 0.03, y + w / 2 - 0.1, z + h / 2 - 0.08), 5, axis="x" if sx > 0 else "-x"))
+    for x in (0.0, 4.0, 8.0):
+        b.add(cyl("roofvent", (x, 7.5, 5.5), (x, 7.5, 6.1), 0.18, "black", segs=8, bevel=0))
+        b.add(cyl("roofventcap", (x, 7.5, 6.1), (x, 7.5, 6.3), 0.32, "black", r1=0.05, segs=8, bevel=0))
+    b.add(cyl("aerial", (1.0, 3.0, 5.5), (1.0, 3.0, 7.4), 0.03, "steel", segs=6, bevel=0))
+    for z, w in ((6.4, 0.9), (6.8, 0.7), (7.1, 0.5)):
+        b.add(block("aerialarm", (1.0, 3.0, z), (w, 0.03, 0.03), "steel", bevel=0))
+    for i in range(3):
+        b.add(barrel("roofdrum", (-1.5 + 0.7 * i, 9.5, 5.55), r=0.3, h=0.8, material=[rust, hazard, "olive"][i]))
+    # A tool wall inside the shed: pegboard, wrenches, a saw blade.
+    b.add(block("pegboard", (-2.66, 9.4, 1.9), (0.05, 2.6, 1.0), "black", bevel=0))
+    b.add(cyl("sawblade", (-2.62, 8.4, 2.0), (-2.6, 8.4, 2.0), 0.28, "steel", segs=18, bevel=0))
+    for i in range(6):
+        y = 8.9 + 0.3 * i
+        b.add(block("tool", (-2.62, y, 1.85 + 0.12 * (i % 2)), (0.03, 0.05, 0.4), "steel" if i % 2 else copper, bevel=0))
 
 
 GARAGE = ((22.0, -2.0), (8.0, 6.0, 3.6))
@@ -160,7 +253,7 @@ def garage(b):
     for sx in (-1, 1):
         b.add(stripe("doorchev", (x + sx * 1.6, y - s[1] / 2, 1.5), (0.4, 0.04, 3.0), hazard))
     b.add(stripe("garagestripe", (x, y - s[1] / 2, 3.3), (s[0], 0.05, 0.3), hazard))
-    b.add(turn(label("TUNING", (x, y - s[1] / 2 - 0.03, 3.0), 0.35, hazard, side=-1, depth=0.02), (x, y - s[1] / 2 - 0.03, 3.0), 90))
+    b.add(turn(label("TUNING", (x, y - s[1] / 2 - 0.03, 3.0), 0.5, hazard, side=-1, depth=0.02), (x, y - s[1] / 2 - 0.03, 3.0), 90))
     b.add(cyl("vent", (x + 2.5, y + 1.5, s[2] + 0.1), (x + 2.5, y + 1.5, s[2] + 1.0), 0.18, "black", segs=10, bevel=0))
     b.add(cyl("ventcap", (x + 2.5, y + 1.5, s[2] + 1.0), (x + 2.5, y + 1.5, s[2] + 1.1), 0.3, "black", segs=10, bevel=0))
     for i, gx in enumerate((x - 3.0, x + 3.0)):

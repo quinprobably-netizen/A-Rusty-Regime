@@ -105,6 +105,8 @@ collider = [
     { center = [0, 1.35, -13], size = [8, 0.3, 5] },  # dais
     { center = [0, 2.05, -13.5], size = [2.4, 1.1, 1] },  # altar
     { center = [0, 1.7, 10.5], size = [0.8, 1, 0.8] },  # font
+    { center = [-3.6, 1.8, -13.2], size = [0.7, 1.2, 2.6] },  # stall
+    { center = [3.6, 1.8, -13.2], size = [0.7, 1.2, 2.6] },  # stall
     { center = [-3.8, 16.4, -2], size = [8.6, 0.3, 30], rot = [0, 0, 27.8] },  # roof slope
     { center = [3.8, 16.4, -2], size = [8.6, 0.3, 30], rot = [0, 0, -27.8] },  # roof slope
     { center = [0, 19.7, 10], size = [6, 10, 6] },  # tower

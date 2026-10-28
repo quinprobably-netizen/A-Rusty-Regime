@@ -5,9 +5,9 @@ with a two-seat desk under a bank of screens and server racks, the quarters with
 lockers, the armoury with gun cages, crates and a hatch."""
 
 from basekit import Base, band, box, dish, door_frame, floodlight, hall, mast, railing, room, room_boxes, slab, slope, stair, tank, window
-from kit import block, cyl, label, seams, stripe
+from kit import block, cyl, label, rivets, sphere, stripe, seams
 from interior import (bucket_seat, bunk, cabinet, cable_bundle, crate, dash, duct, extinguisher, first_aid, gas_bottle, gun_rack, hatch, lamp,
-                      overhead, server_rack, turn, wall_panels)
+                      overhead, pipe_run, server_rack, turn, wall_panels)
 
 JACK = 1.2          # the modules stand this high over the ice
 WALL = 0.15
@@ -55,8 +55,8 @@ def build():
     door_frame(b, (0, 0.4, FLOOR), 1.6, 2.2, material=white, depth=0.5, thick=0.15)
     for sx in (-1, 1):
         b.add(stripe("chev", (sx * 1.0, 0.33, FLOOR + 1.1), (0.2, 0.04, 2.2), "hazard"))
-    b.add(turn(label("VANTAGE SEC", (0, 0.32, FLOOR + 2.75), 0.26, blue, side=-1, depth=0.015), (0, 0.32, FLOOR + 2.75), 90))
-    b.add(turn(label("SITE 4", (-5.5, -5.1, JACK + 2.2), 0.4, gm, side=-1, depth=0.015), (-5.5, -5.1, JACK + 2.2), 90))
+    b.add(turn(label("VANTAGE SEC", (0, 0.32, FLOOR + 2.75), 0.36, blue, side=-1, depth=0.015), (0, 0.32, FLOOR + 2.75), 90))
+    b.add(turn(label("SITE 4", (-5.5, -5.1, JACK + 2.2), 0.6, gm, side=-1, depth=0.015), (-5.5, -5.1, JACK + 2.2), 90))
     stair(b, (0, -2.0, 0), 1.8, 2.4, FLOOR, 6, material=gm, facing=1)
     railing(b, (-0.95, -2.0, 0), (-0.95, 0.4, FLOOR), spacing=1.2)
     railing(b, (0.95, -2.0, 0), (0.95, 0.4, FLOOR), spacing=1.2)
@@ -125,8 +125,88 @@ def build():
     b.add(turn(hatch("hatch", (cx, cy + csy / 2 - WALL, FLOOR + 1.4), facing=1, r=0.4, material=gm), (cx, cy + csy / 2 - WALL, FLOOR + 1.4), 0))
     for i, y in enumerate((-3.0, 2.0)):
         lamp(b, f"lamp.{4 + i}", (cx, y, FLOOR + 2.68), rim=white, r=0.18)
+    detail(b)
     freight(b)
     return b
+
+
+def detail(b):
+    """The second pass: a solar array, roof units and a weather mast, beacon poles marking the way
+    in from the pad, snow banks, utility pipes; inside, wall displays, a hydroponic rack, a kettle
+    and ceiling pipework."""
+    # Solar array on the ice north-west of the quarters: three tilted panels on A-frames.
+    for i in range(3):
+        x = -12.0 + i * 2.6
+        b.add(block("panelframe", (x, 8.0, 0.55), (2.3, 0.1, 1.1), gm, bevel=0.01, rot=-30))
+        b.add(block("panel", (x, 8.0, 1.0), (2.3, 1.5, 0.05), "black", bevel=0.01, rot=-30))
+        b.add(stripe("panelrim", (x, 8.0, 1.03), (2.34, 1.54, 0.01), white))
+        for k in (-0.5, 0.0, 0.5):
+            b.add(block("panelcell", (x + k * 1.5, 8.0, 1.05), (0.02, 1.5, 0.01), blue, bevel=0, rot=-30), "lights")
+        for sx in (-1, 1):
+            b.add(cyl("panelleg", (x + sx * 1.0, 8.5, 0.0), (x + sx * 1.0, 7.9, 1.2), 0.05, gm, segs=6, bevel=0))
+    b.add(block("inverter", (-13.5, 6.8, 0.5), (0.7, 0.4, 1.0), white, bevel=0.03))
+    b.add(block("invertergrille", (-13.5, 6.58, 0.5), (0.5, 0.02, 0.7), "black", bevel=0))
+    pipe_run(b, [(-13.5, 7.0, 0.9), (-13.5, 7.0, 0.2), (-6.0, 7.0, 0.2)], r=0.04, material="black", brackets=2.0)
+    # Roof units: a heat pump on the quarters and one on the armoury, a weather mast with cup
+    # anemometer and vane on the armoury's far corner, vent stacks with snow caps.
+    for x, y in ((-8.0, -2.5), (8.0, 3.0)):
+        b.add(block("heatpump", (x, y, JACK + H + 0.4), (1.6, 1.2, 0.8), white, bevel=0.03))
+        b.add(cyl("heatfan", (x, y, JACK + H + 0.8), (x, y, JACK + H + 0.85), 0.4, "black", segs=14, bevel=0))
+        b.add(block("heatfoot", (x, y, JACK + H + 0.03), (1.7, 1.3, 0.06), gm, bevel=0))
+    for x, y in ((-6.5, 4.0), (6.5, -4.0)):
+        b.add(cyl("stack", (x, y, JACK + H), (x, y, JACK + H + 0.9), 0.12, gm, segs=8, bevel=0))
+        b.add(cyl("stackcap", (x, y, JACK + H + 0.9), (x, y, JACK + H + 1.0), 0.2, white, segs=8, bevel=0))
+    wx, wy, wz = 9.5, 4.0, JACK + H
+    b.add(cyl("wxmast", (wx, wy, wz), (wx, wy, wz + 3.0), 0.04, "steel", segs=6, bevel=0))
+    b.add(block("wxarm", (wx, wy, wz + 2.9), (0.9, 0.03, 0.03), "steel", bevel=0))
+    for sx in (-1, 1):
+        b.add(sphere("wxcup", (wx + sx * 0.45, wy, wz + 2.9), 0.07, white, segs=8))
+    b.add(block("wxvane", (wx, wy, wz + 2.5), (0.04, 0.5, 0.25), blue, bevel=0))
+    # Beacons down the steps to the plinth's edge: a pole and a blue lamp each side.
+    for y in (-4.8, -6.4, -8.0):
+        for sx in (-1, 1):
+            x = sx * 2.2
+            b.add(cyl("beaconpole", (x, y, 0), (x, y, 1.5), 0.04, "steel", segs=6, bevel=0))
+            b.add(sphere("beaconlamp", (x, y, 1.58), 0.09, blue, segs=8), "lights")
+            b.add(block("beaconplate", (x, y, 1.2), (0.3, 0.02, 0.25), "hazard", bevel=0))
+    # Snow banked against the south faces of the modules.
+    for x, y, w in ((-8.0, -5.3, 4.0), (8.0, -5.3, 4.2), (-3.5, 1.9, 2.6), (3.5, 1.9, 2.6), (-12.0, 0.0, 1.0)):
+        b.add(block("snow", (x, y, 0.3), (w, 1.0 if w > 1.5 else w, 0.6), "ice_white", bevel=0.28, segs=3))
+    # Rivets under the module bands, a stencilled number on the armoury.
+    for m in (A, B, Cm):
+        (x, y), (sx, sy) = m
+        spans = ((-sx / 2 + 0.6, -1.2), (1.2, sx / 2 - 0.6)) if m is A else ((-sx / 2 + 0.6, sx / 2 - 0.6),)
+        for x0, x1 in spans:
+            b.add(rivets("modrivets", (x + x0, y - sy / 2 - 0.01, JACK + 0.7), (x + x1, y - sy / 2 - 0.01, JACK + 0.7), max(3, int((x1 - x0) * 1.4)), axis="-y"))
+    b.add(turn(label("ARM-2", (8.0, -5.1, JACK + 1.9), 0.5, gm, side=-1, depth=0.015), (8.0, -5.1, JACK + 1.9), 90))
+    # Ops: two wall displays on the south wall, a status strip over the desk, a coffee corner.
+    (ax, ay), (asx, asy) = A
+    ys = ay - asy / 2 + WALL + 0.03
+    for x in (-2.8, 2.8):
+        b.add(block("wallscreenframe", (ax + x, ys, FLOOR + 1.6), (2.0, 0.05, 1.2), "black", bevel=0.01))
+        b.add(block("wallscreen", (ax + x, ys + 0.03, FLOOR + 1.6), (1.8, 0.02, 1.0), "screen", bevel=0), "lights")
+        for i in range(4):
+            b.add(block("wallbar", (ax + x - 0.6 + i * 0.4, ys + 0.045, FLOOR + 1.3 + 0.12 * i), (0.22, 0.01, 0.14 + 0.08 * i), blue, bevel=0), "lights")
+    b.add(block("statusstrip", (ax, ay + 2.38, FLOOR + 2.4), (3.4, 0.03, 0.08), blue, bevel=0), "lights")
+    b.add(block("coffeetable", (ax - 4.0, ay - 0.3, FLOOR + 0.5), (0.7, 0.7, 0.05), white, bevel=0.01))
+    b.add(cyl("coffeeleg", (ax - 4.0, ay - 0.3, FLOOR), (ax - 4.0, ay - 0.3, FLOOR + 0.5), 0.05, gm, segs=8, bevel=0))
+    b.add(cyl("kettle", (ax - 4.0, ay - 0.3, FLOOR + 0.53), (ax - 4.0, ay - 0.3, FLOOR + 0.8), 0.1, "steel", segs=10, bevel=0.01))
+    for dx in (-0.2, 0.2):
+        b.add(cyl("mug", (ax - 4.0 + dx, ay - 0.15, FLOOR + 0.53), (ax - 4.0 + dx, ay - 0.15, FLOOR + 0.62), 0.04, "red", segs=8, bevel=0))
+    # Quarters: a hydroponic rack on the north wall, three shelves under green strips.
+    (bx, by), (bsx, bsy) = B
+    yh = by + bsy / 2 - WALL - 0.3
+    b.add(block("hydroframe", (bx, yh, FLOOR + 0.95), (2.2, 0.5, 1.9), gm, bevel=0.02))
+    for z in (0.35, 0.95, 1.55):
+        b.add(block("hydroshelf", (bx, yh - 0.02, FLOOR + z), (2.0, 0.44, 0.04), white, bevel=0))
+        b.add(block("hydrostrip", (bx, yh - 0.02, FLOOR + z + 0.45), (1.9, 0.06, 0.02), "green_light", bevel=0), "lights")
+        for k in range(5):
+            b.add(sphere("plant", (bx - 0.8 + k * 0.4, yh - 0.02, FLOOR + z + 0.12), 0.11, "olive", segs=8))
+    pipe_run(b, [(bx + 1.5, by - 4.4, FLOOR + 2.55), (bx + 1.5, by + 4.4, FLOOR + 2.55)], r=0.04, material=gm, brackets=1.0)
+    (cx, cy), (csx, csy) = Cm
+    # Armoury: a pipe along the ceiling and a stencilled floor line to the hatch.
+    pipe_run(b, [(cx - 2.0, cy - 4.4, FLOOR + 2.55), (cx - 2.0, cy + 4.4, FLOOR + 2.55)], r=0.05, material=gm, brackets=1.2)
+    b.add(stripe("hatchline", (cx, cy, FLOOR + 0.025), (0.12, 9.0, 0.01), "hazard"))
 
 
 FREIGHT = ((17.5, -4.0), (7.0, 5.0, 3.0))
@@ -140,7 +220,7 @@ def freight(b):
     z0 = 0.15
     room(b, "freight", (x, y), s, white, FREIGHT_DOORS, trim=gm)
     band(b, (x, y, 0), (s[0], s[1], 0), s[2] - 0.35, 0.06, blue, proud=0.02)
-    b.add(turn(label("FREIGHT", (x, y - s[1] / 2 - 0.03, 2.35), 0.3, blue, side=-1, depth=0.015), (x, y - s[1] / 2 - 0.03, 2.35), 90))
+    b.add(turn(label("FREIGHT", (x, y - s[1] / 2 - 0.03, 2.35), 0.45, blue, side=-1, depth=0.015), (x, y - s[1] / 2 - 0.03, 2.35), 90))
     b.add(cyl("beaconmast", (x + 2.5, y + 1.5, s[2] + 0.1), (x + 2.5, y + 1.5, s[2] + 2.2), 0.05, "steel", segs=8, bevel=0))
     b.add(cyl("beacon", (x + 2.5, y + 1.5, s[2] + 2.2), (x + 2.5, y + 1.5, s[2] + 2.4), 0.12, "blue_light", segs=10, bevel=0), "lights")
     for i, px in enumerate((x - 1.0, x + 0.4, x + 1.8)):

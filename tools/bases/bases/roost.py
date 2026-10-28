@@ -4,9 +4,9 @@ sandbag nest, a water tank, floodlights and a radio mast, reached by an outside 
 and a tarp awning over the door. Dark plating with pale panels and orange chevrons. Inside: bunks,
 a workbench, gun racks, a planning table, lockers, crates and drums, pendant lamps."""
 
-from basekit import Base, band, box, catwalk, door_frame, floodlight, hall, ladder, mast, railing, room, room_boxes, sandbags, slab, slope, stair, tank, wall_lamp, window
-from kit import block, cyl, label, light_strip, seams, stripe
-from interior import (barrel, bunk, cabinet, cable_bundle, cargo_net, crate, duct, extinguisher, first_aid, gun_rack, jump_seat, lamp,
+from basekit import ring, Base, band, box, catwalk, door_frame, floodlight, hall, ladder, mast, railing, room, room_boxes, sandbags, slab, slope, stair, tank, truss, wall_lamp, window
+from kit import block, chain, cyl, label, light_strip, rivets, seams, stripe
+from interior import (grating, barrel, bunk, cabinet, cable_bundle, cargo_net, crate, duct, extinguisher, first_aid, gun_rack, jump_seat, lamp,
                       pipe_run, turn, tyre, wall_panels, workbench)
 
 FLOOR = 0.3
@@ -31,7 +31,8 @@ def build():
         b.add(stripe("chev", (f * 4.3, -7.02, 2.5), (0.2, 0.05, 5.0), "black"))
     b.add(cyl("doorroll", (-4.3, -7.3, 5.35), (4.3, -7.3, 5.35), 0.35, dark, segs=14, bevel=0.01))
     b.add(block("rollbox", (0, -7.25, 5.75), (9.0, 0.5, 0.5), pale, bevel=0.02))
-    b.add(turn(label("THE ROOST", (0, -7.03, 6.5), 0.5, pale, side=-1, depth=0.02), (0, -7.03, 6.5), 90))
+    b.add(block("signplate", (0, -7.04, 6.4), (6.4, 0.06, 1.0), "black", bevel=0.01))
+    b.add(turn(label("THE ROOST", (0, -7.09, 6.4), 0.8, pale, side=-1, depth=0.03), (0, -7.09, 6.4), 90))
     for x in (-7.0, 7.0):
         window(b, (x, -7.0, FLOOR + 6.1), (2.5, 0.1, 1.2), frame=pale, bars=2)
     for x in (-5.0, 5.0):
@@ -131,8 +132,89 @@ def build():
         lamp(b, f"lamp.{i}", (x, y, 4.86), rim="gunmetal", r=0.2, cage=True)
     wall_lamp(b, "lamp.4", (-6.0, 6.68, FLOOR + 2.6), rim="black")
     wall_lamp(b, "lamp.5", (6.0, 6.68, FLOOR + 2.6), rim="black")
+    detail(b)
     depot(b)
     return b
+
+
+def detail(b):
+    """The second pass: roof gear, pipework and rivets outside; trusses, banners, a pegboard and floor
+    markings inside."""
+    # Outside: air handlers and vents on the roof, downpipes, a conduit run, rivets on the side panels.
+    for x in (-2.5, 1.0):
+        b.add(block("ac", (x, 4.6, ROOF + 0.45), (2.0, 1.1, 0.9), "grey", bevel=0.03))
+        b.add(cyl("acfan", (x, 4.6, ROOF + 0.9), (x, 4.6, ROOF + 0.96), 0.4, "black", segs=16, bevel=0.01))
+        b.add(ring("acguard", (x, 4.6, ROOF + 0.97), (0, 0, 1), 0.42, 0.36, 0.03, "steel", segs=16))
+        b.add(block("aclouvre", (x, 4.6 - 0.56, ROOF + 0.45), (1.6, 0.03, 0.5), "black", bevel=0))
+        b.add(block("acfoot", (x, 4.6, ROOF + 0.03), (2.1, 1.2, 0.06), "black", bevel=0))
+    for x, y in ((-4.5, 3.0), (-1.0, 1.5), (3.5, -1.5)):
+        b.add(cyl("vent", (x, y, ROOF), (x, y, ROOF + 0.7), 0.13, "steel", segs=10, bevel=0.01))
+        b.add(cyl("ventcap", (x, y, ROOF + 0.7), (x, y, ROOF + 0.85), 0.24, "black", r1=0.05, segs=10, bevel=0))
+    for x in (-11.15, 11.15):
+        b.add(cyl("downpipe", (x, 6.8, 0.1), (x, 6.8, ROOF - 0.2), 0.07, "black", segs=8, bevel=0))
+        for z in (1.0, 3.0, 5.0, 7.0):
+            b.add(block("bracket", (x, 6.8, z), (0.06, 0.2, 0.08), "black", bevel=0))
+    pipe_run(b, [(-10.8, -7.15, 3.6), (-4.6, -7.15, 3.6), (-4.6, -7.15, 5.2), (-3.4, -7.15, 5.2)], r=0.04, material="steel")
+    for x in (11.06, -11.06):
+        ax = "x" if x > 0 else "-x"
+        for z in (1.2, 4.6):
+            b.add(rivets("rivets", (x, 0.0, z), (x, 4.0, z), 9, axis=ax))
+    for i, x in enumerate((-6.0, 6.0)):
+        b.add(turn(label(f"R-{i + 1}", (x, -7.03, 3.4), 0.6, orange, side=-1, depth=0.02), (x, -7.03, 3.4), 90))
+    # The genset's fuel: a horizontal tank on a stand, jerry cans, a pallet, a hose reel.
+    b.add(cyl("fuel", (12.1, 5.4, 0.9), (12.1, 6.8, 0.9), 0.35, "olive", segs=14, bevel=0.01))
+    for y in (5.5, 6.7):
+        b.add(block("fuelstand", (12.1, y, 0.35), (0.7, 0.1, 0.7), "black", bevel=0.01))
+    b.add(cyl("fuelcap", (12.1, 6.1, 1.25), (12.1, 6.1, 1.33), 0.08, "brass", segs=8, bevel=0))
+    for i in range(4):
+        x, y = 11.5 + 0.28 * (i % 2), 0.4 + 0.3 * (i // 2)
+        b.add(block("jerry", (x, y, 0.28), (0.24, 0.16, 0.5), "olive" if i % 2 else "rust", bevel=0.02))
+        b.add(block("jerrycap", (x, y, 0.55), (0.08, 0.06, 0.05), "black", bevel=0))
+    b.add(block("pallet", (12.3, 0.3, 0.07), (1.1, 1.1, 0.14), "tan", bevel=0.01))
+    b.add(ring("reel", (11.1, 5.5, 1.4), (1, 0, 0), 0.4, 0.12, 0.06, "red", segs=18))
+    b.add(ring("reelrim", (11.1, 5.5, 1.4), (1, 0, 0), 0.4, 0.3, 0.22, "red", segs=18))
+    b.add(cyl("reelhub", (11.0, 5.5, 1.4), (11.35, 5.5, 1.4), 0.07, "steel", segs=8, bevel=0))
+    # Inside: lattice trusses across the hangar, a hoist on the middle one, banners off the catwalk.
+    for y in (-4.0, 0.0, 4.0):
+        truss(b, (-10.5, y, ROOF - 0.8), (10.5, y, ROOF - 0.8), s=0.45, material="gunmetal", bay=1.5)
+    for x in (-10.2, 10.2):
+        for y in (-4.0, 0.0, 4.0):
+            b.add(block("truss end", (x, y, ROOF - 0.8), (0.4, 0.5, 0.6), "black", bevel=0.01))
+    b.add(block("hoistbeam", (-6.5, 0.0, ROOF - 1.1), (0.14, 6.0, 0.16), "steel", bevel=0.006))
+    b.add(block("trolley", (-6.5, -0.8, ROOF - 1.25), (0.3, 0.26, 0.14), "black", bevel=0.01))
+    b.add(chain("chain", (-6.5, -0.8, ROOF - 1.3), (-6.5, -0.8, 5.2), links=18, r=0.025))
+    b.add(ring("hook", (-6.5, -0.74, 5.05), (1, 0, 0), 0.08, 0.05, 0.035, "steel", segs=12))
+    for x, m in ((-6.0, orange), (6.0, "olive")):
+        b.add(block("banner", (x, 4.18, 2.6), (1.5, 0.04, 2.6), m, bevel=0.01))
+        b.add(block("bannerrod", (x, 4.18, 3.95), (1.7, 0.06, 0.06), "black", bevel=0))
+        b.add(block("bannerbadge", (x, 4.15, 2.9), (0.8, 0.02, 0.8), pale, bevel=0.01))
+        b.add(block("bannerbar", (x, 4.14, 2.9), (0.5, 0.02, 0.14), "black", bevel=0))
+        b.add(block("bannerbar", (x, 4.14, 2.9), (0.14, 0.02, 0.5), "black", bevel=0))
+    # A notice board by the side door, a pegboard of tools over the benches, a radio and a vice.
+    b.add(block("board", (10.6, -5.5, FLOOR + 1.9), (0.06, 1.3, 0.9), "canvas", bevel=0.01))
+    for y, z in ((-5.9, 2.0), (-5.5, 1.8), (-5.1, 2.1), (-5.6, 2.35)):
+        b.add(block("notice", (10.56, y, FLOOR + z), (0.01, 0.26, 0.32), pale, bevel=0))
+        b.add(cyl("pin", (10.56, y, FLOOR + z + 0.13), (10.53, y, FLOOR + z + 0.13), 0.02, "red", segs=6, bevel=0))
+    b.add(block("pegboard", (10.62, 3.2, FLOOR + 2.0), (0.05, 3.2, 0.9), "black", bevel=0))
+    for i in range(8):
+        y = 1.8 + 0.4 * i
+        z = FLOOR + 1.8 + 0.25 * (i % 3)
+        if i % 2:
+            b.add(block("wrench", (10.57, y, z), (0.02, 0.05, 0.3), "steel", bevel=0))
+            b.add(ring("wrenchhead", (10.57, y, z + 0.17), (1, 0, 0), 0.07, 0.035, 0.02, "steel", segs=8))
+        else:
+            b.add(block("hammerstem", (10.57, y, z), (0.02, 0.04, 0.32), "tan", bevel=0))
+            b.add(block("hammerhead", (10.57, y, z + 0.18), (0.04, 0.05, 0.1), "steel", bevel=0.005))
+    b.add(block("radio", (8.7, 4.2, FLOOR + 1.04), (0.5, 0.3, 0.24), "olive", bevel=0.015))
+    b.add(block("radioscreen", (8.44, 4.2, FLOOR + 1.08), (0.02, 0.2, 0.08), "screen", bevel=0), "lights")
+    b.add(cyl("radiomast", (8.9, 4.3, FLOOR + 1.16), (8.9, 4.3, FLOOR + 1.9), 0.012, "black", segs=6, bevel=0))
+    b.add(block("vice", (8.6, 1.0, FLOOR + 0.99), (0.2, 0.18, 0.18), "black", bevel=0.01))
+    # Floor: painted lines round the planning table and the door threshold, a drain grate.
+    for p, s in (((0, -1.0, 2.1), (3.4, 0.08, 0.1)), ((0, 2.0, 2.1), (3.4, 0.08, 0.1)),
+                 ((-1.7, 0.5, 2.1), (0.08, 3.0, 0.1)), ((1.7, 0.5, 2.1), (0.08, 3.0, 0.1))):
+        b.add(stripe("line", (p[0], p[1], FLOOR + 0.012), (s[0], s[1], 0.012), orange))
+    b.add(stripe("threshold", (0, -6.5, FLOOR + 0.012), (8.0, 0.2, 0.012), orange))
+    grating(b, (-6.0, -2.0, FLOOR + 0.02), (1.2, 0.8))
 
 
 DEPOT = ((-10.0, -13.5), (8.0, 5.0, 3.2))
@@ -146,7 +228,7 @@ def depot(b):
     z0 = 0.15
     room(b, "depot", (x, y), s, dark, DEPOT_DOORS, trim=pale)
     band(b, (x, y, 0), (s[0], s[1], 0), 2.7, 0.3, orange, front_gap=0.0)
-    b.add(turn(label("SUPPLY", (x, y - s[1] / 2 - 0.03, 2.95), 0.4, pale, side=-1, depth=0.02), (x, y - s[1] / 2 - 0.03, 2.95), 90))
+    b.add(turn(label("SUPPLY", (x, y - s[1] / 2 - 0.03, 2.95), 0.6, pale, side=-1, depth=0.03), (x, y - s[1] / 2 - 0.03, 2.95), 90))
     xe = x + s[0] / 2
     b.add(block("cross", (xe + 0.02, y - 2.0, 2.0), (0.06, 0.8, 0.26), "red", bevel=0))
     b.add(block("cross", (xe + 0.02, y - 2.0, 2.0), (0.06, 0.26, 0.8), "red", bevel=0))
