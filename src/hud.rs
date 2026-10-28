@@ -170,10 +170,10 @@ fn spawn_hud(mut commands: Commands, theme: Res<ComicTheme>, halftones: Option<R
         });
 
         // Objective: a yellow caption top left, hidden while there is nothing to say.
-        p.spawn((ObjectiveBox, abs_node(Some(24.0), None, Some(20.0), None, 340.0), Visibility::Hidden)).with_children(|b| {
+        p.spawn((ObjectiveBox, abs_node(Some(24.0), None, Some(20.0), None, 420.0), Visibility::Hidden)).with_children(|b| {
             let t2 = t.clone();
             panel(b, &t, t.yellow, -2.0, move |c| {
-                c.spawn((ObjectiveText, body_text("", 18.0, t2.ink, true, &t2)));
+                c.spawn((ObjectiveText, body_text("", 18.0, t2.ink, true, &t2), Node { width: Val::Percent(100.0), ..default() }));
             });
         });
 
