@@ -343,7 +343,7 @@ fn weapon_switching() {
     input(&mut app).weapon_select = Some(2);
     app.update();
     assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::Shotgun);
-    input(&mut app).weapon_step = 8; // wraps around past the power fist
+    input(&mut app).weapon_step = 9; // wraps around past the knife
     app.update();
     assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::RocketLauncher);
     input(&mut app).weapon_last = true;
@@ -2226,6 +2226,71 @@ fn gunsmith_parts_change_the_gun_and_persist() {
     assert_eq!(back.loadout, Some(loadout));
 }
 
+/// A save with the starter kit, as the solar system hands out: the Warden, bare, and the knife.
+fn starter_kit(app: &mut App) {
+    let slot = |k: WeaponKind| crate::weapon::WEAPONS.iter().position(|w| *w == k).unwrap();
+    crate::quartermaster::grant(&mut app.world_mut().resource_mut::<Save>(), WeaponKind::Revolver);
+    let mut a = app.world_mut().resource_mut::<Arsenal>();
+    a.current = slot(WeaponKind::Revolver);
+    a.last = crate::weapon::KNIFE;
+}
+
+#[test]
+fn only_owned_weapons_can_be_drawn_and_x_toggles_the_knife() {
+    let slot = |k: WeaponKind| crate::weapon::WEAPONS.iter().position(|w| *w == k).unwrap();
+    let mut app = make_app(Tuning::default());
+    starter_kit(&mut app);
+    for number in [slot(WeaponKind::Rifle), slot(WeaponKind::RocketLauncher), slot(WeaponKind::Pistol)] {
+        input(&mut app).weapon_select = Some(number);
+        run(&mut app, 0.1);
+        assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::Revolver, "slot {number} was never sold to you");
+    }
+    input(&mut app).weapon_select = Some(crate::weapon::KNIFE);
+    run(&mut app, 0.1);
+    assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::Knife);
+    input(&mut app).weapon_select = Some(crate::weapon::KNIFE);
+    run(&mut app, 0.1);
+    assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::Revolver, "the same key puts it away");
+    // Scrolling passes over the rest: the Warden, the knife, round again.
+    input(&mut app).weapon_step = 1;
+    run(&mut app, 0.1);
+    assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::Knife);
+    input(&mut app).weapon_step = 1;
+    run(&mut app, 0.1);
+    assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::Revolver);
+    // Bought, it can be drawn.
+    app.world_mut().resource_mut::<Save>().weapons.push("rifle".into());
+    input(&mut app).weapon_select = Some(slot(WeaponKind::Rifle));
+    run(&mut app, 0.1);
+    assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::Rifle);
+}
+
+#[test]
+fn the_knife_cuts_what_is_in_reach_and_nothing_beyond() {
+    let t = Tuning::default();
+    let mut app = make_app(t.clone());
+    run(&mut app, 0.5);
+    let near = dummy_at(&mut app, controller::SPAWN + Vec3::new(0.0, -1.0, -1.6));
+    select_weapon(&mut app, WeaponKind::Knife);
+    input(&mut app).fire_held = true;
+    run(&mut app, 0.1);
+    let one = t.target_health - t.knife.damage;
+    assert!((target_health(&mut app, near) - one).abs() < 0.01, "one slash: {}", target_health(&mut app, near));
+    // Held, the next slash waits out the cooldown.
+    run(&mut app, t.knife.cooldown * 0.5);
+    assert!((target_health(&mut app, near) - one).abs() < 0.01, "too soon");
+    run(&mut app, t.knife.cooldown);
+    assert!(!app.world().get::<Target>(near).unwrap().alive(), "two slashes of {} kill a {} hp dummy", t.knife.damage, t.target_health);
+
+    let mut far = make_app(t.clone());
+    run(&mut far, 0.5);
+    let dummy = dummy_at(&mut far, controller::SPAWN + Vec3::new(0.0, -1.0, -(t.knife.range + 2.0)));
+    select_weapon(&mut far, WeaponKind::Knife);
+    input(&mut far).fire_held = true;
+    run(&mut far, 0.1);
+    assert_eq!(target_health(&mut far, dummy), t.target_health, "out of arm's reach");
+}
+
 #[test]
 fn magazines_run_dry_and_reload() {
     let mut app = make_app(Tuning::default());
@@ -2973,6 +3038,99 @@ fn a_parcel_is_taken_at_the_desk_and_pays_at_the_other_bases_door() {
     run(&mut app, 0.2);
     let save = app.world().resource::<Save>();
     assert_eq!((save.banked, save.contracts_done, save.contract.clone()), (250, 1, None), "paid on arrival");
+}
+
+/// The solar system with the menu and input devices, played from the title screen on.
+fn counter_app() -> App {
+    use crate::menu::{MenuPlugin, Screen};
+    let mut app = build_app(Tuning::default());
+    drop_flat_floor(&mut app);
+    app.add_plugins((solar::SolarPlugin, crate::gunsmith::GunsmithPlugin, MenuPlugin));
+    with_input_devices(&mut app);
+    app.finish();
+    app.update();
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Playing);
+    run(&mut app, 1.0);
+    app
+}
+
+#[test]
+fn the_solar_system_starts_you_with_the_warden_a_knife_and_nothing_else() {
+    let mut app = counter_app();
+    // The pilot class wears Runner, who starts with the Warden.
+    assert_eq!(app.world().resource::<Save>().weapons, ["revolver", "knife"]);
+    assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::Revolver);
+    for slot in 0..4 {
+        assert_eq!(app.world().resource::<crate::gunsmith::Loadout>().part(WeaponKind::Revolver, slot), 0, "no attachments");
+    }
+    let c = app.world().resource::<crate::character::Characters>();
+    assert_eq!((c.start("zealot"), c.start("acolyte"), c.start("nobody")), (WeaponKind::Pistol, WeaponKind::Revolver, WeaponKind::Pistol));
+    assert!(c.problems().is_empty(), "{:?}", c.problems());
+    run(&mut app, 0.1);
+}
+
+#[test]
+fn the_counter_opens_at_the_quartermaster_sells_for_banked_money_and_hands_back_the_game() {
+    use crate::menu::{Menu, Panel, Screen};
+    let mut app = counter_app();
+    app.world_mut().resource_mut::<Save>().banked = 1500;
+    let at = app.world_mut().query::<(&Station, &GlobalTransform)>().iter(app.world()).find(|(s, _)| s.kind == StationKind::Resupply).map(|(_, g)| g.translation()).expect("the Roost's quartermaster");
+    set_player(&mut app, at, Vec3::ZERO);
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 0.3);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Paused);
+    let menu = app.world().resource::<Menu>();
+    assert_eq!((menu.panel, menu.from_station), (Panel::Quartermaster, true));
+
+    // E steps the picker on from the Warden to the Thumper (1000); Enter buys it, then steps on to the Harpoon.
+    tap(&mut app, KeyCode::KeyE);
+    assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::Grenade);
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!((app.world().resource::<Save>().banked, app.world().resource::<Save>().weapons.contains(&"grenade".to_string())), (500, true));
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::Harpoon, "Enter on a gun you own just steps on");
+    assert_eq!(app.world().resource::<Save>().banked, 500);
+    // The Power fist is 600: short, nothing sold.
+    tap(&mut app, KeyCode::KeyE);
+    assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::Fist);
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!((app.world().resource::<Save>().banked, app.world().resource::<Save>().weapons.len()), (500, 3));
+    assert!(app.world().resource::<Menu>().note.contains("$100 short"), "{}", app.world().resource::<Menu>().note);
+
+    // Back to the game: the gun on the counter was not yours, so you hold the Warden again.
+    tap(&mut app, KeyCode::Escape);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Playing);
+    assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::Revolver);
+}
+
+#[test]
+fn attachments_are_bought_once_and_tried_on_for_free() {
+    use crate::menu::Screen;
+    let mut app = counter_app();
+    app.world_mut().resource_mut::<Save>().banked = 250;
+    let at = app.world_mut().query::<(&Station, &GlobalTransform)>().iter(app.world()).find(|(s, _)| s.kind == StationKind::Resupply).map(|(_, g)| g.translation()).unwrap();
+    set_player(&mut app, at, Vec3::ZERO);
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 0.3);
+    // Down to the optic row, right to the red dot (200), Enter buys it.
+    tap(&mut app, KeyCode::KeyS);
+    tap(&mut app, KeyCode::KeyD);
+    assert_eq!(app.world().resource::<crate::gunsmith::Loadout>().part(WeaponKind::Revolver, 0), 1);
+    assert_eq!(app.world().resource::<Save>().banked, 250, "trying it on is free");
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!((app.world().resource::<Save>().banked, app.world().resource::<Save>().parts[0]), (50, 0b10));
+    // The scope (400) is out of reach; leaving takes it off again and keeps the red dot's slot bare, as the dot is gone with it.
+    tap(&mut app, KeyCode::KeyD);
+    assert_eq!(app.world().resource::<crate::gunsmith::Loadout>().part(WeaponKind::Revolver, 0), 2);
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!(app.world().resource::<Save>().banked, 50, "too poor for the scope");
+    tap(&mut app, KeyCode::KeyA);
+    assert_eq!(app.world().resource::<crate::gunsmith::Loadout>().part(WeaponKind::Revolver, 0), 1);
+    tap(&mut app, KeyCode::KeyD);
+    tap(&mut app, KeyCode::Escape);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Playing);
+    assert_eq!(app.world().resource::<crate::gunsmith::Loadout>().part(WeaponKind::Revolver, 0), 0, "the unbought scope came off");
 }
 
 #[test]

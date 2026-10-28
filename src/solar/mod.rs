@@ -125,6 +125,7 @@ impl Plugin for SolarPlugin {
         ship::build(app);
         base::build(app);
         station::build(app);
+        app.add_systems(Startup, crate::quartermaster::start_kit.after(crate::gunsmith::restore));
         waypoint::build(app);
         // The clock moves on with the physics step, so between steps every position and the epoch
         // agree: a handoff converts positions at the instant they hold.

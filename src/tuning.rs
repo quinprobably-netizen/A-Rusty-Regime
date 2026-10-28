@@ -85,6 +85,7 @@ pub struct Tuning {
     pub grenade: GrenadeTuning,
     pub harpoon: HarpoonTuning,
     pub fist: FistTuning,
+    pub knife: KnifeTuning,
 
     // Shooting range targets
     pub target_health: f32,
@@ -308,6 +309,7 @@ impl Default for Tuning {
             grenade: GrenadeTuning::default(),
             harpoon: HarpoonTuning::default(),
             fist: FistTuning::default(),
+            knife: KnifeTuning::default(),
 
             target_health: 100.0,
             headshot: 2.5,
@@ -442,6 +444,22 @@ pub struct FistTuning {
 impl Default for FistTuning {
     fn default() -> Self {
         Self { damage: 70.0, range: 2.4, knockback: 16.0, launch: 11.0, cooldown: 0.7 }
+    }
+}
+
+/// The knife: a quick slash, short reach, no recoil and no magazine.
+#[derive(Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct KnifeTuning {
+    pub damage: f32,
+    pub range: f32,
+    pub knockback: f32,
+    pub cooldown: f32,
+}
+
+impl Default for KnifeTuning {
+    fn default() -> Self {
+        Self { damage: 55.0, range: 2.1, knockback: 3.0, cooldown: 0.42 }
     }
 }
 
@@ -778,7 +796,7 @@ impl Tuning {
             Smg => Some(&self.smg),
             Dmr => Some(&self.dmr),
             Revolver => Some(&self.revolver),
-            RocketLauncher | Grenade | Harpoon | Fist => None,
+            RocketLauncher | Grenade | Harpoon | Fist | Knife => None,
         }
     }
 }

@@ -7,6 +7,7 @@ use bevy::prelude::*;
 
 use crate::controller::{ControllerSet, MoveState, Player};
 use crate::input::{PlayerInput, Rumble, ViewAngles};
+use crate::loot::Save;
 use crate::tuning::{Gun, Tuning};
 
 pub struct WeaponPlugin;
@@ -40,10 +41,11 @@ pub enum WeaponKind {
     Grenade,
     Harpoon,
     Fist,
+    Knife,
 }
 
-/// Number keys 1-9 then 0. The first four keep their old slots so saved loadouts stay valid.
-pub const WEAPONS: [WeaponKind; 10] = [
+/// Number keys 1-9 then 0, then the knife on X. The first four keep their old slots so saved loadouts stay valid.
+pub const WEAPONS: [WeaponKind; 11] = [
     WeaponKind::RocketLauncher,
     WeaponKind::Rifle,
     WeaponKind::Shotgun,
@@ -54,7 +56,11 @@ pub const WEAPONS: [WeaponKind; 10] = [
     WeaponKind::Grenade,
     WeaponKind::Harpoon,
     WeaponKind::Fist,
+    WeaponKind::Knife,
 ];
+
+/// The knife's slot: X draws it, and X again puts it away.
+pub const KNIFE: usize = 10;
 
 impl WeaponKind {
     pub fn name(self) -> &'static str {
@@ -69,6 +75,7 @@ impl WeaponKind {
             WeaponKind::Grenade => "THUMPER",
             WeaponKind::Harpoon => "HARPOON",
             WeaponKind::Fist => "POWER FIST",
+            WeaponKind::Knife => "TALON",
         }
     }
     /// The model's file name in `assets/models/weapons/`.
@@ -84,6 +91,7 @@ impl WeaponKind {
             WeaponKind::Grenade => "grenade",
             WeaponKind::Harpoon => "harpoon",
             WeaponKind::Fist => "fist",
+            WeaponKind::Knife => "knife",
         }
     }
     /// The gun's tuning with the gunsmith's parts fitted; `None` for everything that isn't a hitscan gun.
@@ -96,7 +104,7 @@ impl WeaponKind {
             WeaponKind::RocketLauncher => t.rocket_mag,
             WeaponKind::Grenade => t.grenade.mag,
             WeaponKind::Harpoon => t.harpoon.mag,
-            WeaponKind::Fist => 0,
+            WeaponKind::Fist | WeaponKind::Knife => 0,
             _ => t.gun(self).map_or(0, |g| g.mag),
         }
     }
@@ -105,7 +113,7 @@ impl WeaponKind {
             WeaponKind::RocketLauncher => t.rocket_reload,
             WeaponKind::Grenade => t.grenade.reload,
             WeaponKind::Harpoon => t.harpoon.reload,
-            WeaponKind::Fist => 0.0,
+            WeaponKind::Fist | WeaponKind::Knife => 0.0,
             _ => t.gun(self).map_or(0.0, |g| g.reload),
         }
     }
@@ -116,6 +124,7 @@ impl WeaponKind {
             WeaponKind::Grenade => t.grenade.cooldown,
             WeaponKind::Harpoon => t.harpoon.cooldown,
             WeaponKind::Fist => t.fist.cooldown,
+            WeaponKind::Knife => t.knife.cooldown,
             _ => self.gun(t, loadout).map_or(0.1, |g| g.cooldown),
         }
     }
@@ -345,17 +354,31 @@ pub fn spawn_blast(
     ));
 }
 
-fn switch_weapon(mut input: ResMut<PlayerInput>, mut arsenal: ResMut<Arsenal>) {
+fn switch_weapon(mut input: ResMut<PlayerInput>, mut arsenal: ResMut<Arsenal>, save: Option<Res<Save>>) {
     let select = input.weapon_select.take();
     let step = std::mem::take(&mut input.weapon_step);
     let last = std::mem::take(&mut input.weapon_last);
-    if let Some(slot) = select {
-        arsenal.select(slot);
+    let owned = |slot: usize| crate::quartermaster::owns_weapon(save.as_deref(), WEAPONS[slot]);
+    let n = WEAPONS.len() as i32;
+    if let Some(slot) = select.filter(|s| *s < WEAPONS.len()) {
+        // The knife key draws the knife, and pressed again puts it away.
+        let slot = if slot == KNIFE && arsenal.current == KNIFE { arsenal.last } else { slot };
+        if owned(slot) {
+            arsenal.select(slot);
+        }
     } else if step != 0 {
-        let n = WEAPONS.len() as i32;
-        let slot = (arsenal.current as i32 + step).rem_euclid(n) as usize;
-        arsenal.select(slot);
-    } else if last {
+        // Scrolling skips what the quartermaster has not sold you.
+        let mut slot = arsenal.current as i32;
+        for _ in 0..step.abs() {
+            for _ in 0..n {
+                slot = (slot + step.signum()).rem_euclid(n);
+                if owned(slot as usize) {
+                    break;
+                }
+            }
+        }
+        arsenal.select(slot as usize);
+    } else if last && owned(arsenal.last) {
         let slot = arsenal.last;
         arsenal.select(slot);
     }
@@ -505,6 +528,20 @@ fn fire(
                 p.state = MoveState::Air;
             }
             rumble.write(Rumble { strength: 0.7, seconds: 0.15 });
+            return;
+        }
+        WeaponKind::Knife => {
+            let k = &t.knife;
+            arsenal.cooldown = k.cooldown;
+            fired.write(WeaponFired { kick: 0.5 });
+            let Some(hit) = spatial.cast_ray(eye, Dir3::new(forward).unwrap(), k.range, true, &filter) else { return };
+            damage.write(Damage { entity: hit.entity, amount: k.damage, impulse: forward * k.knockback });
+            if let Ok((body, mut lv, mass)) = bodies.get_mut(hit.entity)
+                && *body == RigidBody::Dynamic
+            {
+                lv.0 += forward * k.knockback * (t.prop_ref_mass * mass.inverse()).min(1.0);
+            }
+            rumble.write(Rumble { strength: 0.35, seconds: 0.08 });
             return;
         }
         _ => {}

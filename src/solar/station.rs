@@ -1,8 +1,8 @@
 //! What each base is for. A base lists its stations in `assets/bases.toml`; each is a spot in the
 //! building where E does one job, paid for from the banked money in the save:
 //!
-//! - the Roost's quartermaster resupplies you (health and ammunition, free) and its locker opens
-//!   the wardrobe;
+//! - the Roost's quartermaster resupplies you (health and ammunition, free) and opens the counter
+//!   where guns and attachments are bought (`menu.rs`); its locker opens the wardrobe;
 //! - the Yard's tuning rig upgrades the Kestrel's engines, three levels;
 //! - Site Vantage's courier desk hands out contracts: carry the parcel to another base's door and
 //!   it pays out (the only income in the system, so everything else is paid for with it);
@@ -17,6 +17,7 @@ use crate::controller::Player;
 use crate::health::PlayerHealth;
 use crate::input::PlayerInput;
 use crate::loot::{Save, SaveFile};
+use crate::menu::{Counter, Screen};
 use crate::vehicle::{Driving, VehicleSet};
 use crate::wardrobe::Wardrobe;
 use crate::weapon::Arsenal;
@@ -134,6 +135,7 @@ fn use_station(
     mut blessing: ResMut<Blessing>,
     wardrobe: Option<ResMut<Wardrobe>>,
     mut prompt: ResMut<Prompt>,
+    counter: Option<(ResMut<Counter>, ResMut<NextState<Screen>>)>,
     player: Single<(&Transform, Has<Driving>), With<Player>>,
     stations: Query<(&Station, &GlobalTransform)>,
 ) {
@@ -148,13 +150,14 @@ fn use_station(
     input.interact_pressed = false;
     match station.kind {
         StationKind::Resupply => {
-            if health.hp >= health.max && health.bleeding <= 0.0 && arsenal.spent.iter().all(|s| *s == 0) {
-                prompt.say("Nothing needed: you are topped off");
-            } else {
-                health.heal();
-                arsenal.spent = Default::default();
-                arsenal.reload = 0.0;
-                prompt.say("Resupplied: health and ammunition");
+            let topped = health.hp >= health.max && health.bleeding <= 0.0 && arsenal.spent.iter().all(|s| *s == 0);
+            health.heal();
+            arsenal.spent = Default::default();
+            arsenal.reload = 0.0;
+            prompt.say(if topped { "Nothing needed: you are topped off" } else { "Resupplied: health and ammunition" });
+            if let Some((mut counter, mut next)) = counter {
+                counter.0 = true;
+                next.set(Screen::Paused);
             }
         }
         StationKind::Locker => match wardrobe {
@@ -248,7 +251,7 @@ fn nearby(
         None => String::new(),
         Some(s) => {
             let what = match s.kind {
-                StationKind::Resupply => "free".to_string(),
+                StationKind::Resupply => "resupply free, buy guns and attachments".to_string(),
                 StationKind::Locker => "change clothes".to_string(),
                 StationKind::Workshop => match UPGRADE_COST.get(save.ship_level as usize) {
                     Some(cost) => format!("tune the Kestrel to Mk{}, ${cost}", save.ship_level + 1),

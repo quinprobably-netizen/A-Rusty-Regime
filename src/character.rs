@@ -318,6 +318,8 @@ pub struct CharacterDef {
     pub accent: String,
     /// The weapon bots wearing this character carry.
     pub loadout: String,
+    /// The sidearm the player starts with when playing this character, bare: `pistol` (Smite) or `revolver` (Warden).
+    pub start: String,
 }
 
 #[derive(Deserialize, Clone, Debug, Default, PartialEq)]
@@ -415,6 +417,12 @@ impl Characters {
         WEAPONS.iter().copied().find(|k| k.id() == w)
     }
 
+    /// The sidearm the player starts with as `id`: the Warden or the Smite, the Smite when unsaid.
+    pub fn start(&self, id: &str) -> WeaponKind {
+        let w = self.character.get(id).map_or("", |c| c.start.as_str());
+        [WeaponKind::Revolver, WeaponKind::Pistol].into_iter().find(|k| k.id() == w).unwrap_or(WeaponKind::Pistol)
+    }
+
     /// Unknown characters, factions, weapons and colours. Empty means the file matches the roster.
     pub fn problems(&self) -> Vec<String> {
         let mut out = vec![];
@@ -432,6 +440,9 @@ impl Characters {
             }
             if !WEAPONS.iter().any(|k| k.id() == c.loadout) {
                 out.push(format!("character {id}: no weapon named {}", c.loadout));
+            }
+            if !matches!(c.start.as_str(), "pistol" | "revolver") {
+                out.push(format!("character {id}: start must be pistol or revolver, not {}", c.start));
             }
             for (m, hex) in [("primary", &c.primary), ("secondary", &c.secondary), ("accent", &c.accent)] {
                 if parse_hex(hex).is_none() {

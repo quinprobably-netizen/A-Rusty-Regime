@@ -142,6 +142,7 @@ fn hold(kind: WeaponKind) -> Vec3 {
         WeaponKind::Pistol | WeaponKind::Revolver => Vec3::new(-0.01, 0.01, -0.04),
         WeaponKind::Grenade => Vec3::new(0.0, -0.02, 0.0),
         WeaponKind::Fist => Vec3::new(0.02, -0.06, -0.06),
+        WeaponKind::Knife => Vec3::new(0.03, -0.02, -0.03),
         _ => Vec3::ZERO,
     }
 }
@@ -246,7 +247,7 @@ fn hook_up(
         }
         if let (Some(m), Some(fx)) = (muzzle, &flash) {
             let kind = WEAPONS[model.index];
-            if !matches!(kind, WeaponKind::Fist | WeaponKind::Harpoon) {
+            if !matches!(kind, WeaponKind::Fist | WeaponKind::Harpoon | WeaponKind::Knife) {
                 commands.entity(m).with_child((Flash, Mesh3d(fx.mesh.clone()), MeshMaterial3d(fx.mat.clone()), Transform::default(), Visibility::Hidden));
             }
         }

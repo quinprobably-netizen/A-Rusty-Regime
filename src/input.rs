@@ -221,6 +221,9 @@ fn gather(
     if let Some(slot) = (0..10u8).find(|i| pressed(Action::Slot(*i))) {
         input.weapon_select = Some(slot as usize);
     }
+    if pressed(Action::Knife) {
+        input.weapon_select = Some(crate::weapon::KNIFE);
+    }
     input.weapon_step += pressed(Action::NextWeapon) as i32 - pressed(Action::PrevWeapon) as i32;
     input.weapon_last |= pressed(Action::LastWeapon);
     input.interact_pressed |= pressed(Action::Use);

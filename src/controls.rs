@@ -51,6 +51,8 @@ pub enum Action {
     LastWeapon,
     NextWeapon,
     PrevWeapon,
+    /// Draw the knife; again to put it away.
+    Knife,
     /// A weapon slot, 0-based.
     Slot(u8),
     Flashlight,
@@ -92,6 +94,7 @@ impl Action {
             Action::LastWeapon => "Last weapon",
             Action::NextWeapon => "Next weapon",
             Action::PrevWeapon => "Previous weapon",
+            Action::Knife => "Knife (draw / put away)",
             Action::Slot(_) => "Weapon 1-10",
             Action::Flashlight => "Flashlight",
             Action::Inspect => "Inspect weapon",
@@ -111,8 +114,8 @@ impl Action {
             Action::Right => "Right / increase",
             Action::Select => "Select",
             Action::Back => "Back",
-            Action::TabNext => "Next weapon (gunsmith)",
-            Action::TabPrev => "Previous weapon (gunsmith)",
+            Action::TabNext => "Next weapon (quartermaster)",
+            Action::TabPrev => "Previous weapon (quartermaster)",
         }
     }
 }
@@ -213,6 +216,7 @@ pub const BINDINGS: &[Bind] = &[
     pad(Foot, NextWeapon, P::DPadRight),
     bind(Foot, PrevWeapon, Source::WheelUp),
     pad(Foot, PrevWeapon, P::DPadLeft),
+    key(Foot, Knife, K::KeyX),
     key(Foot, Slot(0), K::Digit1),
     key(Foot, Slot(1), K::Digit2),
     key(Foot, Slot(2), K::Digit3),
@@ -228,7 +232,8 @@ pub const BINDINGS: &[Bind] = &[
     key(Foot, Inspect, K::KeyV),
     pad(Foot, Inspect, P::DPadDown),
     key(Foot, ToggleView, K::KeyT),
-    pad(Foot, ToggleView, P::RightThumb),
+    mode(pad(Foot, ToggleView, P::RightThumb), Mode::Tap),
+    mode(pad(Foot, Knife, P::RightThumb), Mode::Hold),
     key(Foot, Respawn, K::Backspace),
     pad(Foot, Respawn, P::Select),
     key(Foot, Pause, K::Escape),
@@ -521,7 +526,7 @@ pub fn markdown() -> String {
         }
         out.push('\n');
     }
-    out.push_str("**Menus** follow the same buttons: arrows or WASD (d-pad) move, Enter or Space (A) select, Esc (B or Start) backs out, Q / E (LB / RB) change weapon in the gunsmith.\n");
+    out.push_str("**Menus** follow the same buttons: arrows or WASD (d-pad) move, Enter or Space (A) select, Esc (B or Start) backs out, Q / E (LB / RB) change weapon at the quartermaster.\n");
     out
 }
 

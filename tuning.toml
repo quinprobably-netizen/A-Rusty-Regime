@@ -219,6 +219,12 @@ knockback = 16.0
 launch = 11.0
 cooldown = 0.7
 
+[knife]                     # V: the starter knife, a quick slash with short reach
+damage = 55.0
+range = 2.1
+knockback = 3.0
+cooldown = 0.42
+
 [island]                    # RUST_REGIME_LEVEL=island; the default level is the solar system
 seed = 7
 size = 4096                 # meters per side

@@ -86,8 +86,9 @@ def solve(c, out_dir=kit.OUT):
         table = tomllib.load(f)
     out = {}
     rig = _rig(c.id)
+    only = os.environ.get("GRIPS_ONLY")  # solve just this weapon and keep the file's other poses
     for wid, spec in table.items():
-        if wid == "fist":
+        if wid == "fist" or (only and wid != only):
             continue
         path = os.path.join(WEAPONS, f"{wid}.glb")
         if not os.path.exists(path):
@@ -97,13 +98,18 @@ def solve(c, out_dir=kit.OUT):
         try:
             if DEBUG:
                 print(wid)
-            trig = _trigger_face(w)
             right = _hold(w, HOLDS["R"], Vector(spec["right"]), mirror=True, tip=spec.get("thumb"))
-            right = _place(c, w, right, trig)
             extra = {}
-            out[f"{wid}.R"] = _pose(c, w, right, trigger=(trig, 0.0))
-            out[f"{wid}.R_fire"] = _pose(c, w, right, trigger=(trig, 0.006))
-            extra[f"{wid}.R"] = extra[f"{wid}.R_fire"] = HOLDS["R"].part
+            if wid == "knife":
+                # No trigger: all four fingers close round the handle, the thumb over them.
+                out["knife.R"] = _pose(c, w, right)
+                extra["knife.R"] = HOLDS["R"].part
+            else:
+                trig = _trigger_face(w)
+                right = _place(c, w, right, trig)
+                out[f"{wid}.R"] = _pose(c, w, right, trigger=(trig, 0.0))
+                out[f"{wid}.R_fire"] = _pose(c, w, right, trigger=(trig, 0.006))
+                extra[f"{wid}.R"] = extra[f"{wid}.R_fire"] = HOLDS["R"].part
             support = "cradle" if "cradle" in spec else "vertical" if "vertical" in spec else None
             if support:
                 out[f"{wid}.L"] = _pose(c, w, _hold(w, HOLDS[support], Vector(spec[support])))
@@ -121,8 +127,14 @@ def solve(c, out_dir=kit.OUT):
     if rig:
         rig[2]()
     path = os.path.join(out_dir, f"{c.id}.grips.toml")
+    kept = ""
+    if only and os.path.exists(path):
+        with open(path) as f:
+            old = re.split(r"(?m)^(?=\[\")", f.read())
+        kept = "".join(blk for blk in old[1:] if not blk.startswith(f'["{only}.'))
     with open(path, "w") as f:
         f.write(f"# Finger poses for {c.id}, solved by tools/character/grips.py. Do not edit.\n")
+        f.write(kept.rstrip("\n") + "\n" if kept else "")
         for key, pose in out.items():
             f.write(f'\n["{key}"]\n')
             f.write(f"at = {_fmt(pose['at'])}\nrot = {_fmt(pose['rot'])}\n")
