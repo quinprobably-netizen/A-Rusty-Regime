@@ -32,7 +32,7 @@ pub fn halftone_params(pitch: f32, radius: f32) -> Vec4 {
 }
 
 /// A node filling its parent with `dot` circles every `pitch` px on `fill`.
-pub fn halftone_layer(materials: &mut Assets<Halftone>, fill: Color, dot: Color, pitch: f32, radius: f32) -> impl Bundle {
+pub fn halftone_layer(materials: &mut Assets<Halftone>, fill: Color, dot: Color, pitch: f32, radius: f32) -> impl Bundle + use<> {
     (
         Node { position_type: PositionType::Absolute, left: Val::Px(0.0), top: Val::Px(0.0), width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
         MaterialNode(materials.add(Halftone { fill: fill.into(), dot: dot.into(), params: halftone_params(pitch, radius) })),

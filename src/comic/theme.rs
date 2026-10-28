@@ -65,7 +65,8 @@ impl FromWorld for ComicTheme {
     /// without caring which Startup system runs first.
     fn from_world(world: &mut World) -> Self {
         let mut theme = Self::look_a();
-        if let Some(server) = world.get_resource::<AssetServer>() {
+        // Headless test apps may have an asset server but no text plugin; loading a font there panics.
+        if let (Some(server), true) = (world.get_resource::<AssetServer>(), world.contains_resource::<Assets<Font>>()) {
             let root = bevy::asset::io::file::FileAssetReader::get_base_path().join("assets");
             theme.display = font_or_default(server, &root, "fonts/Bangers-Regular.ttf");
             theme.body = font_or_default(server, &root, "fonts/BarlowCondensed-SemiBold.ttf");
