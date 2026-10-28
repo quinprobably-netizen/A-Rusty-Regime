@@ -12,31 +12,36 @@ const PBR_FUNCTIONS: &str = "embedded://bevy_pbr/render/pbr_functions.wgsl";
 const BEGIN: &str = "\n// comic-toon begin\n";
 
 /// Bands by light ratio (exposed light over base colour, about 1 in full sun): shadow, mid, lit
-/// and a highlight. Below the mid band, ink dots on a 45° screen grow as the light falls.
+/// and a highlight. Shade keeps the paint's own hue, half tinted by the light, so a sky-lit side
+/// doesn't turn blue. Only the deepest shade, close up, gets soft ink dots on a 45° screen; far
+/// off they would shimmer as the screen grid slides over the ground.
 const TOON_SHADE: &str = r#"
 fn toon_shade(lit: vec3<f32>, in: pbr_types::PbrInput) -> vec3<f32> {
     let w = vec3<f32>(0.2126, 0.7152, 0.0722);
-    let base = max(dot(in.material.base_color.rgb, w), 0.02);
+    let albedo = in.material.base_color.rgb;
+    let base = max(dot(albedo, w), 0.02);
     let l = dot(lit, w);
     let r = l / base;
     let s = 0.03;
-    var band = 0.22;
-    band += 0.26 * smoothstep(0.12 - s, 0.12 + s, r);
-    band += 0.32 * smoothstep(0.45 - s, 0.45 + s, r);
-    band += 0.20 * smoothstep(0.85 - s, 0.85 + s, r);
-    band += 0.25 * smoothstep(1.7 - s, 1.7 + s, r);
-    var tint = in.material.base_color.rgb / base;
+    var band = 0.30;
+    band += 0.25 * smoothstep(0.12 - s, 0.12 + s, r);
+    band += 0.27 * smoothstep(0.40 - s, 0.40 + s, r);
+    band += 0.18 * smoothstep(0.80 - s, 0.80 + s, r);
+    band += 0.20 * smoothstep(1.7 - s, 1.7 + s, r);
+    var hue = albedo / base;
     if l > 1e-5 {
-        tint = lit / l;
+        hue = mix(hue, lit / l, 0.5);
     }
-    var out = tint * base * band;
-    let pitch = 7.0;
+    hue = hue / max(dot(hue, w), 1e-5);
+    var out = hue * base * band;
+    let fade = 1.0 - smoothstep(40.0, 120.0, distance(in.world_position.xyz, view_bindings::view.world_position));
+    let pitch = 6.0;
     let a = 0.7853982;
     let p = mat2x2<f32>(cos(a), sin(a), -sin(a), cos(a)) * in.frag_coord.xy / pitch;
     let d = length(fract(p) - 0.5) * pitch;
-    let rad = (1.0 - smoothstep(0.05, 0.45, r)) * pitch * 0.42;
+    let rad = (1.0 - smoothstep(0.03, 0.2, r)) * pitch * 0.38 * fade;
     let cover = 1.0 - smoothstep(rad - 0.7, rad + 0.7, d);
-    out = mix(out, out * 0.15, cover * step(0.5, rad));
+    out = mix(out, out * 0.45, cover * step(0.5, rad));
     return out;
 }
 "#;
