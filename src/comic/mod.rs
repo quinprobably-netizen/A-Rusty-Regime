@@ -1,13 +1,13 @@
-//! The comic UI kit (look A, "Ink & Halftone"): theme, halftone fill, widgets and SFX pops. See
+//! The comic look (A, "Ink & Halftone"): theme, halftone fill, widgets, SFX pops, and the
+//! toon-shaded, ink-outlined world. See
 //! docs/superpowers/specs/2026-10-28-comic-redesign-design.md.
-//!
-//! Only the demo board uses most of it until the HUD and menus move onto the kit (piece 3).
 #![allow(dead_code, unused_imports)]
 
 mod demo;
 pub mod halftone;
 pub mod sfx;
 pub mod theme;
+pub mod toon;
 pub mod widgets;
 
 use bevy::prelude::*;
@@ -22,7 +22,7 @@ pub struct ComicPlugin;
 
 impl Plugin for ComicPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(UiMaterialPlugin::<Halftone>::default())
+        app.add_plugins((UiMaterialPlugin::<Halftone>::default(), toon::ToonPlugin))
             .init_resource::<ComicTheme>()
             .add_systems(Update, sfx::animate_pops);
         if std::env::var_os("RUST_REGIME_COMIC_DEMO").is_some() {
