@@ -82,6 +82,7 @@ pub fn caption(p: &mut ChildSpawnerCommands, theme: &ComicTheme, text: &str) -> 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tail {
     Left,
+    Right,
     Down,
 }
 
@@ -94,6 +95,10 @@ pub fn bubble(p: &mut ChildSpawnerCommands, theme: &ComicTheme, text: &str, tail
         Tail::Left => (
             Node { position_type: PositionType::Absolute, left: Val::Px(-out), top: Val::Percent(50.0), margin: UiRect::top(Val::Px(-14.0)), width: Val::Px(14.0), height: Val::Px(28.0), overflow: Overflow::clip(), ..default() },
             Node { position_type: PositionType::Absolute, left: Val::Px(4.0), top: Val::Px(4.0), width: Val::Px(20.0), height: Val::Px(20.0), ..default() },
+        ),
+        Tail::Right => (
+            Node { position_type: PositionType::Absolute, right: Val::Px(-out), top: Val::Percent(50.0), margin: UiRect::top(Val::Px(-14.0)), width: Val::Px(14.0), height: Val::Px(28.0), overflow: Overflow::clip(), ..default() },
+            Node { position_type: PositionType::Absolute, left: Val::Px(-10.0), top: Val::Px(4.0), width: Val::Px(20.0), height: Val::Px(20.0), ..default() },
         ),
         Tail::Down => (
             Node { position_type: PositionType::Absolute, left: Val::Px(32.0), bottom: Val::Px(-out), width: Val::Px(28.0), height: Val::Px(14.0), overflow: Overflow::clip(), ..default() },
@@ -258,6 +263,7 @@ mod tests {
         let mut ids = vec![];
         app.world_mut().commands().entity(root).with_children(|p| {
             ids.push(bubble(p, &theme, "Left", Tail::Left));
+            ids.push(bubble(p, &theme, "Right", Tail::Right));
             ids.push(bubble(p, &theme, "Down", Tail::Down));
         });
         app.world_mut().flush();

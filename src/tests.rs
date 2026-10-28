@@ -3056,6 +3056,27 @@ fn counter_app() -> App {
 }
 
 #[test]
+fn the_space_screens_draw_with_and_without_the_solar_system() {
+    use crate::menu::{Menu, MenuPlugin, Panel, Screen};
+    let mut solar = counter_app();
+    let mut plain = build_app(Tuning::default());
+    plain.add_plugins((crate::gunsmith::GunsmithPlugin, MenuPlugin));
+    with_input_devices(&mut plain);
+    plain.finish();
+    plain.update();
+    for app in [&mut solar, &mut plain] {
+        app.world_mut().resource_mut::<NextState<Screen>>().set(Screen::Paused);
+        app.update();
+        for panel in [Panel::Starmap, Panel::Ship, Panel::Contracts] {
+            app.world_mut().resource_mut::<Menu>().panel = panel;
+            app.update();
+            app.update();
+            assert_eq!(app.world().resource::<Menu>().panel, panel);
+        }
+    }
+}
+
+#[test]
 fn the_solar_system_starts_you_with_the_warden_a_knife_and_nothing_else() {
     let mut app = counter_app();
     // The pilot class wears Runner, who starts with the Warden.

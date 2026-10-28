@@ -2,7 +2,7 @@
 //! Bevy UI over the live world. Titanfall-style: a tall uppercase list on the left, the island
 //! behind it, button hints along the bottom. Time stands still while a menu is up.
 //!
-//! `RUST_REGIME_MENU=title|pause|settings|controls|maps|quartermaster|wardrobe` opens straight into a
+//! `RUST_REGIME_MENU=title|pause|settings|controls|maps|quartermaster|wardrobe|starmap|ship|contracts` opens straight into a
 //! screen (handy with `RUST_REGIME_SCREENSHOT`).
 
 use bevy::app::AppExit;
@@ -13,6 +13,7 @@ use bevy::window::{CursorGrabMode, CursorOptions};
 use serde::{Deserialize, Serialize};
 
 mod draw;
+mod space;
 use draw::rebuild;
 
 use crate::abilities::Class;
@@ -46,6 +47,10 @@ pub enum Panel {
     /// The Roost's counter: guns and attachments, bought with banked money.
     Quartermaster,
     Wardrobe,
+    /// The pause menu's space screens: the worlds and bases, your ships, your courier job.
+    Starmap,
+    Ship,
+    Contracts,
 }
 
 /// What the camera presents while a panel is open.
@@ -299,6 +304,9 @@ enum Action {
     Back,
     /// A random look in the wardrobe.
     Randomize,
+    Starmap,
+    Ship,
+    Contracts,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -334,6 +342,11 @@ const MAPS: &[MapDef] = &[
 ];
 
 /// The [`MAPS`] entry this run was started with. An unknown level is the solar system, as in `main`.
+/// Whether the solar system is the level running, so the space screens have something to show.
+fn space_level() -> bool {
+    MAPS[current_map()].level == "system"
+}
+
 fn current_map() -> usize {
     let level = std::env::var("RUST_REGIME_LEVEL").ok();
     let level = match level.as_deref() {
@@ -379,6 +392,11 @@ fn rows(panel: Panel, screen: Screen, tuned: [bool; 4], fits: bool) -> Vec<Row> 
             rows.push(Row::Action("WARDROBE", Action::Wardrobe));
             rows.push(Row::Action("SETTINGS", Action::Settings));
             rows.push(Row::Action("CONTROLS", Action::Controls));
+            if screen == Screen::Paused && space_level() {
+                rows.push(Row::Action("STARMAP", Action::Starmap));
+                rows.push(Row::Action("SHIP", Action::Ship));
+                rows.push(Row::Action("CONTRACTS", Action::Contracts));
+            }
             rows.push(Row::Action("QUIT", Action::Quit));
         }
         Panel::Settings => {
@@ -392,7 +410,7 @@ fn rows(panel: Panel, screen: Screen, tuned: [bool; 4], fits: bool) -> Vec<Row> 
             }
             rows.push(Row::Action("BACK", Action::Back));
         }
-        Panel::Controls => rows.push(Row::Action("BACK", Action::Back)),
+        Panel::Controls | Panel::Starmap | Panel::Ship | Panel::Contracts => rows.push(Row::Action("BACK", Action::Back)),
         Panel::Maps => {
             rows.extend((0..MAPS.len()).map(Row::Map));
             rows.push(Row::Action("BACK", Action::Back));
@@ -428,6 +446,9 @@ fn main_cursor(panel: Panel) -> usize {
         Panel::Wardrobe => 2,
         Panel::Settings => 3,
         Panel::Controls => 4,
+        Panel::Starmap => 5,
+        Panel::Ship => 6,
+        Panel::Contracts => 7,
         Panel::Main | Panel::Quartermaster => 0,
     }
 }
@@ -473,7 +494,7 @@ impl Plugin for MenuPlugin {
 /// Boot to the title, unless a screenshot run asks for the game or a particular screen.
 fn initial() -> Screen {
     match std::env::var("RUST_REGIME_MENU").as_deref() {
-        Ok("pause" | "settings" | "controls" | "maps" | "quartermaster" | "wardrobe") => Screen::Paused,
+        Ok("pause" | "settings" | "controls" | "maps" | "quartermaster" | "wardrobe" | "starmap" | "ship" | "contracts") => Screen::Paused,
         Ok("play") => Screen::Playing,
         Ok(_) => Screen::Title,
         Err(_) if std::env::var_os("RUST_REGIME_SCREENSHOT").is_some() => Screen::Playing,
@@ -511,6 +532,9 @@ fn enter_menu(mut menu: ResMut<Menu>, mut counter: ResMut<Counter>, cursor: Opti
             Ok("maps") => Panel::Maps,
             Ok("quartermaster") => Panel::Quartermaster,
             Ok("wardrobe") => Panel::Wardrobe,
+            Ok("starmap") => Panel::Starmap,
+            Ok("ship") => Panel::Ship,
+            Ok("contracts") => Panel::Contracts,
             _ => Panel::Main,
         } };
     }
@@ -699,6 +723,9 @@ fn act(
                     }
                     Action::Settings => open(&mut menu, Panel::Settings),
                     Action::Controls => open(&mut menu, Panel::Controls),
+                    Action::Starmap => open(&mut menu, Panel::Starmap),
+                    Action::Ship => open(&mut menu, Panel::Ship),
+                    Action::Contracts => open(&mut menu, Panel::Contracts),
                 }
             }
         }
@@ -890,6 +917,20 @@ mod tests {
     }
 
     #[test]
+    fn space_rows_only_on_the_paused_solar_list() {
+        let names = |screen| selectable(&rows(Panel::Main, screen, [false; 4], false)).map(|r| format!("{r:?}")).collect::<Vec<_>>().join(" ");
+        assert!(!names(Screen::Title).contains("STARMAP"));
+        let paused = rows(Panel::Main, Screen::Paused, [false; 4], false);
+        let at = |i| selectable(&paused).nth(i);
+        if space_level() {
+            assert_eq!(at(5), Some(Row::Action("STARMAP", Action::Starmap)));
+            assert_eq!(at(6), Some(Row::Action("SHIP", Action::Ship)));
+            assert_eq!(at(7), Some(Row::Action("CONTRACTS", Action::Contracts)));
+        }
+        assert!(matches!(selectable(&paused).last(), Some(Row::Action("QUIT", _))));
+    }
+
+    #[test]
     fn old_settings_without_toon_load_with_toon_on() {
         let s: Settings = toml::from_str("bloom = true").unwrap();
         assert!(s.toon);
@@ -921,7 +962,10 @@ mod tests {
 
     #[test]
     fn every_panel_has_rows_and_back_lands_on_its_opener() {
-        for panel in [Panel::Main, Panel::Maps, Panel::Settings, Panel::Controls, Panel::Quartermaster, Panel::Wardrobe] {
+        for panel in [Panel::Main, Panel::Maps, Panel::Settings, Panel::Controls, Panel::Quartermaster, Panel::Wardrobe, Panel::Starmap, Panel::Ship, Panel::Contracts] {
+            if matches!(panel, Panel::Starmap | Panel::Ship | Panel::Contracts) && !space_level() {
+                continue;
+            }
             let panel_rows = rows(panel, Screen::Paused, [true; 4], true);
             assert!(selectable(&panel_rows).count() > 0, "{panel:?}");
             if !matches!(panel, Panel::Main | Panel::Quartermaster) {

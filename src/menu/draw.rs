@@ -10,7 +10,7 @@ use bevy::prelude::*;
 use super::*;
 use crate::comic::{body_text, bubble, display_text, halftone_layer, hint_strip, panel, stat_bar, ComicTheme, Halftone, Tail};
 
-const LEFT: f32 = 72.0;
+pub(super) const LEFT: f32 = 72.0;
 
 #[derive(Component)]
 pub(super) struct MenuRoot;
@@ -27,6 +27,9 @@ pub(super) fn blurb(action: Action) -> &'static str {
         Action::Quit => "Close the game. Your bank and kit are saved.",
         Action::Randomize => "Roll a random look.",
         Action::Back => "Back to the main menu.",
+        Action::Starmap => "The worlds, their bases, and where you are.",
+        Action::Ship => "Your ships: where they are and how they're tuned.",
+        Action::Contracts => "The courier job you're carrying.",
     }
 }
 
@@ -38,7 +41,7 @@ pub(super) fn hints(panel: Panel, screen: Screen) -> &'static [(&'static str, &'
         Panel::Settings => &[("L R", "A D", "ADJUST"), ("A", "ENTER", "TOGGLE"), ("B", "ESC", "BACK")],
         Panel::Quartermaster => &[("LB RB", "Q E", "WEAPON"), ("L R", "A D", "PART / TUNE"), ("A", "ENTER", "BUY"), ("B", "ESC", "BACK")],
         Panel::Wardrobe => &[("UP DN", "W S", "SLOT"), ("L R", "A D", "CHANGE"), ("B", "ESC", "BACK")],
-        Panel::Controls => &[("B", "ESC", "BACK")],
+        Panel::Controls | Panel::Starmap | Panel::Ship | Panel::Contracts => &[("B", "ESC", "BACK")],
         Panel::Maps => &[("A", "ENTER", "PLAY"), ("B", "ESC", "BACK")],
     }
 }
@@ -62,6 +65,8 @@ pub(super) fn rebuild(
     save: Option<Res<Save>>,
     theme: Res<ComicTheme>,
     halftones: Option<ResMut<Assets<Halftone>>>,
+    window: Option<Single<&Window>>,
+    space: super::space::Space,
 ) {
     let wardrobe_changed = closet.wardrobe.as_ref().is_some_and(|w| w.is_changed());
     let gun_changed = menu.panel == Panel::Quartermaster && (arsenal.is_changed() || save.as_ref().is_some_and(|s| s.is_changed()));
@@ -85,14 +90,22 @@ pub(super) fn rebuild(
     let width = match menu.panel {
         Panel::Main => 360.0,
         Panel::Wardrobe => 620.0,
+        Panel::Starmap | Panel::Ship | Panel::Contracts => 300.0,
         _ => 560.0,
     };
-    let dots = halftones.map(|mut h| halftone_layer(&mut h, t.paper, t.red.with_alpha(0.16), 10.0, 2.0));
+    let mut halftones = halftones;
+    let dots = halftones.as_mut().map(|h| halftone_layer(h, t.paper, t.red.with_alpha(0.16), 10.0, 2.0));
+    let spot = halftones.as_mut().map(|h| halftone_layer(h, t.yellow.with_alpha(0.0), t.yellow, 9.0, 3.0));
+    // The paused list on the solar level runs to nine rows, so its lettering shrinks to fit.
+    let (main_px, row_h) = if selectable(&rows).count() > 6 { (34.0, 50.0) } else { (44.0, 64.0) };
+    let screen_px = window.map_or(Vec2::new(1280.0, 720.0), |w| w.size());
+    // The bench and the wardrobe put the gun or the body in the middle, with no slab over them.
+    let slab = !matches!(menu.panel, Panel::Quartermaster | Panel::Wardrobe);
 
     let mut root = commands.spawn((MenuRoot, Node { position_type: PositionType::Absolute, left: Val::Px(0.0), top: Val::Px(0.0), width: Val::Percent(100.0), height: Val::Percent(100.0), overflow: Overflow::clip(), ..default() }, ZIndex(10)));
     root.with_children(|p| {
         // The paper slab, taller than the screen and tilted so its right edge slants.
-        p.spawn((
+        if slab { p.spawn((
             Node { position_type: PositionType::Absolute, left: Val::Px(-80.0), top: Val::Percent(-15.0), width: Val::Px(LEFT + width + 140.0), height: Val::Percent(130.0), border: UiRect::right(Val::Px(8.0)), overflow: Overflow::clip(), ..default() },
             BackgroundColor(t.paper),
             BorderColor::all(t.ink),
@@ -102,7 +115,7 @@ pub(super) fn rebuild(
             if let Some(dots) = dots {
                 slab.spawn(dots);
             }
-        });
+        }); }
 
         // Header.
         p.spawn(abs(Some(LEFT), None, Some(36.0), None)).with_children(|h| {
@@ -125,6 +138,9 @@ pub(super) fn rebuild(
                 Panel::Maps => ("RUST REGIME".to_string(), "MAPS"),
                 Panel::Quartermaster => (format!("BANKED  {}", crate::comic::widgets::money(banked)), "THE ROOST · QUARTERMASTER"),
                 Panel::Wardrobe => ("RUST REGIME".to_string(), "WARDROBE"),
+                Panel::Starmap => ("THE HAVEN SYSTEM".to_string(), "STARMAP"),
+                Panel::Ship => ("THE HANGAR".to_string(), "SHIPS"),
+                Panel::Contracts => ("COURIER WORK".to_string(), "CONTRACTS"),
             };
             h.spawn((display_text(big, 60.0, t.red, &t), TextShadow { offset: Vec2::splat(4.0), color: t.ink }, UiTransform::from_rotation(Rot2::degrees(-2.0))));
             h.spawn((body_text(small, 17.0, t.ink, true, &t), Node { margin: UiRect::top(Val::Px(4.0)), ..default() }));
@@ -133,25 +149,7 @@ pub(super) fn rebuild(
         // Rows.
         let top = if menu.panel == Panel::Main && screen == Screen::Title { 250.0 } else { 150.0 };
         p.spawn(Node { position_type: PositionType::Absolute, left: Val::Px(LEFT), top: Val::Px(top), bottom: Val::Px(64.0), width: Val::Px(width), flex_direction: FlexDirection::Column, row_gap: Val::Px(2.0), overflow: Overflow::clip_y(), ..default() }).with_children(|list| {
-            if menu.panel == Panel::Wardrobe {
-                let preset = save.as_ref().map_or(0, |s| s.preset);
-                list.spawn(Node { display: Display::Grid, grid_template_columns: RepeatedGridTrack::px(4, 146.0), row_gap: Val::Px(10.0), column_gap: Val::Px(8.0), padding: UiRect::all(Val::Px(6.0)), ..default() }).with_children(|grid| {
-                    let mut index = 0;
-                    for row in &rows {
-                        if let Row::Preset | Row::Look(_) = row {
-                            tile(grid, &t, *row, index, index == menu.cursor, outfit.as_ref(), closet.characters.as_deref(), preset);
-                            index += 1;
-                        }
-                    }
-                });
-                list.spawn(Node { height: Val::Px(10.0), ..default() });
-                let mut index = selectable(&rows).filter(|r| matches!(r, Row::Preset | Row::Look(_))).count();
-                for row in &rows {
-                    if let Row::Action(label, _) = row {
-                        action_row(list, &t, label, index, menu.cursor == index, 26.0);
-                        index += 1;
-                    }
-                }
+            if matches!(menu.panel, Panel::Wardrobe | Panel::Quartermaster) {
                 return;
             }
             let mut index = 0;
@@ -165,7 +163,7 @@ pub(super) fn rebuild(
                         if !big {
                             list.spawn(Node { height: Val::Px(6.0), ..default() });
                         }
-                        action_row(list, &t, label, index, index == menu.cursor, if big { 44.0 } else { 26.0 });
+                        action_row(list, &t, label, index, index == menu.cursor, if big { main_px } else { 26.0 });
                         index += 1;
                     }
                     Row::Field(i) => {
@@ -175,41 +173,13 @@ pub(super) fn rebuild(
                         value_row(list, &t, &label, &value, fill, None, index, index == menu.cursor, true);
                         index += 1;
                     }
-                    Row::Weapon => {
-                        let value = match (quartermaster::owns_weapon(save.as_deref(), kind), quartermaster::price(kind)) {
-                            (false, Some(cost)) => format!("{}  {}", kind.name(), crate::comic::widgets::money(cost)),
-                            _ => format!("{}  OWNED", kind.name()),
-                        };
-                        let note = (!quartermaster::owns_weapon(save.as_deref(), kind)).then_some("ENTER / A buys it");
-                        value_row(list, &t, "WEAPON", &value, None, note, index, index == menu.cursor, true);
-                        list.spawn(Node { height: Val::Px(10.0), ..default() });
-                        index += 1;
-                    }
-                    Row::Slot(slot) => {
-                        let at = loadout.part(kind, slot);
-                        let part = &PARTS[slot][at];
-                        let owned = quartermaster::owns_part(save.as_deref(), slot, at);
-                        let value = if owned { part.name.to_string() } else { format!("{}  {}", part.name, crate::comic::widgets::money(quartermaster::PART_PRICES[slot][at])) };
-                        let note = if owned { part.desc.to_string() } else { format!("{}.  ENTER / A buys it", part.desc) };
-                        value_row(list, &t, SLOTS[slot], &value, None, Some(&note), index, index == menu.cursor, true);
-                        index += 1;
-                    }
-                    Row::Tune(slot) => {
-                        let v = loadout.tuning(kind, slot);
-                        let (l, r) = TUNES[slot];
-                        value_row(list, &t, &format!("  TUNE  {l} / {r}"), &format!("{v:+}"), Some((v + TUNE_MAX) as f32 / (2 * TUNE_MAX) as f32), None, index, index == menu.cursor, true);
-                        index += 1;
-                    }
                     Row::Map(i) => {
                         let m = &MAPS[i];
                         value_row(list, &t, m.name, if i == current_map() { "LOADED" } else { "" }, None, Some(m.desc), index, index == menu.cursor, false);
                         index += 1;
                     }
-                    Row::Preset | Row::Look(_) => {}
+                    Row::Weapon | Row::Slot(_) | Row::Tune(_) | Row::Preset | Row::Look(_) => {}
                 }
-            }
-            if menu.panel == Panel::Quartermaster && !menu.note.is_empty() {
-                list.spawn((body_text(menu.note.clone(), 17.0, t.red, true, &t), Node { margin: UiRect::top(Val::Px(10.0)), ..default() }));
             }
             if menu.panel == Panel::Settings {
                 list.spawn((body_text("* takes effect after a restart.  Saved to settings.toml.", 14.0, t.muted, false, &t), Node { margin: UiRect::top(Val::Px(4.0)), ..default() }));
@@ -222,11 +192,21 @@ pub(super) fn rebuild(
         // What the highlighted main-menu row does, in a bubble beside it.
         if menu.panel == Panel::Main {
             if let Some(Row::Action(_, action)) = selectable(&rows).nth(menu.cursor) {
-                let row_h = 64.0;
                 p.spawn(abs(Some(LEFT + 330.0), None, Some(top + menu.cursor as f32 * row_h - 6.0), None)).with_children(|b| {
                     bubble(b, &t, blurb(action), Tail::Left);
                 });
             }
+        }
+
+        if menu.panel == Panel::Quartermaster {
+            bench(p, &t, &rows, menu.cursor, kind, &loadout, save.as_deref(), &menu.note, screen_px);
+        }
+        if matches!(menu.panel, Panel::Starmap | Panel::Ship | Panel::Contracts) {
+            super::space::draw(p, &t, menu.panel, &space, save.as_deref());
+        }
+        if menu.panel == Panel::Wardrobe {
+            let preset = save.as_ref().map_or(0, |s| s.preset);
+            spotlight(p, &t, &rows, menu.cursor, outfit.as_ref(), closet.characters.as_deref(), preset, spot);
         }
 
         // The gun's stat bars, right: owned setup (base) against what's fitted now.
@@ -234,7 +214,7 @@ pub(super) fn rebuild(
             let name = kind.name();
             let base_stats = gunsmith::stats(base);
             let fitted_stats = gunsmith::stats(fitted);
-            p.spawn(Node { width: Val::Px(320.0), ..abs(None, Some(LEFT), Some(140.0), None) }).with_children(|c| {
+            p.spawn(Node { width: Val::Px(300.0), ..abs(None, Some(40.0), Some(36.0), None) }).with_children(|c| {
                 let t2 = t.clone();
                 panel(c, &t, t.paper, 1.5, move |s| {
                     s.spawn(display_text(format!("{name} STATS"), 26.0, t2.ink, &t2));
@@ -253,6 +233,209 @@ pub(super) fn rebuild(
         p.spawn(Node { position_type: PositionType::Absolute, left: Val::Px(0.0), right: Val::Px(0.0), bottom: Val::Px(0.0), ..default() }).with_children(|b| {
             hint_strip(b, &t, &pairs, money);
         });
+    });
+}
+
+/// Tiles in the wardrobe's left and right grids, left first and holding the odd one.
+pub(super) fn wardrobe_columns(tiles: usize) -> (usize, usize) {
+    (tiles.div_ceil(2), tiles / 2)
+}
+
+/// What a wardrobe tile changes, said in the bubble beside it.
+pub(super) fn slot_blurb(row: Row) -> &'static str {
+    use wardrobe::Slot;
+    match row {
+        Row::Look(i) => match wardrobe::SLOTS[i] {
+            Slot::Character => "Who you are under the kit.",
+            Slot::Head => "Borrow another character's head.",
+            Slot::Primary => "The main cloth colour.",
+            Slot::Secondary => "The second cloth colour.",
+            Slot::Accent => "Trim, straps and patches.",
+            Slot::Camo => "A printed pattern over the cloth.",
+            Slot::Skin => "Skin tone.",
+            Slot::Gloves => "Glove colour.",
+            Slot::Boots => "Boot colour.",
+            Slot::Webbing => "Belts, pouches and webbing.",
+            Slot::Metal => "Buckles, plates and hardware.",
+            Slot::Glow => "Kit lights, on or off, and their colour.",
+            Slot::Glass => "The visor's tint.",
+            Slot::Wear => "Fresh from the locker, or seen some runs.",
+        },
+        Row::Preset => "Three looks to keep. Changes save to this one.",
+        _ => "",
+    }
+}
+
+/// The wardrobe: the character in the middle on a yellow halftone spotlight, slot tiles in a grid
+/// either side, a bubble on the selected one, and RANDOMISE and BACK at the bottom right.
+#[allow(clippy::too_many_arguments)]
+fn spotlight(p: &mut ChildSpawnerCommands, t: &ComicTheme, rows: &[Row], cursor: usize, outfit: Option<&OutfitDef>, characters: Option<&Characters>, preset: usize, spot: Option<impl Bundle>) {
+    p.spawn((Node { position_type: PositionType::Absolute, left: Val::Percent(30.0), width: Val::Percent(40.0), top: Val::Percent(8.0), height: Val::Percent(80.0), border_radius: BorderRadius::all(Val::Percent(50.0)), overflow: Overflow::clip(), ..default() }, ZIndex(-1)))
+        .with_children(|s| {
+            if let Some(spot) = spot {
+                s.spawn(spot);
+            }
+        });
+    let tiles: Vec<Row> = selectable(rows).filter(|r| matches!(r, Row::Preset | Row::Look(_))).collect();
+    let (left, _) = wardrobe_columns(tiles.len());
+    let grid = |right: bool| Node {
+        position_type: PositionType::Absolute,
+        left: if right { Val::Auto } else { Val::Px(LEFT - 40.0) },
+        right: if right { Val::Px(LEFT - 40.0) } else { Val::Auto },
+        top: Val::Px(150.0),
+        display: Display::Grid,
+        grid_template_columns: RepeatedGridTrack::px(2, 150.0),
+        row_gap: Val::Px(10.0),
+        column_gap: Val::Px(8.0),
+        ..default()
+    };
+    for (right, range) in [(false, 0..left), (true, left..tiles.len())] {
+        p.spawn(grid(right)).with_children(|g| {
+            for i in range {
+                tile(g, t, tiles[i], i, i == cursor, outfit, characters, preset);
+            }
+        });
+    }
+    // The bubble beside the selected tile: right of the left grid, left of the right grid.
+    if let Some(&row) = tiles.get(cursor) {
+        let (right, n) = if cursor < left { (false, cursor) } else { (true, cursor - left) };
+        let top = 150.0 + (n / 2) as f32 * 76.0;
+        let node = if right { Node { width: Val::Px(240.0), ..abs(None, Some(LEFT - 40.0 + 316.0), Some(top), None) } } else { Node { width: Val::Px(240.0), ..abs(Some(LEFT - 40.0 + 316.0), None, Some(top), None) } };
+        p.spawn(node).with_children(|b| {
+            bubble(b, t, slot_blurb(row), if right { Tail::Right } else { Tail::Left });
+        });
+    }
+    p.spawn(Node { align_items: AlignItems::FlexEnd, ..abs(None, Some(LEFT - 40.0), None, Some(70.0)) }).with_children(|list| {
+        let mut index = tiles.len();
+        for row in rows {
+            if let Row::Action(label, _) = row {
+                action_row(list, t, label, index, cursor == index, 30.0);
+                index += 1;
+            }
+        }
+    });
+}
+
+/// Where each slot's callout sits on the bench, as a fraction of the screen, in `SLOTS` order.
+pub(super) const CALLOUTS: [(f32, f32); 4] = [(0.50, 0.20), (0.20, 0.50), (0.50, 0.78), (0.80, 0.50)];
+const CALLOUT_W: f32 = 230.0;
+
+/// The quartermaster's bench (The Division / Delta Force): the gun turning in the middle, a
+/// callout per slot on an ink leader line, the weapon list down the left, and the selected slot's
+/// parts as cards along the bottom.
+#[allow(clippy::too_many_arguments)]
+fn bench(p: &mut ChildSpawnerCommands, t: &ComicTheme, rows: &[Row], cursor: usize, kind: crate::weapon::WeaponKind, loadout: &Loadout, save: Option<&Save>, note: &str, screen: Vec2) {
+    let money = crate::comic::widgets::money;
+    let mut index_of = std::collections::HashMap::new();
+    for (i, row) in selectable(rows).enumerate() {
+        index_of.insert(format!("{row:?}"), i);
+    }
+    let at = |row: Row| index_of.get(&format!("{row:?}")).copied();
+    let cursor_slot = match selectable(rows).nth(cursor) {
+        Some(Row::Slot(s) | Row::Tune(s)) => Some(s),
+        _ => None,
+    };
+
+    // Left: the picker, then every gun on sale with OWNED or its price.
+    p.spawn(Node { width: Val::Px(300.0), row_gap: Val::Px(2.0), ..abs(Some(LEFT - 40.0), None, Some(150.0), None) }).with_children(|list| {
+        if let Some(i) = at(Row::Weapon) {
+            let note = (!quartermaster::owns_weapon(save, kind)).then_some("ENTER / A buys it");
+            value_row(list, t, "WEAPON", kind.name(), None, note, i, i == cursor, true);
+        }
+        list.spawn(Node { height: Val::Px(8.0), ..default() });
+        for w in crate::weapon::WEAPONS {
+            let owned = quartermaster::owns_weapon(save, w);
+            let Some(cost) = quartermaster::price(w).or(owned.then_some(0)) else { continue };
+            let here = w == kind;
+            list.spawn((Node { justify_content: JustifyContent::SpaceBetween, padding: UiRect::axes(Val::Px(10.0), Val::Px(1.0)), border: UiRect::all(Val::Px(if here { 2.0 } else { 0.0 })), ..default() }, BorderColor::all(t.ink), BackgroundColor(if here { t.yellow } else { t.paper.with_alpha(0.85) })))
+                .with_children(|r| {
+                    r.spawn(display_text(w.name(), 17.0, t.ink, t));
+                    r.spawn(body_text(if owned { "OWNED".to_string() } else { money(cost) }, 15.0, if owned { t.muted } else { t.red }, true, t));
+                });
+        }
+        if !note.is_empty() {
+            list.spawn((body_text(note, 17.0, t.red, true, t), Node { margin: UiRect::top(Val::Px(10.0)), ..default() }));
+        }
+    });
+
+    if !gunsmith::customizable(kind) {
+        return;
+    }
+    // Leader lines first, so the callouts sit on top of their ends.
+    let centre = screen * 0.5;
+    for &(x, y) in &CALLOUTS {
+        let from = Vec2::new(x, y) * screen;
+        let to = centre + (from - centre) * 0.22;
+        let (mid, len) = ((from + to) * 0.5, from.distance(to));
+        let angle = (to - from).to_angle();
+        p.spawn((Node { position_type: PositionType::Absolute, left: Val::Px(mid.x - len / 2.0), top: Val::Px(mid.y - 1.5), width: Val::Px(len), height: Val::Px(3.0), ..default() }, BackgroundColor(t.ink), UiTransform::from_rotation(Rot2::radians(angle))));
+        p.spawn((Node { position_type: PositionType::Absolute, left: Val::Px(to.x - 5.0), top: Val::Px(to.y - 5.0), width: Val::Px(10.0), height: Val::Px(10.0), border: UiRect::all(Val::Px(2.0)), ..default() }, BackgroundColor(t.yellow), BorderColor::all(t.ink), UiTransform::from_rotation(Rot2::degrees(45.0))));
+    }
+    for (slot, &(x, y)) in CALLOUTS.iter().enumerate() {
+        let Some(i) = at(Row::Slot(slot)) else { continue };
+        let fitted = loadout.part(kind, slot);
+        let part = &PARTS[slot][fitted];
+        let owned = quartermaster::owns_part(save, slot, fitted);
+        let on = cursor_slot == Some(slot);
+        let pos = Vec2::new(x, y) * screen;
+        let mut card = p.spawn((
+            Button,
+            RowId(i),
+            Node { position_type: PositionType::Absolute, left: Val::Px(pos.x - CALLOUT_W / 2.0), top: Val::Px(pos.y - 34.0), width: Val::Px(CALLOUT_W), flex_direction: FlexDirection::Column, padding: UiRect::axes(Val::Px(10.0), Val::Px(4.0)), border: UiRect::all(Val::Px(t.ink_px)), ..default() },
+            BackgroundColor(if on { t.yellow } else { t.paper }),
+            BorderColor::all(t.ink),
+            BoxShadow(vec![ShadowStyle { color: t.ink, x_offset: Val::Px(t.shadow_px), y_offset: Val::Px(t.shadow_px), spread_radius: Val::ZERO, blur_radius: Val::ZERO }]),
+        ));
+        if on {
+            card.insert(UiTransform::from_rotation(Rot2::degrees(-2.0)));
+        }
+        let t2 = t.clone();
+        let tune = at(Row::Tune(slot)).map(|ti| (ti, loadout.tuning(kind, slot)));
+        card.with_children(|c| {
+            c.spawn(Node { justify_content: JustifyContent::SpaceBetween, align_items: AlignItems::Center, ..default() }).with_children(|r| {
+                r.spawn(body_text(SLOTS[slot], 14.0, t2.muted, true, &t2));
+                if !owned {
+                    r.spawn((body_text("TRYING ON", 12.0, t2.paper, true, &t2), Node { padding: UiRect::axes(Val::Px(5.0), Val::Px(0.0)), ..default() }, BackgroundColor(t2.red)));
+                }
+            });
+            c.spawn(Node { justify_content: JustifyContent::SpaceBetween, align_items: AlignItems::Center, column_gap: Val::Px(6.0), ..default() }).with_children(|r| {
+                arrow(r, &t2, i, -1);
+                r.spawn(display_text(part.name, 22.0, t2.ink, &t2));
+                arrow(r, &t2, i, 1);
+            });
+            c.spawn(body_text(if owned { "OWNED".to_string() } else { money(quartermaster::PART_PRICES[slot][fitted]) }, 14.0, if owned { t2.muted } else { t2.red }, true, &t2));
+            if let Some((ti, v)) = tune {
+                let (l, r) = TUNES[slot];
+                let fill = (v + TUNE_MAX) as f32 / (2 * TUNE_MAX) as f32;
+                c.spawn((Button, RowId(ti), Node { flex_direction: FlexDirection::Column, margin: UiRect::top(Val::Px(4.0)), padding: UiRect::all(Val::Px(3.0)), border: UiRect::all(Val::Px(if ti == cursor { 2.0 } else { 0.0 })), ..default() }, BorderColor::all(t2.ink), BackgroundColor(if ti == cursor { t2.paper } else { Color::NONE })))
+                    .with_children(|tr| {
+                        tr.spawn(body_text(format!("TUNE  {l} / {r}  {v:+}"), 13.0, t2.ink, true, &t2));
+                        tr.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(6.0), ..default() }).with_children(|b| {
+                            arrow(b, &t2, ti, -1);
+                            b.spawn((Node { flex_grow: 1.0, height: Val::Px(12.0), border: UiRect::all(Val::Px(2.0)), ..default() }, BorderColor::all(t2.ink), BackgroundColor(t2.paper)))
+                                .with_child((Node { width: Val::Percent(fill * 100.0), height: Val::Percent(100.0), ..default() }, BackgroundColor(t2.red)));
+                            arrow(b, &t2, ti, 1);
+                        });
+                    });
+            }
+        });
+    }
+
+    // The slot under the cursor: its three parts as cards along the bottom.
+    let Some(slot) = cursor_slot else { return };
+    let fitted = loadout.part(kind, slot);
+    p.spawn(Node { position_type: PositionType::Absolute, left: Val::Px(0.0), right: Val::Px(0.0), bottom: Val::Px(70.0), justify_content: JustifyContent::Center, column_gap: Val::Px(14.0), ..default() }).with_children(|row| {
+        for (n, part) in PARTS[slot].iter().enumerate() {
+            let owned = quartermaster::owns_part(save, slot, n);
+            let t2 = t.clone();
+            row.spawn(Node { width: Val::Px(220.0), ..default() }).with_children(|w| {
+                panel(w, t, if n == fitted { t.yellow } else { t.paper }, if n == fitted { -1.5 } else { 0.0 }, move |c| {
+                    c.spawn(display_text(part.name, 20.0, t2.ink, &t2));
+                    c.spawn(body_text(if owned { "OWNED".to_string() } else { money(quartermaster::PART_PRICES[slot][n]) }, 14.0, if owned { t2.muted } else { t2.red }, true, &t2));
+                    c.spawn(body_text(part.desc, 14.0, t2.ink, false, &t2));
+                });
+            });
+        }
     });
 }
 
@@ -360,6 +543,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn wardrobe_columns_split_left_heavy() {
+        assert_eq!(wardrobe_columns(15), (8, 7));
+        assert_eq!(wardrobe_columns(14), (7, 7));
+        assert_eq!(wardrobe_columns(0), (0, 0));
+    }
+
+    #[test]
+    fn every_wardrobe_slot_has_a_blurb() {
+        assert!(!slot_blurb(Row::Preset).is_empty());
+        for i in 0..wardrobe::SLOTS.len() {
+            assert!(!slot_blurb(Row::Look(i)).is_empty(), "{}", wardrobe::SLOTS[i].label());
+        }
+    }
+
+    #[test]
+    fn callouts_stay_on_screen_and_apart() {
+        for (i, &(x, y)) in CALLOUTS.iter().enumerate() {
+            assert!((0.1..=0.9).contains(&x) && (0.1..=0.9).contains(&y), "{}", SLOTS[i]);
+            for &(x2, y2) in &CALLOUTS[i + 1..] {
+                assert!(Vec2::new(x, y).distance(Vec2::new(x2, y2)) >= 0.2);
+            }
+        }
+    }
+
+    #[test]
     fn every_main_action_has_a_blurb() {
         for screen in [Screen::Title, Screen::Paused] {
             for row in selectable(&rows(Panel::Main, screen, [false; 4], false)) {
@@ -372,7 +580,7 @@ mod tests {
 
     #[test]
     fn every_panel_has_hints_and_a_way_back() {
-        for panel in [Panel::Main, Panel::Maps, Panel::Settings, Panel::Controls, Panel::Quartermaster, Panel::Wardrobe] {
+        for panel in [Panel::Main, Panel::Maps, Panel::Settings, Panel::Controls, Panel::Quartermaster, Panel::Wardrobe, Panel::Starmap, Panel::Ship, Panel::Contracts] {
             let h = hints(panel, Screen::Paused);
             assert!(!h.is_empty(), "{panel:?}");
             assert!(h.iter().all(|(pad, key, what)| !pad.is_empty() && !key.is_empty() && !what.is_empty()), "{panel:?}");
