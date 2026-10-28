@@ -24,6 +24,8 @@
 - Ruling: SHIP shows the ship, its engine tune level, heat and where it is parked. Boost and the flight tank wait for PR #40, like the flight HUD. Cost if wrong: one more line to add after #40 merges.
 - Ruling: the screens are named STARMAP, SHIP and CONTRACTS, so each panel's name is its opener row (the existing opener test).
 
+- Ruling (found in the render): no yellow halftone spotlight behind the character. UI always draws over the 3D scene, so the dots covered the body; the dressing room's own lighting stays. Cost if wrong: the wardrobe is less comic-page than the mockup.
+
 ## Review Focus
 
 1. A gun with no attachment slots (rocket launcher) on the bench should show no callouts and no part cards, just the picker, stats and BACK. Owned by Task 1.

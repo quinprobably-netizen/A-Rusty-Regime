@@ -615,8 +615,9 @@ fn dev_start(world: &mut World) {
 }
 
 fn spawn_hud(mut commands: Commands, theme: Res<crate::comic::ComicTheme>) {
-    // Below the objective caption, in the comic HUD's shadowed paper text.
+    // Below the objective caption, in the comic HUD's shadowed paper text; it hides with the HUD.
     commands.spawn((
+        crate::hud::HudRoot,
         Node { position_type: PositionType::Absolute, top: Val::Px(110.0), left: Val::Px(24.0), ..default() },
         children![(FlightText, crate::comic::body_text("", 16.0, theme.paper, true, &theme), TextShadow { offset: Vec2::splat(2.0), color: theme.ink })],
     ));

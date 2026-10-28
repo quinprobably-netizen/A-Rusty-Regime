@@ -95,7 +95,6 @@ pub(super) fn rebuild(
     };
     let mut halftones = halftones;
     let dots = halftones.as_mut().map(|h| halftone_layer(h, t.paper, t.red.with_alpha(0.16), 10.0, 2.0));
-    let spot = halftones.as_mut().map(|h| halftone_layer(h, t.yellow.with_alpha(0.0), t.yellow, 9.0, 3.0));
     // The paused list on the solar level runs to nine rows, so its lettering shrinks to fit.
     let (main_px, row_h) = if selectable(&rows).count() > 6 { (34.0, 50.0) } else { (44.0, 64.0) };
     let screen_px = window.map_or(Vec2::new(1280.0, 720.0), |w| w.size());
@@ -206,7 +205,7 @@ pub(super) fn rebuild(
         }
         if menu.panel == Panel::Wardrobe {
             let preset = save.as_ref().map_or(0, |s| s.preset);
-            spotlight(p, &t, &rows, menu.cursor, outfit.as_ref(), closet.characters.as_deref(), preset, spot);
+            spotlight(p, &t, &rows, menu.cursor, outfit.as_ref(), closet.characters.as_deref(), preset);
         }
 
         // The gun's stat bars, right: owned setup (base) against what's fitted now.
@@ -266,16 +265,10 @@ pub(super) fn slot_blurb(row: Row) -> &'static str {
     }
 }
 
-/// The wardrobe: the character in the middle on a yellow halftone spotlight, slot tiles in a grid
+/// The wardrobe: the character in the middle of the dressing room, slot tiles in a grid
 /// either side, a bubble on the selected one, and RANDOMISE and BACK at the bottom right.
 #[allow(clippy::too_many_arguments)]
-fn spotlight(p: &mut ChildSpawnerCommands, t: &ComicTheme, rows: &[Row], cursor: usize, outfit: Option<&OutfitDef>, characters: Option<&Characters>, preset: usize, spot: Option<impl Bundle>) {
-    p.spawn((Node { position_type: PositionType::Absolute, left: Val::Percent(30.0), width: Val::Percent(40.0), top: Val::Percent(8.0), height: Val::Percent(80.0), border_radius: BorderRadius::all(Val::Percent(50.0)), overflow: Overflow::clip(), ..default() }, ZIndex(-1)))
-        .with_children(|s| {
-            if let Some(spot) = spot {
-                s.spawn(spot);
-            }
-        });
+fn spotlight(p: &mut ChildSpawnerCommands, t: &ComicTheme, rows: &[Row], cursor: usize, outfit: Option<&OutfitDef>, characters: Option<&Characters>, preset: usize) {
     let tiles: Vec<Row> = selectable(rows).filter(|r| matches!(r, Row::Preset | Row::Look(_))).collect();
     let (left, _) = wardrobe_columns(tiles.len());
     let grid = |right: bool| Node {
@@ -317,7 +310,9 @@ fn spotlight(p: &mut ChildSpawnerCommands, t: &ComicTheme, rows: &[Row], cursor:
 }
 
 /// Where each slot's callout sits on the bench, as a fraction of the screen, in `SLOTS` order.
-pub(super) const CALLOUTS: [(f32, f32); 4] = [(0.50, 0.20), (0.20, 0.50), (0.50, 0.78), (0.80, 0.50)];
+pub(super) const CALLOUTS: [(f32, f32); 4] = [(0.50, 0.22), (0.36, 0.46), (0.80, 0.76), (0.84, 0.50)];
+/// Where the showcased gun sits on screen, as a fraction: the leader lines end near it.
+const GUN_AT: (f32, f32) = (0.56, 0.60);
 const CALLOUT_W: f32 = 230.0;
 
 /// The quartermaster's bench (The Division / Delta Force): the gun turning in the middle, a
@@ -362,7 +357,7 @@ fn bench(p: &mut ChildSpawnerCommands, t: &ComicTheme, rows: &[Row], cursor: usi
         return;
     }
     // Leader lines first, so the callouts sit on top of their ends.
-    let centre = screen * 0.5;
+    let centre = Vec2::new(GUN_AT.0, GUN_AT.1) * screen;
     for &(x, y) in &CALLOUTS {
         let from = Vec2::new(x, y) * screen;
         let to = centre + (from - centre) * 0.22;
@@ -424,7 +419,7 @@ fn bench(p: &mut ChildSpawnerCommands, t: &ComicTheme, rows: &[Row], cursor: usi
     // The slot under the cursor: its three parts as cards along the bottom.
     let Some(slot) = cursor_slot else { return };
     let fitted = loadout.part(kind, slot);
-    p.spawn(Node { position_type: PositionType::Absolute, left: Val::Px(0.0), right: Val::Px(0.0), bottom: Val::Px(70.0), justify_content: JustifyContent::Center, column_gap: Val::Px(14.0), ..default() }).with_children(|row| {
+    p.spawn(Node { position_type: PositionType::Absolute, left: Val::Px(LEFT - 40.0), bottom: Val::Px(70.0), column_gap: Val::Px(14.0), ..default() }).with_children(|row| {
         for (n, part) in PARTS[slot].iter().enumerate() {
             let owned = quartermaster::owns_part(save, slot, n);
             let t2 = t.clone();

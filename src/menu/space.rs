@@ -97,8 +97,7 @@ fn starmap(p: &mut ChildSpawnerCommands, t: &ComicTheme, space: &Space) {
             };
             tag(disc, x, at.y - 10.0, body.name.to_uppercase(), t.ink, t.paper);
             if *id == solar.anchor {
-                tag(disc, x, at.y + 8.0, "YOU".into(), t.red, t.paper);
-                x += 36.0;
+                tag(disc, at.x - 46.0, at.y - 10.0, "YOU".into(), t.red, t.paper);
             }
             if let Some(bases) = &space.bases {
                 for (n, base) in bases.base.iter().filter(|b| b.body == *id).enumerate() {

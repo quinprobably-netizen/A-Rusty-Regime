@@ -26,5 +26,6 @@ fn fragment(in: UiVertexOutput) -> @location(0) vec4<f32> {
     if material.params.w > 0.0 {
         cover *= smoothstep(0.55, 0.85, length(in.uv - 0.5) * 2.0);
     }
-    return vec4<f32>(mix(material.fill.rgb, material.dot.rgb, cover), material.fill.a);
+    // Dots stay solid over a see-through fill.
+    return vec4<f32>(mix(material.fill.rgb, material.dot.rgb, cover), max(material.fill.a, cover));
 }
