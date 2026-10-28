@@ -336,8 +336,9 @@ same path and speed, its ground streams in, and your old world shrinks to a coar
 the sky. The top left reads where you are, your height, speed and gravity, and how far
 every other world is. `RUST_REGIME_AT=<world>,<altitude>[,<speed>]` starts you flying over
 any world, for screenshots (`home`, `ash`, `bastion`, `cinder`, `frost`), or over a base.
-`RUST_REGIME_NEAR=1` prints a `NEAR` line the first time a mesh over 8 m comes within 400 m of the
-camera (name, parents, size, colour), to name a stray box seen in flight.
+`RUST_REGIME_NEAR=1` prints a `NEAR` line the first time a boxy mesh looms over the camera (over a
+degree across, within 50 km: name, parents, size, colour) and a `STARS` line if the star shell drifts
+off the camera, to name a stray box seen in flight.
 
 Not in yet: the island's sites, soldiers and missions on Haven, swimming and buoyancy
 (the seas are only drawn) and Coriolis drift.
