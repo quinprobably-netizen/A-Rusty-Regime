@@ -4,8 +4,10 @@ cross, an apse, buttresses with gold ribs, red slit windows, bone statues flanki
 braziers at the great door. Inside: bone columns, pews either side of a red aisle, a font, the
 dais with the altar, candelabra and the throne, censers swinging over the aisle."""
 
-from basekit import Base, band, box, column, door_frame, hall, room, room_boxes, slab, slope, stair, window
-from kit import block, cyl, label, prism, sphere, stripe
+import math
+
+from basekit import ring, Base, band, box, column, door_frame, hall, room, room_boxes, slab, slope, stair, window
+from kit import block, chain, cyl, label, prism, sphere, stripe
 from interior import altar, candelabra, censer, font, lamp, pew, turn, wall_panels
 
 FLOOR = 1.2
@@ -62,8 +64,8 @@ def build():
     # The great door: gold frame, a bone tympanum with the name, braziers, and statues on
     # plinths flanking the steps.
     door_frame(b, (0, -13.0, FLOOR), 4.0, 7.0, material=gold, depth=0.9, thick=0.35)
-    b.add(block("tympanum", (0, -13.3, FLOOR + 8.3), (5.2, 0.3, 1.6), bone, bevel=0.03))
-    b.add(turn(label("THE ALGORITHM PROVIDES", (0, -13.46, FLOOR + 8.3), 0.32, gold, side=-1, depth=0.02), (0, -13.46, FLOOR + 8.3), 90))
+    b.add(block("tympanum", (0, -13.3, FLOOR + 8.3), (6.4, 0.3, 1.6), bone, bevel=0.03))
+    b.add(turn(label("THE ALGORITHM PROVIDES", (0, -13.46, FLOOR + 8.3), 0.4, gold, side=-1, depth=0.03), (0, -13.46, FLOOR + 8.3), 90))
     for sx in (-1, 1):
         b.add(cyl("brazier", (sx * 3.2, -14.2, FLOOR), (sx * 3.2, -14.2, FLOOR + 1.0), 0.12, gold, segs=10, bevel=0))
         b.add(cyl("bowl", (sx * 3.2, -14.2, FLOOR + 1.0), (sx * 3.2, -14.2, FLOOR + 1.35), 0.25, gold, r1=0.45, segs=14, bevel=0.01))
@@ -104,8 +106,81 @@ def build():
         b.add(block("chapelaltar", (sx * 12.5, 6.0, FLOOR + 0.5), (1.0, 2.0, 1.0), bone, bevel=0.03))
         candelabra(b, (sx * 11.5, 4.5, FLOOR), arms=3, h=1.3)
         candelabra(b, (sx * 11.5, 7.5, FLOOR), arms=3, h=1.3)
+    detail(b)
     chantry(b)
     return b
+
+
+def detail(b):
+    """The second pass: a rose window and a clock on the front, gargoyles and spikes on the
+    buttresses, a stepped balustrade, crockets on the ridge; inside, vault ribs, banners, choir
+    stalls, votive stands and gilt lines down the runner."""
+    # The rose window over the great door: a gold ring, eight spokes, an inner ring and red glass.
+    fy = -13.06
+    zc = FLOOR + 11.3
+    b.add(cyl("rosepane", (0, fy + 0.04, zc), (0, fy, zc), 1.5, "red_glass", segs=24, bevel=0), "glass")
+    b.add(ring("rose", (0, fy - 0.02, zc), (0, 1, 0), 1.75, 1.45, 0.08, gold, segs=24))
+    b.add(ring("roseinner", (0, fy - 0.02, zc), (0, 1, 0), 0.55, 0.42, 0.08, gold, segs=16))
+    for i in range(8):
+        a = math.radians(i * 45 + 22.5)
+        b.add(cyl("spoke", (0.5 * math.cos(a), fy - 0.03, zc + 0.5 * math.sin(a)), (1.5 * math.cos(a), fy - 0.03, zc + 1.5 * math.sin(a)), 0.05, gold, segs=6, bevel=0))
+        b.add(sphere("roseknob", (1.62 * math.cos(a), fy - 0.03, zc + 1.62 * math.sin(a)), 0.1, gold, segs=8))
+    # A clock on the tower: bone face, gold rim, twelve ticks and two hands.
+    zc, fy = 17.2, -13.06
+    b.add(cyl("clockface", (0, fy + 0.02, zc), (0, fy - 0.03, zc), 1.15, bone, segs=24, bevel=0.01))
+    b.add(ring("clockrim", (0, fy - 0.03, zc), (0, 1, 0), 1.3, 1.1, 0.1, gold, segs=24))
+    for i in range(12):
+        a = math.radians(i * 30)
+        b.add(block("tick", (0.95 * math.sin(a), fy - 0.05, zc + 0.95 * math.cos(a)), (0.06, 0.02, 0.18), "black", bevel=0))
+    b.add(block("hourhand", (0.0, fy - 0.07, zc + 0.3), (0.08, 0.02, 0.6), "black", bevel=0))
+    b.add(block("minhand", (0.35, fy - 0.07, zc), (0.7, 0.02, 0.06), "black", bevel=0))
+    b.add(sphere("clockhub", (0, fy - 0.08, zc), 0.08, gold, segs=8))
+    # Buttresses: a gargoyle spouting from each, a gold spike on each cap.
+    for y in (-10.0, -4.0, 12.0, 16.0):
+        for sx in (-1, 1):
+            x = sx * 7.7
+            b.add(block("gargbody", (x + sx * 0.9, y, 8.6), (0.9, 0.35, 0.35), bone, bevel=0.06, segs=3))
+            b.add(sphere("garghead", (x + sx * 1.5, y, 8.65), 0.26, bone, segs=10))
+            b.add(block("gargwing", (x + sx * 0.5, y, 9.05), (0.2, 0.9, 0.5), bone, bevel=0.03))
+            b.add(cyl("gargjaw", (x + sx * 1.6, y, 8.55), (x + sx * 1.85, y, 8.5), 0.1, "black", r1=0.04, segs=6, bevel=0))
+            b.add(cyl("spike", (sx * 7.5, y, 10.25), (sx * 7.5, y, 11.6), 0.2, gold, r1=0.02, segs=8, bevel=0))
+    # The steps get a stepped balustrade with a gold ball at the foot; the ridge gets crockets.
+    for sx in (-1, 1):
+        for i in range(4):
+            b.add(block("baluster", (sx * 4.2, -15.7 + 0.6 * i, 0.3 * (i + 1) + 0.4), (0.3, 0.6, 0.8), bone, bevel=0.03))
+        b.add(sphere("newel", (sx * 4.2, -15.7, 1.3), 0.2, gold, segs=10))
+    for i in range(14):
+        y = -11.5 + i * 2.1
+        b.add(cyl("crocket", (0, y, 18.5), (0, y, 19.1), 0.12, gold, r1=0.02, segs=6, bevel=0))
+    # Inside: gold-ribbed vault arches between the columns, with a boss at the crown.
+    for y in (-8.0, -4.0, 0.0, 4.0, 8.0, 12.0):
+        for sx in (-1, 1):
+            b.add(cyl("rib", (sx * 5.6, y, CEIL - 1.6), (sx * 2.6, y, CEIL - 0.45), 0.13, gold, segs=8, bevel=0))
+            b.add(cyl("rib", (sx * 2.6, y, CEIL - 0.45), (0, y, CEIL - 0.2), 0.13, gold, segs=8, bevel=0))
+            b.add(block("corbel", (sx * 5.4, y, CEIL - 1.9), (0.5, 0.5, 0.4), bone, bevel=0.04, taper=(0.4, 0.4)))
+        b.add(sphere("boss", (0, y, CEIL - 0.2), 0.22, gold, segs=10))
+    # Banners down the nave walls between the windows, red with a gold sunburst.
+    for y in (-10.0, -6.0, -2.0, 6.0, 10.0):
+        for sx in (-1, 1):
+            x = sx * 6.45
+            b.add(block("banner", (x, y, FLOOR + 7.2), (0.04, 1.3, 4.0), "red", bevel=0.01))
+            b.add(block("bannerrod", (x, y, FLOOR + 9.3), (0.07, 1.6, 0.07), gold, bevel=0))
+            b.add(block("bannerfringe", (x, y, FLOOR + 5.15), (0.05, 1.3, 0.1), gold, bevel=0))
+            b.add(ring("bannersun", (x - sx * 0.03, y, FLOOR + 7.4), (1, 0, 0), 0.38, 0.3, 0.02, gold, segs=14))
+            b.add(block("bannerbar", (x - sx * 0.03, y, FLOOR + 6.7), (0.02, 0.1, 0.9), gold, bevel=0))
+    # Choir stalls either side of the dais, votive stands by the door, gilt lines along the runner.
+    for sx in (-1, 1):
+        x = sx * 3.6
+        b.add(block("stallseat", (x, 13.2, FLOOR + 0.55), (0.6, 2.6, 0.12), "leather", bevel=0.02))
+        b.add(block("stallbase", (x, 13.2, FLOOR + 0.3), (0.6, 2.6, 0.5), bone, bevel=0.02))
+        b.add(block("stallback", (x + sx * 0.3, 13.2, FLOOR + 1.3), (0.1, 2.6, 1.4), bone, bevel=0.02))
+        b.add(block("stallrail", (x + sx * 0.3, 13.2, FLOOR + 2.05), (0.16, 2.7, 0.1), gold, bevel=0.01))
+        for y in (11.95, 14.45):
+            b.add(block("stallpost", (x + sx * 0.3, y, FLOOR + 1.1), (0.14, 0.14, 2.2), gold, bevel=0.01))
+        b.add(block("votive", (sx * 4.9, -6.5, FLOOR + 0.45), (0.5, 1.5, 0.9), bone, bevel=0.03))
+        for i in range(5):
+            b.add(sphere("votiveflame", (sx * 4.9, -7.0 + i * 0.25, FLOOR + 0.98), 0.07, "gold_light", segs=6), "lights")
+        b.add(stripe("gilt", (sx * 1.25, 0.5, FLOOR + 0.05), (0.06, 24.0, 0.02), gold))
 
 
 CHANTRY = ((-12.5, -19.5), (9.0, 5.0, 5.5))
@@ -188,6 +263,8 @@ SPEC = {
         box("dais", (0, 13.0, FLOOR + 0.15), (8.0, 5.0, 0.3)),
         box("altar", (0, 13.5, FLOOR + 0.85), (2.4, 1.0, 1.1)),
         box("font", (0, -10.5, FLOOR + 0.5), (0.8, 0.8, 1.0)),
+        box("stall", (-3.6, 13.2, FLOOR + 0.6), (0.7, 2.6, 1.2)),
+        box("stall", (3.6, 13.2, FLOOR + 0.6), (0.7, 2.6, 1.2)),
         box("roof slope", (-3.8, 2.0, 16.4), (8.6, 30.0, 0.3), (0, -27.8, 0)),
         box("roof slope", (3.8, 2.0, 16.4), (8.6, 30.0, 0.3), (0, 27.8, 0)),
         box("tower", (0, -10.0, 19.7), (6.0, 6.0, 10.0)),

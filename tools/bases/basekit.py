@@ -12,11 +12,11 @@ import math
 import os
 
 import kit  # the ship kit: tools/ships is on sys.path
-from kit import block, cyl, join, sphere, wk
+from kit import block, cyl, join, sphere, tube, wk
 from interior import grating
 from mathutils import Vector
 
-TRIS_MAX = 90000
+TRIS_MAX = 115000
 TEX = 2048
 
 wk.PALETTE.update({
@@ -27,6 +27,13 @@ wk.PALETTE.update({
     "flood": ((1.0, 0.98, 0.92), (1.0, 0.98, 0.92), 0.0, 0.3, 0.0, 8.0),
     "sand": ((0.55, 0.47, 0.33), (0.68, 0.6, 0.45), 0.0, 0.95, 0.3, 0),
 })
+
+
+def ring(name, c, axis, r_out, r_in, width, material, segs=16):
+    """A flat ring with sharp edges: the ship kit's `ring` bevels every edge, which is dear at the
+    dozens of loops a coil of wire or a stack of tyres takes."""
+    a = Vector(axis).normalized()
+    return tube(name, Vector(c) - a * width / 2, Vector(c) + a * width / 2, r_out, r_in, material, segs, bevel=0)
 
 
 class Base(kit.Ship):
