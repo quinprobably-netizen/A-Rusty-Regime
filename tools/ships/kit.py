@@ -59,7 +59,10 @@ wk.PALETTE.update({
     "deserter_pale": srgb("#F0EEE6", roughness=0.45, lighten=0.85),
     "deserter_orange": srgb("#D97757", roughness=0.5),
     "deserter_tan": srgb("#D4A27F", roughness=0.85, wear=0.3),
+    # See-through cockpit glass for the small solid fighters (the big ships' "glass" stays opaque).
+    "canopy": ((0.05, 0.11, 0.15), (0.05, 0.11, 0.15), 0.0, 0.05, 0.0, 0),
 })
+CANOPY_ALPHA = 0.4
 
 
 class Ship:
@@ -105,7 +108,11 @@ class Ship:
         self.objects = objs
         if bake:
             wk.TEX = 1024
+            wk.DEVICE, used = _bake_device()
+            print(f"baking {self.id} on {used}")
             wk.bake_wear(self, objs, scale=40.0)
+        for m in {m for o in objs for m in o.data.materials if m is not None and m.get("kind") == "canopy"}:
+            _see_through(m)
         os.makedirs(out_dir, exist_ok=True)
         path = os.path.join(out_dir, f"{self.id}.glb")
         bpy.ops.object.select_all(action="DESELECT")
@@ -120,7 +127,80 @@ class Ship:
         return path
 
 
+def _bake_device():
+    """("GPU", names) when Cycles finds a GPU (ONEAPI for Q's Arc first, then OPTIX, CUDA, HIP,
+    METAL), else ("CPU", "CPU"). Never fails: a missing runtime just means the CPU."""
+    try:
+        prefs = bpy.context.preferences.addons["cycles"].preferences
+    except (KeyError, AttributeError):
+        return "CPU", "CPU"
+    for kind in ("ONEAPI", "OPTIX", "CUDA", "HIP", "METAL"):
+        try:
+            prefs.compute_device_type = kind
+            gpus = [d for d in prefs.get_devices_for_type(kind) if d.type != "CPU"]
+        except (TypeError, AttributeError, RuntimeError):
+            continue
+        if gpus:
+            for d in prefs.devices:
+                d.use = d.type != "CPU"
+            return "GPU", f"GPU ({kind}: {', '.join(d.name for d in gpus)})"
+    try:
+        prefs.compute_device_type = "NONE"
+    except TypeError:
+        pass
+    return "CPU", "CPU"
+
+
+def _see_through(m):
+    """Make a `canopy` material blend at CANOPY_ALPHA, so the glTF carries alphaMode BLEND."""
+    bsdf = next(n for n in m.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+    bsdf.inputs["Alpha"].default_value = CANOPY_ALPHA
+    if hasattr(m, "surface_render_method"):
+        m.surface_render_method = "BLENDED"
+    if hasattr(m, "blend_method"):
+        m.blend_method = "BLEND"
+
+
 # ------------------------------------------------------------------------------------ hull bits
+
+def loft(name, sections, material, sides=8, phase=0.0, bevel=0.0, segs=2, cap=True):
+    """A hull skinned through cross-sections along Y. Each section is (y, x, z, rx, rz): a
+    `sides`-gon of half-width rx and half-height rz centred at (x, z), its first corner `phase`
+    degrees up from +X. A section with rx and rz both 0 closes the hull to a point."""
+    import bmesh
+    bm = bmesh.new()
+    rings = []
+    for y, cx, cz, rx, rz in sections:
+        if rx <= 1e-6 and rz <= 1e-6:
+            rings.append([bm.verts.new((cx, y, cz))])
+            continue
+        angs = [math.radians(phase) + 2 * math.pi * i / sides for i in range(sides)]
+        rings.append([bm.verts.new((cx + rx * math.cos(a), y, cz + rz * math.sin(a))) for a in angs])
+    for a, b in zip(rings, rings[1:]):
+        if len(a) == 1 and len(b) == 1:
+            continue
+        if len(a) == 1 or len(b) == 1:
+            tip, ring_ = (a[0], b) if len(a) == 1 else (b[0], a)
+            for i in range(sides):
+                bm.faces.new((tip, ring_[i], ring_[(i + 1) % sides]))
+            continue
+        for i in range(sides):
+            j = (i + 1) % sides
+            bm.faces.new((a[i], a[j], b[j], b[i]))
+    if cap:
+        for r in (rings[0], rings[-1]):
+            if len(r) > 1:
+                bm.faces.new(r)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    return wk._obj(name, bm, material, bevel, segs)
+
+
+def rotate(obj, c, axis, deg):
+    """Rotate a part's mesh by `deg` degrees about `axis` ("x", "y" or "z") through the point `c`."""
+    t = Matrix.Translation(Vector(c))
+    obj.data.transform(t @ Matrix.Rotation(math.radians(deg), 4, axis.upper()) @ t.inverted())
+    return obj
+
 
 def plate(name, c, s, material, lines=(), bevel=0.02, depth=0.03, width=0.03):
     """An armour plate: a bevelled block with panel-line grooves. `lines` are (axis, offset) pairs in
@@ -225,9 +305,13 @@ def sphere(name, c, r, material, segs=16):
 
 # -------------------------------------------------------------------------------------- preview
 
-def preview(path, cam, look=(0, 0, 0), lens=35, res=(960, 600)):
-    """A look-dev render of the whole ship under a dark sky."""
+def preview(path, cam, look=(0, 0, 0), lens=35, res=(960, 600), fresh=False):
+    """A look-dev render of the whole ship under a dark sky. `fresh` first clears the camera,
+    lights and ground an earlier preview of the same scene added, so they do not stack."""
     scene = bpy.context.scene
+    if fresh:
+        for o in [o for o in bpy.data.objects if o.get("preview")]:
+            bpy.data.objects.remove(o, do_unlink=True)
     scene.render.engine = "CYCLES"
     scene.cycles.samples = 24
     scene.cycles.use_denoising = False
@@ -238,6 +322,7 @@ def preview(path, cam, look=(0, 0, 0), lens=35, res=(960, 600)):
     cd.clip_start = 0.1
     c = bpy.data.objects.new("cam", cd)
     scene.collection.objects.link(c)
+    c["preview"] = True
     c.location = cam
     c.rotation_euler = (Vector(look) - Vector(cam)).to_track_quat("-Z", "Y").to_euler()
     scene.camera = c
@@ -246,6 +331,7 @@ def preview(path, cam, look=(0, 0, 0), lens=35, res=(960, 600)):
         ld.energy = energy
         lo = bpy.data.objects.new(name, ld)
         lo.rotation_euler = tuple(math.radians(a) for a in rot)
+        lo["preview"] = True
         scene.collection.objects.link(lo)
     # Every `lamp.<n>` empty lights the cabin in the render as it does in the game.
     for e in [o for o in bpy.data.objects if o.type == "EMPTY" and o.name.startswith("lamp.")]:
@@ -255,6 +341,7 @@ def preview(path, cam, look=(0, 0, 0), lens=35, res=(960, 600)):
         ld.shadow_soft_size = 0.15
         lo = bpy.data.objects.new(e.name, ld)
         lo.location = e.matrix_world.translation - Vector((0, 0, 0.05))
+        lo["preview"] = True
         scene.collection.objects.link(lo)
     # A ground plane catches the shadow so the ship reads as sitting on its gear.
     import bmesh
@@ -266,6 +353,7 @@ def preview(path, cam, look=(0, 0, 0), lens=35, res=(960, 600)):
     low = min((o.matrix_world @ Vector(v)).z for o in bpy.data.objects if o.type == "MESH" for v in o.bound_box)
     g = bpy.data.objects.new("ground", me)
     g.location = (0, 0, low)
+    g["preview"] = True
     gm = bpy.data.materials.new("ground")
     gm.use_nodes = True
     gm.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.06, 0.06, 0.065, 1)

@@ -22,7 +22,7 @@ from kit import check, preview  # noqa: E402
 ROOT = os.path.dirname(os.path.dirname(HERE))
 OUT = os.path.join(ROOT, "assets", "models", "ships")
 SHOTS = os.path.join(ROOT, "screenshots", "ships")
-ORDER = ["kestrel", "litany", "mule", "vantage"]
+ORDER = ["kestrel", "litany", "mule", "vantage", "censer", "welder", "sentry", "jackal"]
 
 
 def spec(sid):
@@ -47,8 +47,9 @@ def main():
         if "--preview" in sys.argv:
             os.makedirs(SHOTS, exist_ok=True)
             preview(os.path.join(SHOTS, f"{sid}.png"), **s["view"])
-            if "inside" in s:
-                preview(os.path.join(SHOTS, f"{sid}-inside.png"), **s["inside"])
+            for extra in ("inside", "top"):
+                if extra in s:
+                    preview(os.path.join(SHOTS, f"{sid}-{extra}.png"), **s[extra], fresh=extra == "top")
 
 
 if __name__ == "__main__":
