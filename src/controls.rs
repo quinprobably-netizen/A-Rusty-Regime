@@ -58,6 +58,8 @@ pub enum Action {
     Flashlight,
     Inspect,
     ToggleView,
+    /// Third person: put the camera over the other shoulder.
+    SwapShoulder,
     Respawn,
     Pause,
     // Driving
@@ -106,6 +108,7 @@ impl Action {
             Action::Flashlight => "Flashlight",
             Action::Inspect => "Inspect weapon",
             Action::ToggleView => "First / third person",
+            Action::SwapShoulder => "Swap shoulder (third person)",
             Action::Respawn => "Respawn",
             Action::Pause => "Menu",
             Action::Gas => "Gas",
@@ -241,8 +244,10 @@ pub const BINDINGS: &[Bind] = &[
     key(Foot, Flashlight, K::KeyF),
     pad(Foot, Flashlight, P::DPadUp),
     key(Foot, Inspect, K::KeyV),
-    pad(Foot, Inspect, P::DPadDown),
+    mode(pad(Foot, Inspect, P::DPadDown), Mode::Tap),
+    mode(pad(Foot, SwapShoulder, P::DPadDown), Mode::Hold),
     key(Foot, ToggleView, K::KeyT),
+    key(Foot, SwapShoulder, K::KeyZ),
     mode(pad(Foot, ToggleView, P::RightThumb), Mode::Tap),
     mode(pad(Foot, Knife, P::RightThumb), Mode::Hold),
     key(Foot, Respawn, K::Backspace),

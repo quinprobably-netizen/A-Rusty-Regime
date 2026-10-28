@@ -45,6 +45,8 @@ pub struct PlayerInput {
     pub handbrake: bool,
     /// Flip first / third person (T / R3), latched.
     pub view_pressed: bool,
+    /// Camera to the other shoulder in third person (Z), latched.
+    pub shoulder_pressed: bool,
     /// The ship's stick, -1..1 each, while flying: thrust, lift, roll left.
     pub thrust: f32,
     pub lift: f32,
@@ -57,6 +59,8 @@ pub struct PlayerInput {
     pub stop: bool,
     /// Held: look around instead of steering (Alt / B).
     pub free_look: bool,
+    /// How far the pad's right stick turned the view this frame (yaw, pitch; radians, view-space sign as applied), for aim assist. Zero without a pad.
+    pub pad_look: Vec2,
 }
 
 /// SDL mappings newer than the table gilrs ships: the 8BitDo Ultimate 2 over Bluetooth, USB
@@ -142,7 +146,7 @@ fn radial_deadzone(v: Vec2, dz: f32) -> Vec2 {
 
 /// The mouse and its cursor.
 #[derive(SystemParam)]
-struct Pointer<'w, 's> {
+pub(crate) struct Pointer<'w, 's> {
     buttons: Res<'w, ButtonInput<MouseButton>>,
     motion: Res<'w, AccumulatedMouseMotion>,
     scroll: Res<'w, AccumulatedMouseScroll>,
@@ -162,7 +166,7 @@ fn context(screen: Option<&State<crate::menu::Screen>>, driving: &Query<&crate::
 }
 
 #[allow(clippy::too_many_arguments)]
-fn gather(
+pub(crate) fn gather(
     keys: Res<ButtonInput<KeyCode>>,
     pointer: Pointer,
     gamepads: Query<&Gamepad>,
@@ -196,10 +200,11 @@ fn gather(
 
     // Looking: the mouse while the cursor is locked, and the right stick (every pad drives the
     // same player).
-    // Flying, the right stick is the ship's stick unless the pilot is looking around.
+    // Looking: the mouse while the cursor is locked, and the right stick unless it is flying.
     let invert = if t.invert_y { -1.0 } else { 1.0 };
     let steering = ctx == Ctx::Ship && !held(Action::FreeLook);
     let mut look = Vec2::ZERO;
+    let mut pad_look = Vec2::ZERO;
     if mouse_live {
         look += pointer.motion.delta * t.mouse_sensitivity * Vec2::new(1.0, invert);
     }
@@ -213,11 +218,15 @@ fn gather(
         let curved = r.normalize_or_zero() * r.length().powf(t.stick_look_curve);
         look.x += curved.x * t.stick_yaw_speed * dt;
         look.y -= curved.y * t.stick_pitch_speed * dt * invert;
+        pad_look += Vec2::new(curved.x * t.stick_yaw_speed * dt, -curved.y * t.stick_pitch_speed * dt * invert);
     }
     // Aiming down sights narrows the view (or a scope magnifies it), so the mouse turns it less.
     if let Some(aim) = aim.as_ref() {
-        look *= crate::scope::look_scale(aim.level, t.ads_fov, scoped.as_ref().and_then(|s| s.0));
+        let scale = crate::scope::look_scale(aim.level, t.ads_fov, scoped.as_ref().and_then(|s| s.0));
+        look *= scale;
+        pad_look *= scale;
     }
+    input.pad_look = pad_look;
     view.yaw -= look.x;
     view.pitch = (view.pitch - look.y).clamp(-1.54, 1.54);
 
@@ -243,6 +252,7 @@ fn gather(
     input.ability_pressed |= pressed(Action::Ability);
     input.flashlight_pressed |= pressed(Action::Flashlight);
     input.view_pressed |= pressed(Action::ToggleView);
+    input.shoulder_pressed |= pressed(Action::SwapShoulder);
     input.throttle = state.value(Action::Gas) - state.value(Action::Brake);
     input.handbrake = held(Action::Handbrake);
     input.thrust = state.value(Action::Thrust);

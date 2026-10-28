@@ -2292,6 +2292,67 @@ fn the_knife_cuts_what_is_in_reach_and_nothing_beyond() {
 }
 
 #[test]
+fn a_melee_hit_freezes_the_world_for_a_moment_then_lets_go() {
+    let t = Tuning::default();
+    let mut app = make_app(t.clone());
+    run(&mut app, 0.5);
+    dummy_at(&mut app, controller::SPAWN + Vec3::new(0.0, -1.0, -1.6));
+    select_weapon(&mut app, WeaponKind::Knife);
+    input(&mut app).fire_held = true;
+    let mut slowest: f32 = 1.0;
+    for _ in 0..10 {
+        app.update();
+        slowest = slowest.min(app.world().resource::<Time<Virtual>>().relative_speed());
+    }
+    input(&mut app).fire_held = false;
+    assert!(slowest < 0.5, "slowed on the hit: {slowest}");
+    run(&mut app, 0.3);
+    assert_eq!(app.world().resource::<Time<Virtual>>().relative_speed(), 1.0, "back to full speed");
+}
+
+#[test]
+fn recoil_follows_a_fixed_pattern_that_climbs_then_resets() {
+    use crate::weapon::recoil_pattern;
+    let first = recoil_pattern(1, 0);
+    assert_eq!(first, (1.0, 0.0), "a burst starts straight up");
+    assert_eq!(recoil_pattern(1, 7), recoil_pattern(1, 7), "same every burst");
+    let ceiling = recoil_pattern(1, 60).0;
+    assert!(ceiling > 1.5 && ceiling < 1.7, "climb settles near 1.6: {ceiling}");
+    assert!((1..12).map(|n| recoil_pattern(1, n).0).collect::<Vec<_>>().windows(2).all(|w| w[1] >= w[0]), "climb never falls");
+    assert_ne!(recoil_pattern(1, 6).1, recoil_pattern(2, 6).1, "each gun drifts differently");
+    // In the game a rifle burst kicks harder at the end than at the start, and rests after a pause.
+    let mut app = make_app(Tuning::default());
+    select_weapon(&mut app, WeaponKind::Rifle);
+    input(&mut app).fire_held = true;
+    run(&mut app, 0.5);
+    assert!(app.world().resource::<crate::weapon::Recoil>().streak > 3);
+    input(&mut app).fire_held = false;
+    run(&mut app, 0.6);
+    input(&mut app).fire_held = true;
+    run(&mut app, 0.03);
+    assert!(app.world().resource::<crate::weapon::Recoil>().streak <= 2, "the pattern restarts after a pause");
+}
+
+#[test]
+fn a_hit_on_a_target_is_confirmed_and_throws_sparks() {
+    let mut app = make_app(Tuning::default());
+    app.add_systems(Update, |mut r: MessageReader<crate::weapon::HitConfirm>, mut n: Local<u32>, mut out: ResMut<Confirmed>| {
+        *n += r.read().count() as u32;
+        out.0 = *n;
+    });
+    app.init_resource::<Confirmed>();
+    let dummy = dummy_at(&mut app, controller::SPAWN + Vec3::new(0.0, -1.0, -8.0));
+    select_weapon(&mut app, WeaponKind::Pistol);
+    input(&mut app).fire_pressed = true;
+    run(&mut app, 0.2);
+    assert!(target_health(&mut app, dummy) < 100.0);
+    assert!(app.world().resource::<Confirmed>().0 >= 1, "the hit was confirmed");
+}
+
+#[derive(Resource, Default)]
+struct Confirmed(u32);
+
+#[test]
 fn magazines_run_dry_and_reload() {
     let mut app = make_app(Tuning::default());
     let t = Tuning::default();

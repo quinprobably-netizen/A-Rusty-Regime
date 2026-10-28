@@ -14,7 +14,7 @@ pub struct CameraPlugin;
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_camera)
-            .add_systems(Update, toggle_view.run_if(resource_exists::<crate::input::PlayerInput>))
+            .add_systems(Update, (toggle_view, swap_shoulder).run_if(resource_exists::<crate::input::PlayerInput>))
             .add_systems(PostUpdate, follow.before(TransformSystems::Propagate));
     }
 }
@@ -82,6 +82,13 @@ fn toggle_view(
     }
 }
 
+/// Z puts the third-person camera over the other shoulder.
+fn swap_shoulder(mut input: ResMut<crate::input::PlayerInput>, mut tuning: ResMut<Tuning>) {
+    if std::mem::take(&mut input.shoulder_pressed) {
+        tuning.third_person_shoulder = -tuning.third_person_shoulder;
+    }
+}
+
 /// Carries the gun and the first-person arms: scaled across the view about the camera's axis so
 /// they look drawn through `viewmodel_fov_degrees` while depth stays true (see viewmodel::widen).
 #[derive(Component)]
@@ -134,6 +141,7 @@ fn follow(
     menu: Option<Res<crate::menu::Menu>>,
     real: Res<Time<Real>>,
     spatial: Option<SpatialQuery>,
+    recoil: Option<Res<crate::weapon::Recoil>>,
 ) {
     let (player_entity, p, player_tf, driving) = &mut *player;
     let (mut tf, mut cam, mut projection) = camera.into_inner();
@@ -243,6 +251,16 @@ fn follow(
         tf.translation = eye;
         tf.rotation = Transform::from_translation(eye).looking_at(STUDIO + LOOK + sway, Vec3::Y).rotation;
         cam.roll = 0.0;
+    }
+
+    // Firing shakes the view a little, less when aimed.
+    if !dressing && driving.is_none() && let Some(recoil) = &recoil {
+        let ads = aim.as_ref().map_or(0.0, |a| a.level);
+        let amp = recoil.trauma.powf(1.5) * 0.03 * (1.0 - 0.6 * ads);
+        if amp > 0.0 {
+            let t = real.elapsed_secs() * 38.0;
+            tf.rotation *= Quat::from_euler(EulerRot::YXZ, t.sin() * amp, (t * 1.3 + 2.0).sin() * amp, (t * 0.7 + 5.0).sin() * amp * 0.4);
+        }
     }
 
     if let Projection::Perspective(persp) = &mut *projection {
