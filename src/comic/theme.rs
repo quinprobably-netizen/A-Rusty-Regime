@@ -32,8 +32,9 @@ const fn hex(rgb: u32) -> Color {
     Color::srgb_u8((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
 }
 
-impl Default for ComicTheme {
-    fn default() -> Self {
+impl ComicTheme {
+    /// Look A's tokens with Bevy's default font everywhere (what `FromWorld` starts from).
+    pub fn look_a() -> Self {
         Self {
             ink: hex(0x111111),
             paper: hex(0xF6EDD6),
@@ -59,11 +60,19 @@ pub fn font_or_default(server: &AssetServer, root: &Path, path: &str) -> Handle<
     if root.join(path).is_file() { server.load(path.to_string()) } else { Handle::default() }
 }
 
-pub(super) fn load_fonts(server: Res<AssetServer>, mut theme: ResMut<ComicTheme>) {
-    let root = bevy::asset::io::file::FileAssetReader::get_base_path().join("assets");
-    theme.display = font_or_default(&server, &root, "fonts/Bangers-Regular.ttf");
-    theme.body = font_or_default(&server, &root, "fonts/BarlowCondensed-SemiBold.ttf");
-    theme.body_bold = font_or_default(&server, &root, "fonts/BarlowCondensed-ExtraBold.ttf");
+impl FromWorld for ComicTheme {
+    /// The look-A defaults plus the fonts, loaded here so any plugin can `init_resource` the theme
+    /// without caring which Startup system runs first.
+    fn from_world(world: &mut World) -> Self {
+        let mut theme = Self::look_a();
+        if let Some(server) = world.get_resource::<AssetServer>() {
+            let root = bevy::asset::io::file::FileAssetReader::get_base_path().join("assets");
+            theme.display = font_or_default(server, &root, "fonts/Bangers-Regular.ttf");
+            theme.body = font_or_default(server, &root, "fonts/BarlowCondensed-SemiBold.ttf");
+            theme.body_bold = font_or_default(server, &root, "fonts/BarlowCondensed-ExtraBold.ttf");
+        }
+        theme
+    }
 }
 
 fn styled(s: impl Into<String>, font: &Handle<Font>, px: f32, color: Color) -> (Text, TextFont, TextColor) {
@@ -84,7 +93,7 @@ mod tests {
 
     #[test]
     fn look_a_tokens() {
-        let t = ComicTheme::default();
+        let t = ComicTheme::look_a();
         assert_eq!(t.ink.to_srgba().to_hex(), "#111111");
         assert_eq!(t.paper.to_srgba().to_hex(), "#F6EDD6");
         assert_eq!(t.yellow.to_srgba().to_hex(), "#FFD23F");
@@ -99,6 +108,13 @@ mod tests {
         let server = app.world().resource::<AssetServer>().clone();
         let h = font_or_default(&server, Path::new("assets"), "fonts/nope.ttf");
         assert_eq!(h, Handle::default());
+    }
+
+    #[test]
+    fn theme_from_world_without_asset_server() {
+        let mut world = World::new();
+        world.init_resource::<ComicTheme>();
+        assert_eq!(world.resource::<ComicTheme>().display, Handle::default());
     }
 
     #[test]

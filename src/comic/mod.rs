@@ -24,7 +24,6 @@ impl Plugin for ComicPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(UiMaterialPlugin::<Halftone>::default())
             .init_resource::<ComicTheme>()
-            .add_systems(Startup, theme::load_fonts)
             .add_systems(Update, sfx::animate_pops);
         if std::env::var_os("RUST_REGIME_COMIC_DEMO").is_some() {
             app.add_systems(PostStartup, demo::spawn).add_systems(Update, demo::blam);

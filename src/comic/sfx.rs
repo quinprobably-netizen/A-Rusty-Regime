@@ -78,7 +78,7 @@ mod tests {
         app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(50)));
         app.add_systems(Update, animate_pops);
         app.world_mut().resource_mut::<Time<Virtual>>().pause();
-        let theme = ComicTheme::default();
+        let theme = ComicTheme::look_a();
         sfx_pop(&mut app.world_mut().commands(), &theme, "BLAM!", Vec2::new(100.0, 100.0), -12.0);
         app.world_mut().flush();
         for _ in 0..12 {

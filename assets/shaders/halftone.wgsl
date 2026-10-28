@@ -1,5 +1,6 @@
 // Comic halftone for UI nodes: round dots of `dot` colour on `fill`, `params.x` px apart with
-// radius `params.y`, the grid turned by `params.z` radians. Edges are smoothed over 1.5 px.
+// radius `params.y`, the grid turned by `params.z` radians, and with `params.w` > 0 only towards
+// the edges. Edges are smoothed over 1.5 px.
 #import bevy_ui::ui_vertex_output::UiVertexOutput
 
 struct Halftone {
@@ -20,6 +21,10 @@ fn fragment(in: UiVertexOutput) -> @location(0) vec4<f32> {
     let d = length(fract(q / pitch) - 0.5) * pitch;
     let r = material.params.y;
     // Dots composite over the fill by their own alpha; the node keeps the fill's alpha.
-    let cover = material.dot.a * (1.0 - smoothstep(r - 0.75, r + 0.75, d));
+    var cover = material.dot.a * (1.0 - smoothstep(r - 0.75, r + 0.75, d));
+    // params.w > 0: a vignette, dots only towards the edges (the HUD's hit flash).
+    if material.params.w > 0.0 {
+        cover *= smoothstep(0.55, 0.85, length(in.uv - 0.5) * 2.0);
+    }
     return vec4<f32>(mix(material.fill.rgb, material.dot.rgb, cover), material.fill.a);
 }

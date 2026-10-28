@@ -12,7 +12,8 @@ pub struct Halftone {
     pub fill: LinearRgba,
     #[uniform(0)]
     pub dot: LinearRgba,
-    /// x: pitch px, y: dot radius px, z: grid angle in radians, w: unused.
+    /// x: pitch px, y: dot radius px, z: grid angle in radians, w: > 0 for a vignette (dots only
+    /// towards the edges).
     #[uniform(0)]
     pub params: Vec4,
 }

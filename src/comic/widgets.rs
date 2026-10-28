@@ -253,7 +253,7 @@ mod tests {
     fn bubble_tail_is_clipped_outside_the_bubble() {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
-        let theme = ComicTheme::default();
+        let theme = ComicTheme::look_a();
         let root = app.world_mut().spawn(Node::default()).id();
         let mut ids = vec![];
         app.world_mut().commands().entity(root).with_children(|p| {
@@ -273,7 +273,7 @@ mod tests {
     fn every_widget_spawns() {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
-        let theme = ComicTheme::default();
+        let theme = ComicTheme::look_a();
         let root = app.world_mut().spawn(Node::default()).id();
         let mut panel_id = None;
         app.world_mut().commands().entity(root).with_children(|p| {
