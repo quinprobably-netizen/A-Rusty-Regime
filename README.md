@@ -42,7 +42,8 @@ First build takes a while. Linux needs `libasound2-dev libudev-dev libwayland-de
 | Knife (draw / put away) | X | R3 (hold) |
 | Weapon 1-10 | 1 - 9, 0 |  |
 | Flashlight | F | D-pad up |
-| Inspect weapon | V | D-pad down |
+| Inspect weapon | V | D-pad down (tap) |
+| Swap shoulder (third person) | Z | D-pad down (hold) |
 | First / third person | T | R3 (tap) |
 | Respawn | Backspace | View |
 | Menu | Escape | Start |

@@ -132,6 +132,8 @@ pub struct Tuning {
     pub ads_time: f32,
     pub wallrun_tilt_degrees: f32,
     pub rumble: bool,
+    /// Controller aim assist strength, 0 (off) to 1; the pad only.
+    pub aim_assist: f32,
 }
 
 impl Default for Tuning {
@@ -346,6 +348,7 @@ impl Default for Tuning {
             ads_time: 0.15,
             wallrun_tilt_degrees: 12.0,
             rumble: true,
+            aim_assist: 1.0,
         }
     }
 }
