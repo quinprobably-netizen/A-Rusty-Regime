@@ -78,6 +78,11 @@ fn list_scroll(rows: &[Row], cursor: usize, visible: f32) -> f32 {
     (top - (visible - (bottom - top)) / 2.0).max(0.0)
 }
 
+/// The hint strip's (glyph, what) pairs: pad buttons or keys, whichever was touched last.
+pub(super) fn hint_labels(panel: Panel, screen: Screen, pad: bool) -> Vec<(String, String)> {
+    hints(panel, screen).iter().map(|(p, k, what)| ((if pad { *p } else { *k }).to_string(), what.to_string())).collect()
+}
+
 fn abs(left: Option<f32>, right: Option<f32>, top: Option<f32>, bottom: Option<f32>) -> Node {
     let v = |o: Option<f32>| o.map_or(Val::Auto, Val::Px);
     Node { position_type: PositionType::Absolute, left: v(left), right: v(right), top: v(top), bottom: v(bottom), flex_direction: FlexDirection::Column, ..default() }
@@ -99,10 +104,16 @@ pub(super) fn rebuild(
     halftones: Option<ResMut<Assets<Halftone>>>,
     window: Option<Single<&Window>>,
     space: super::space::Space,
+    actions: Option<Res<crate::controls::ActionState>>,
+    mut was_pad: Local<Option<bool>>,
 ) {
+    // The hints follow the device in hand, so switching between pad and keys redraws.
+    let pad = actions.is_some_and(|a| a.pad_last);
+    let device_changed = *was_pad != Some(pad);
+    *was_pad = Some(pad);
     let wardrobe_changed = closet.wardrobe.as_ref().is_some_and(|w| w.is_changed());
     let gun_changed = menu.panel == Panel::Quartermaster && (arsenal.is_changed() || save.as_ref().is_some_and(|s| s.is_changed()));
-    if !(menu.is_changed() || screen.is_changed() || settings.is_changed() || loadout.is_changed() || gun_changed || wardrobe_changed) {
+    if !(device_changed || menu.is_changed() || screen.is_changed() || settings.is_changed() || loadout.is_changed() || gun_changed || wardrobe_changed) {
         return;
     }
     for e in &roots {
@@ -261,12 +272,17 @@ pub(super) fn rebuild(
 
         // The hint strip along the bottom, with the bank on the main menu and at the counter.
         let money = matches!(menu.panel, Panel::Main | Panel::Quartermaster).then_some(banked);
-        let labels: Vec<(String, String)> = hints(menu.panel, screen).iter().map(|(pad, key, what)| (pad.to_string(), format!("{what}  {key}"))).collect();
+        let labels = hint_labels(menu.panel, screen, pad);
         let pairs: Vec<(&str, &str)> = labels.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
         p.spawn(Node { position_type: PositionType::Absolute, left: Val::Px(0.0), right: Val::Px(0.0), bottom: Val::Px(0.0), ..default() }).with_children(|b| {
             hint_strip(b, &t, &pairs, money);
         });
     });
+}
+
+/// Where wardrobe tile `n` sits in its grid, (column, row), filling down each column first.
+pub(super) fn tile_cell(n: usize, rows: usize) -> (usize, usize) {
+    (n / rows.max(1), n % rows.max(1))
 }
 
 /// Tiles in the wardrobe's left and right grids, left first and holding the odd one.
@@ -305,12 +321,16 @@ pub(super) fn slot_blurb(row: Row) -> &'static str {
 fn spotlight(p: &mut ChildSpawnerCommands, t: &ComicTheme, rows: &[Row], cursor: usize, outfit: Option<&OutfitDef>, characters: Option<&Characters>, preset: usize) {
     let tiles: Vec<Row> = selectable(rows).filter(|r| matches!(r, Row::Preset | Row::Look(_))).collect();
     let (left, _) = wardrobe_columns(tiles.len());
+    let grid_rows = left.div_ceil(2);
     let grid = |right: bool| Node {
         position_type: PositionType::Absolute,
         left: if right { Val::Auto } else { Val::Px(LEFT - 40.0) },
         right: if right { Val::Px(LEFT - 40.0) } else { Val::Auto },
         top: Val::Px(150.0),
         display: Display::Grid,
+        // Down each column first, so the D-pad walks the tiles top to bottom.
+        grid_auto_flow: GridAutoFlow::Column,
+        grid_template_rows: RepeatedGridTrack::px(grid_rows as u16, 66.0),
         grid_template_columns: RepeatedGridTrack::px(2, 150.0),
         row_gap: Val::Px(10.0),
         column_gap: Val::Px(8.0),
@@ -326,7 +346,7 @@ fn spotlight(p: &mut ChildSpawnerCommands, t: &ComicTheme, rows: &[Row], cursor:
     // The bubble beside the selected tile: right of the left grid, left of the right grid.
     if let Some(&row) = tiles.get(cursor) {
         let (right, n) = if cursor < left { (false, cursor) } else { (true, cursor - left) };
-        let top = 150.0 + (n / 2) as f32 * 76.0;
+        let top = 150.0 + tile_cell(n, grid_rows).1 as f32 * 76.0;
         let node = if right { Node { width: Val::Px(240.0), ..abs(None, Some(LEFT - 40.0 + 316.0), Some(top), None) } } else { Node { width: Val::Px(240.0), ..abs(Some(LEFT - 40.0 + 316.0), None, Some(top), None) } };
         p.spawn(node).with_children(|b| {
             bubble(b, t, slot_blurb(row), if right { Tail::Right } else { Tail::Left });
@@ -336,7 +356,9 @@ fn spotlight(p: &mut ChildSpawnerCommands, t: &ComicTheme, rows: &[Row], cursor:
         let mut index = tiles.len();
         for row in rows {
             if let Row::Action(label, _) = row {
-                action_row(list, t, label, index, cursor == index, 30.0);
+                // On paper, so the ink lettering reads over the dark room.
+                list.spawn((Node { margin: UiRect::top(Val::Px(4.0)), ..default() }, BackgroundColor(t.paper.with_alpha(0.85))))
+                    .with_children(|b| action_row(b, t, label, index, cursor == index, 30.0));
                 index += 1;
             }
         }
@@ -648,6 +670,22 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// D-pad down walks a wardrobe grid down its first column, then the next.
+    #[test]
+    fn wardrobe_tiles_run_down_each_column() {
+        let cells: Vec<(usize, usize)> = (0..8).map(|n| tile_cell(n, 4)).collect();
+        assert_eq!(cells, [(0, 0), (0, 1), (0, 2), (0, 3), (1, 0), (1, 1), (1, 2), (1, 3)]);
+    }
+
+    #[test]
+    fn hints_name_the_pad_or_the_keys() {
+        let pad = hint_labels(Panel::Settings, Screen::Paused, true);
+        let keys = hint_labels(Panel::Settings, Screen::Paused, false);
+        assert_eq!(pad[0], ("L R".to_string(), "ADJUST".to_string()));
+        assert_eq!(keys[0], ("A D".to_string(), "ADJUST".to_string()));
+        assert!(pad.iter().any(|(g, _)| g == "B") && keys.iter().any(|(g, _)| g == "ESC"));
     }
 
     #[test]

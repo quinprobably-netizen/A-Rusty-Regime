@@ -245,8 +245,10 @@ fn nearby(
     mut prompt: ResMut<Prompt>,
     player: Single<(&Transform, Has<Driving>), With<Player>>,
     stations: Query<(&Station, &GlobalTransform)>,
+    actions: Option<Res<crate::controls::ActionState>>,
 ) {
     let (tf, driving) = *player;
+    let pad = actions.is_some_and(|a| a.pad_last);
     let line = match nearest(tf.translation, &stations).filter(|_| !driving) {
         None => String::new(),
         Some(s) => {
@@ -264,7 +266,7 @@ fn nearby(
                 StationKind::Shrine if blessing.0 > 0.0 => format!("blessed, {:.0} s left", blessing.0),
                 StationKind::Shrine => format!("tithe ${TITHE} for a blessing"),
             };
-            format!("[E] {}: {what}", s.label)
+            format!("[{}] {}: {what}", crate::controls::hint(crate::controls::Ctx::Foot, crate::controls::Action::Use, pad), s.label)
         }
     };
     if prompt.line != line {
