@@ -170,10 +170,12 @@ pub struct Bind {
     pub mode: Mode,
     /// For `Move` on keys: the direction (x strafe right, y forward) this key adds.
     pub dir: Vec2,
+    /// Counts only one way (after `scale`): a stick half that acts as a button.
+    pub one_way: bool,
 }
 
 const fn bind(ctx: Ctx, action: Action, source: Source) -> Bind {
-    Bind { ctx, action, source, scale: 1.0, mode: Mode::Held, dir: Vec2::ZERO }
+    Bind { ctx, action, source, scale: 1.0, mode: Mode::Held, dir: Vec2::ZERO, one_way: false }
 }
 const fn key(ctx: Ctx, action: Action, k: KeyCode) -> Bind {
     bind(ctx, action, Source::Key(k))
@@ -186,6 +188,10 @@ const fn mode(b: Bind, mode: Mode) -> Bind {
 }
 const fn scaled(b: Bind, scale: f32) -> Bind {
     Bind { scale, ..b }
+}
+/// One half of a stick axis as a button: `dir` 1 for up / right, -1 for down / left.
+const fn stick_half(ctx: Ctx, action: Action, axis: GamepadAxis, dir: f32) -> Bind {
+    Bind { one_way: true, ..scaled(bind(ctx, action, Source::PadAxis(axis)), dir) }
 }
 const fn moves(ctx: Ctx, k: KeyCode, x: f32, y: f32) -> Bind {
     Bind { dir: Vec2::new(x, y), ..key(ctx, Action::Move, k) }
@@ -307,6 +313,10 @@ pub const BINDINGS: &[Bind] = &[
     key(Menu, Up, K::ArrowUp),
     key(Menu, Up, K::KeyW),
     pad(Menu, Up, P::DPadUp),
+    stick_half(Menu, Up, GamepadAxis::LeftStickY, 1.0),
+    stick_half(Menu, Down, GamepadAxis::LeftStickY, -1.0),
+    stick_half(Menu, Left, GamepadAxis::LeftStickX, -1.0),
+    stick_half(Menu, Right, GamepadAxis::LeftStickX, 1.0),
     key(Menu, Down, K::ArrowDown),
     key(Menu, Down, K::KeyS),
     pad(Menu, Down, P::DPadDown),
@@ -449,6 +459,7 @@ pub fn read(state: &mut ActionState, timers: &mut Timers, ctx: Ctx, d: &Devices)
                 fire
             }
         } * b.scale;
+        let value = if b.one_way { value.max(0.0) } else { value };
         let v = state.value.entry(b.action).or_insert(0.0);
         // The strongest input wins, so a key and a stick do not add up past 1.
         if value.abs() > v.abs() {
@@ -514,6 +525,8 @@ impl Bind {
     /// What this input is called, with " (tap)" or " (hold)" for those modes.
     pub fn name(&self) -> String {
         let base = match self.source {
+            Source::PadAxis(GamepadAxis::LeftStickY) if self.one_way => if self.scale > 0.0 { "Left stick up" } else { "Left stick down" }.into(),
+            Source::PadAxis(GamepadAxis::LeftStickX) if self.one_way => if self.scale > 0.0 { "Left stick right" } else { "Left stick left" }.into(),
             Source::Key(k) => key_name(k),
             Source::Mouse(MouseButton::Left) => "Left mouse".into(),
             Source::Mouse(MouseButton::Right) => "Right mouse".into(),
@@ -601,7 +614,9 @@ mod tests {
             let bound: Vec<&Bind> = BINDINGS.iter().filter(|b| b.ctx == ctx).collect();
             for (i, a) in bound.iter().enumerate() {
                 for b in &bound[i + 1..] {
-                    if a.source == b.source && a.action != b.action {
+                    // Opposite halves of one stick axis are two inputs.
+                    let halves = a.one_way && b.one_way && a.scale.signum() != b.scale.signum();
+                    if a.source == b.source && a.action != b.action && !halves {
                         assert!(a.mode != b.mode, "{ctx:?}: {} and {} share {}", a.action.label(), b.action.label(), a.name());
                     }
                 }
@@ -730,6 +745,28 @@ mod tests {
         read_pad(Drive, &pad, &mut state);
         assert!((state.value(Gas) - 0.6).abs() < 1e-4, "RT is gas: {}", state.value(Gas));
         assert!(state.movement.x > 0.5, "the stick steers: {}", state.movement);
+    }
+
+    /// In menus the left stick steps like the D-pad, one way at a time: pushing down is Down only.
+    #[test]
+    fn the_left_stick_walks_the_menus() {
+        let keys = ButtonInput::<KeyCode>::default();
+        let mouse = ButtonInput::<MouseButton>::default();
+        let scroll = AccumulatedMouseScroll::default();
+        let mut state = ActionState::default();
+        let mut timers = Timers::default();
+        let mut pad = Gamepad::default();
+        let mut frame = |pad: &Gamepad, state: &mut ActionState| {
+            read(state, &mut timers, Menu, &Devices { keys: &keys, mouse: &mouse, scroll: &scroll, mouse_live: false, pads: &[pad], dead_zone: 0.15, dt: 1.0 / 60.0 });
+        };
+        frame(&pad, &mut state);
+        pad.analog_mut().set(GamepadAxis::LeftStickY, -0.9);
+        frame(&pad, &mut state);
+        assert!(state.pressed(Down) && !state.held(Up), "down is Down only");
+        pad.analog_mut().set(GamepadAxis::LeftStickY, 0.0);
+        pad.analog_mut().set(GamepadAxis::LeftStickX, 0.9);
+        frame(&pad, &mut state);
+        assert!(state.pressed(Right) && !state.held(Left) && !state.held(Down));
     }
 
     #[test]

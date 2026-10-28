@@ -590,7 +590,15 @@ fn update_grapple(tuning: Res<Tuning>, grapple: Option<Res<crate::abilities::Gra
 }
 
 /// The menu hint fades out over the first seconds of play.
-fn update_hint(time: Res<Time>, mut hint: Single<&mut TextColor, With<HintText>>, mut shown: Local<f32>) {
+fn update_hint(time: Res<Time>, actions: Option<Res<crate::controls::ActionState>>, mut hint: Single<(&mut TextColor, &mut Text), With<HintText>>, mut shown: Local<f32>) {
+    // Names the pad's button or the key, whichever was touched last.
+    let pad = actions.is_some_and(|a| a.pad_last);
+    let text = format!("{}  MENU", crate::controls::hint(crate::controls::Ctx::Foot, crate::controls::Action::Pause, pad).to_uppercase());
+    if hint.1.0 != text {
+        hint.1.0 = text;
+        *shown = 0.0;
+    }
+    let hint = &mut hint.0;
     *shown += time.delta_secs();
     let a = ((12.0 - *shown) / 3.0).clamp(0.0, 1.0) * 0.9;
     hint.0.set_alpha(a);

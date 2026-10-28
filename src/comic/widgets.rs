@@ -193,6 +193,8 @@ pub fn hint_strip(p: &mut ChildSpawnerCommands, theme: &ComicTheme, hints: &[(&s
             let ring = match *glyph {
                 "A" => theme.green,
                 "B" => theme.red,
+                "X" => theme.blue,
+                "Y" => theme.yellow,
                 _ => theme.paper,
             };
             s.spawn(Node { column_gap: Val::Px(8.0), align_items: AlignItems::Center, ..default() }).with_children(|h| {

@@ -603,6 +603,31 @@ struct Nav {
     click: Option<(usize, i32)>,
 }
 
+/// Hold-to-repeat for a menu direction: one step on the press, then after `DELAY` one every `RATE`.
+#[derive(Default)]
+struct Repeat {
+    dir: i32,
+    held: f32,
+}
+
+impl Repeat {
+    const DELAY: f32 = 0.38;
+    const RATE: f32 = 0.09;
+
+    /// `dir` is the direction held now (-1, 0, 1), `pressed` whether it went down this frame.
+    fn step(&mut self, dir: i32, pressed: bool, dt: f32) -> i32 {
+        if dir == 0 || dir != self.dir || pressed {
+            self.dir = dir;
+            self.held = 0.0;
+            return if pressed { dir } else { 0 };
+        }
+        let before = self.held;
+        self.held += dt;
+        let ticks = |t: f32| if t < Self::DELAY { -1 } else { ((t - Self::DELAY) / Self::RATE) as i32 };
+        if ticks(self.held) > ticks(before) { dir } else { 0 }
+    }
+}
+
 /// Which selectable row a UI node stands for.
 #[derive(Component)]
 struct RowId(usize);
@@ -617,20 +642,35 @@ fn read_input(
     rows: Query<(&Interaction, &RowId), Changed<Interaction>>,
     arrows: Query<(&Interaction, &Arrow), Changed<Interaction>>,
     mut nav: ResMut<Nav>,
+    time: Res<Time<Real>>,
+    screen: Res<State<Screen>>,
+    cursor: Option<Single<&mut CursorOptions>>,
+    mut repeat: Local<(Repeat, Repeat)>,
 ) {
     use crate::controls::Action::*;
     let mut n = Nav::default();
     // Keys and pad come from the bindings (`controls::BINDINGS`): the same buttons the game uses
-    // pause the game and back out of a menu.
+    // pause the game and back out of a menu. Holding a direction (D-pad, stick or key) repeats.
     let step = |plus, minus| actions.pressed(plus) as i32 - actions.pressed(minus) as i32;
-    n.moved = step(Down, Up);
-    n.adjust = step(Right, Left);
+    let held = |plus, minus| actions.held(plus) as i32 - actions.held(minus) as i32;
+    let dt = time.delta_secs();
+    n.moved = repeat.0.step(held(Down, Up), step(Down, Up) != 0, dt);
+    n.adjust = repeat.1.step(held(Right, Left), step(Right, Left) != 0, dt);
     n.weapon = step(TabNext, TabPrev);
+    // On a pad the mouse pointer hides, and where it was left resting no longer steals the
+    // highlight; touching the mouse brings it back.
+    let pad = actions.pad_last;
+    if *screen.get() != Screen::Playing
+        && let Some(mut cursor) = cursor
+        && cursor.visible == pad
+    {
+        cursor.visible = !pad;
+    }
     n.select = actions.pressed(Select);
     n.back = actions.pressed(Back) || actions.pressed(Pause);
     for (i, row) in &rows {
         match i {
-            Interaction::Hovered => n.hover = Some(row.0),
+            Interaction::Hovered if !pad => n.hover = Some(row.0),
             Interaction::Pressed if mouse.just_pressed(MouseButton::Left) => n.click = Some((row.0, 0)),
             _ => {}
         }
@@ -958,6 +998,21 @@ mod tests {
             assert_eq!(at(7), Some(Row::Action("CONTRACTS", Action::Contracts)));
         }
         assert!(matches!(selectable(&paused).last(), Some(Row::Action("QUIT", _))));
+    }
+
+    /// Holding a direction steps once, waits, then repeats; letting go or turning resets it.
+    #[test]
+    fn a_held_direction_repeats_after_a_pause() {
+        let mut r = Repeat::default();
+        let dt = 1.0 / 60.0;
+        assert_eq!(r.step(1, true, dt), 1, "the press itself steps");
+        let steps: i32 = (0..20).map(|_| r.step(1, false, dt)).sum();
+        assert_eq!(steps, 0, "a third of a second of holding adds nothing yet");
+        let steps: i32 = (0..60).map(|_| r.step(1, false, dt)).sum();
+        assert!((7..=12).contains(&steps), "then about ten a second: {steps}");
+        assert_eq!(r.step(0, false, dt), 0);
+        assert_eq!(r.step(-1, true, dt), -1, "a new direction steps at once");
+        assert_eq!(r.step(-1, false, dt), 0);
     }
 
     #[test]
