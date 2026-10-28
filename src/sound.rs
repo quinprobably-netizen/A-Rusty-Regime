@@ -7,7 +7,7 @@
 use std::f32::consts::{PI, TAU};
 use std::sync::Arc;
 
-use bevy::audio::{AudioSink, AudioSinkPlayback, GlobalVolume, PlaybackMode, SpatialAudioSink, SpatialListener, Volume};
+use bevy::audio::{AudioSink, AudioSinkPlayback, GlobalVolume, SpatialAudioSink, SpatialListener, Volume};
 use bevy::prelude::*;
 
 use crate::camera::PlayerCamera;
@@ -779,9 +779,6 @@ fn jingles(mut commands: Commands, s: Res<Sounds>, tuning: Res<Tuning>, inv: Opt
         st.mission = m.current;
     }
 }
-
-#[allow(dead_code)]
-fn _unused(_: PlaybackMode) {}
 
 #[cfg(test)]
 mod tests {

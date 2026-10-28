@@ -589,6 +589,7 @@ pub fn rows(ctx: Ctx) -> Vec<(&'static str, String, String)> {
 }
 
 /// The README's controls table, one section per context, from `BINDINGS`.
+#[cfg(test)]
 pub fn markdown() -> String {
     let mut out = String::new();
     for ctx in Ctx::GAME {
