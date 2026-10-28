@@ -90,7 +90,7 @@ fn starmap(p: &mut ChildSpawnerCommands, t: &ComicTheme, space: &Space) {
             let body = bodies.get(id);
             let moon = body.orbit.as_ref().is_some_and(|o| o.parent != STAR);
             dot(disc, *at, if moon { 12.0 } else { 20.0 }, if *id == solar.anchor { t.red } else { t.paper });
-            let mut x = at.x + 14.0;
+            let x = at.x + 14.0;
             let tag = |disc: &mut ChildSpawnerCommands, x: f32, y: f32, text: String, fill: Color, ink: Color| {
                 disc.spawn((Node { position_type: PositionType::Absolute, left: Val::Px(c + x), top: Val::Px(c + y), padding: UiRect::axes(Val::Px(5.0), Val::Px(0.0)), ..default() }, BackgroundColor(fill)))
                     .with_child(body_text(text, 13.0, ink, true, t));

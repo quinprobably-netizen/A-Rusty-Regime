@@ -100,6 +100,12 @@ const SETTINGS_PATH: &str = "settings.toml";
 pub struct Settings {
     pub mouse_sensitivity: f32,
     pub invert_y: bool,
+    /// Right-stick turn speed (yaw; pitch turns two thirds as fast), dead zone and curve.
+    pub stick_speed: f32,
+    pub stick_deadzone: f32,
+    pub stick_curve: f32,
+    pub flight_mouse: f32,
+    pub flight_stick: f32,
     pub fov_degrees: f32,
     pub third_person: bool,
     pub master: f32,
@@ -130,6 +136,11 @@ impl Settings {
         Self {
             mouse_sensitivity: t.mouse_sensitivity,
             invert_y: t.invert_y,
+            stick_speed: t.stick_yaw_speed,
+            stick_deadzone: t.stick_deadzone,
+            stick_curve: t.stick_look_curve,
+            flight_mouse: t.flight_mouse,
+            flight_stick: t.flight_stick,
             fov_degrees: t.fov_degrees,
             third_person: t.third_person,
             master: s.master,
@@ -151,6 +162,12 @@ impl Settings {
     pub fn apply(&self, t: &mut Tuning) {
         t.mouse_sensitivity = self.mouse_sensitivity;
         t.invert_y = self.invert_y;
+        t.stick_yaw_speed = self.stick_speed;
+        t.stick_pitch_speed = self.stick_speed * 2.0 / 3.0;
+        t.stick_deadzone = self.stick_deadzone;
+        t.stick_look_curve = self.stick_curve;
+        t.flight_mouse = self.flight_mouse;
+        t.flight_stick = self.flight_stick;
         t.fov_degrees = self.fov_degrees;
         t.third_person = self.third_person;
         t.sound.master = self.master;
@@ -217,6 +234,9 @@ fn int(v: f32) -> String {
 fn sens(v: f32) -> String {
     format!("{:.1}", v * 1000.0)
 }
+fn two(v: f32) -> String {
+    format!("{v:.2}")
+}
 fn bool_f(b: bool) -> f32 {
     if b { 1.0 } else { 0.0 }
 }
@@ -232,8 +252,18 @@ const SECTIONS: &[(&str, &[Field])] = &[
         &[
             field("MOUSE SENSITIVITY", Kind::Slider { min: 0.0005, max: 0.01, step: 0.0005, fmt: sens }, false, |s| s.mouse_sensitivity, |s, v| s.mouse_sensitivity = v),
             field("INVERT Y", Kind::Toggle, false, |s| bool_f(s.invert_y), |s, v| s.invert_y = v > 0.5),
+            field("STICK SPEED", Kind::Slider { min: 1.5, max: 9.0, step: 0.5, fmt: two }, false, |s| s.stick_speed, |s, v| s.stick_speed = v),
+            field("STICK DEAD ZONE", Kind::Slider { min: 0.05, max: 0.35, step: 0.05, fmt: pct }, false, |s| s.stick_deadzone, |s, v| s.stick_deadzone = v),
+            field("STICK CURVE", Kind::Slider { min: 1.0, max: 3.0, step: 0.25, fmt: two }, false, |s| s.stick_curve, |s, v| s.stick_curve = v),
             field("FIELD OF VIEW", Kind::Slider { min: 60.0, max: 110.0, step: 5.0, fmt: int }, false, |s| s.fov_degrees, |s, v| s.fov_degrees = v),
             field("THIRD PERSON", Kind::Toggle, false, |s| bool_f(s.third_person), |s, v| s.third_person = v > 0.5),
+        ],
+    ),
+    (
+        "FLIGHT",
+        &[
+            field("FLIGHT MOUSE", Kind::Slider { min: 0.25, max: 3.0, step: 0.25, fmt: pct }, false, |s| s.flight_mouse, |s, v| s.flight_mouse = v),
+            field("FLIGHT STICK", Kind::Slider { min: 0.25, max: 2.0, step: 0.25, fmt: pct }, false, |s| s.flight_stick, |s, v| s.flight_stick = v),
         ],
     ),
     (

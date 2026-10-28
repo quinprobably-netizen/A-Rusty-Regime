@@ -116,6 +116,9 @@ pub struct Tuning {
     pub stick_deadzone: f32,
     pub stick_look_curve: f32,
     pub invert_y: bool,
+    /// Flying: how hard the mouse and the right stick steer, 1 = stock.
+    pub flight_mouse: f32,
+    pub flight_stick: f32,
     pub fov_degrees: f32,
     /// Play from behind the right shoulder (T toggles), and how far back and right the camera sits.
     pub third_person: bool,
@@ -338,6 +341,8 @@ impl Default for Tuning {
             stick_deadzone: 0.15,
             stick_look_curve: 2.0,
             invert_y: false,
+            flight_mouse: 1.0,
+            flight_stick: 1.0,
             fov_degrees: 75.0,
             third_person: false,
             third_person_distance: 2.6,
