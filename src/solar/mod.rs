@@ -422,6 +422,9 @@ fn setup_camera(mut commands: Commands, tuning: Res<Tuning>, camera: Single<(Ent
     if g.bloom {
         e.insert(crate::comic::toon::bloom_for(g.toon));
     }
+    if g.toon {
+        e.insert(crate::comic::toon::grade());
+    }
 }
 
 /// Moves every body's stand-in, sea and air to where its orbit has it, relative to the anchor,

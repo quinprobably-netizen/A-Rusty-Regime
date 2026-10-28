@@ -46,6 +46,16 @@ fn toon_shade(lit: vec3<f32>, in: pbr_types::PbrInput) -> vec3<f32> {
 }
 "#;
 
+/// Comic grade over the tonemapped image: TonyMcMapface leaves colour muted, inked paint is not.
+pub fn grade() -> bevy::render::view::ColorGrading {
+    use bevy::render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection};
+    ColorGrading {
+        global: ColorGradingGlobal { post_saturation: 1.45, ..default() },
+        midtones: ColorGradingSection { contrast: 1.2, ..default() },
+        ..default()
+    }
+}
+
 /// Whether the world is comic-shaded and outlined (`[graphics] toon`, the Comic shading setting).
 #[derive(Resource, Clone, Copy, PartialEq, Debug)]
 pub struct Toon(pub bool);
