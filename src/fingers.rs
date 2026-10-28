@@ -74,7 +74,11 @@ impl Solved {
     }
 
     pub fn get(&self, character: &str, kind: WeaponKind, pose: &str) -> Option<&HandPose> {
-        self.0.get(character)?.get(&format!("{}.{pose}", kind.id()))
+        let poses = self.0.get(character)?;
+        // The knife sits in the pistol grip's place, so a character with no solved knife hold yet
+        // takes the pistol's; one with its own never borrows the pistol's trigger finger.
+        let own = poses.get(&format!("{}.{pose}", kind.id()));
+        if kind == WeaponKind::Knife && !poses.contains_key("knife.R") { poses.get(&format!("pistol.{pose}")) } else { own }
     }
 }
 
@@ -224,6 +228,19 @@ pinky = [[0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 2.0]]
     }
 
     #[test]
+    fn the_knife_borrows_the_pistol_hand_only_until_it_has_its_own() {
+        let pose = |at: f32| HandPose { at: Vec3::splat(at), rot: Quat::IDENTITY, joints: [Quat::IDENTITY; 15] };
+        let mut poses = HashMap::from([("pistol.R".to_string(), pose(1.0)), ("pistol.R_fire".to_string(), pose(2.0))]);
+        let mut solved = Solved::default();
+        solved.0.insert("runner".into(), poses.clone());
+        assert_eq!(solved.get("runner", WeaponKind::Knife, "R").unwrap().at, Vec3::splat(1.0));
+        poses.insert("knife.R".into(), pose(3.0));
+        solved.0.insert("runner".into(), poses);
+        assert_eq!(solved.get("runner", WeaponKind::Knife, "R").unwrap().at, Vec3::splat(3.0));
+        assert!(solved.get("runner", WeaponKind::Knife, "R_fire").is_none(), "no trigger finger on a knife");
+    }
+
+    #[test]
     fn missing_pose_falls_back_to_rest() {
         let rest = [Quat::from_rotation_x(0.3); 15];
         assert_eq!(hand_rotations(&rest, None, None, 1.0), rest);
@@ -259,6 +276,7 @@ pinky = [[0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 2.0]]
             if let Ok(text) = std::fs::read_to_string(format!("assets/models/character/{id}.grips.toml")) {
                 let poses = parse(&text).unwrap_or_else(|e| panic!("{id}: {e}"));
                 assert!(poses.contains_key("rifle.R") && poses.contains_key("rifle.L"), "{id}");
+                assert!(poses.contains_key("knife.R"), "{id} has no solved knife hold");
             }
         }
     }

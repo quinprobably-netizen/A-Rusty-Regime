@@ -20,7 +20,10 @@ Mouse sensitivity, invert Y, FOV, five volumes, atmosphere (restart), bloom, SSA
 distance, grass, tree density (restart). Saved as overrides that `tuning::load` applies after
 `tuning.toml`, so F5 and hand edits keep working. Sound, look and post effects apply live.
 
-## Gunsmith
+## Gunsmith (now the quartermaster's counter)
+
+*Since 2026-10-27 this panel is the Roost quartermaster's counter: no longer in the pause list, opened with E at the station, and parts and guns are bought with banked money (`src/quartermaster.rs`).*
+
 Rifle, shotgun and pistol each have four slots (optic, muzzle, grip, stock) with three parts.
 Parts are multipliers on the `Gun` tuning (spread, recoil, cooldown, velocity, damage) applied
 when firing; primitive meshes (scope, suppressor, grip, stock pad) appear on the viewmodel. Stat

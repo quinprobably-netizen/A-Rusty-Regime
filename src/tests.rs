@@ -70,6 +70,10 @@ fn player(app: &mut App) -> (Vec3, Vec3, MoveState) {
     (tf.translation, p.velocity, p.state)
 }
 
+fn player_state(app: &mut App) -> MoveState {
+    player(app).2
+}
+
 fn set_player(app: &mut App, pos: Vec3, vel: Vec3) {
     let mut q = app.world_mut().query::<(&mut Player, &mut Transform)>();
     let (mut p, mut tf) = q.single_mut(app.world_mut()).unwrap();
@@ -339,7 +343,7 @@ fn weapon_switching() {
     input(&mut app).weapon_select = Some(2);
     app.update();
     assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::Shotgun);
-    input(&mut app).weapon_step = 8; // wraps around past the power fist
+    input(&mut app).weapon_step = 9; // wraps around past the knife
     app.update();
     assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::RocketLauncher);
     input(&mut app).weapon_last = true;
@@ -1509,7 +1513,7 @@ fn loot_is_carried_banked_on_extraction_and_lost_on_death() {
 fn save_round_trips_through_a_file() {
     let path = std::env::temp_dir().join(format!("rust-regime-save-{}.toml", std::process::id()));
     let file = SaveFile(Some(path.clone()));
-    let s = Save { banked: 1234, runs: 7, deaths: 2, missions_done: 3, outfit: None, loadout: None };
+    let s = Save { banked: 1234, runs: 7, deaths: 2, missions_done: 3, ..default() };
     file.write(&s);
     assert_eq!(file.load(), s);
     std::fs::remove_file(&path).ok();
@@ -2222,6 +2226,71 @@ fn gunsmith_parts_change_the_gun_and_persist() {
     assert_eq!(back.loadout, Some(loadout));
 }
 
+/// A save with the starter kit, as the solar system hands out: the Warden, bare, and the knife.
+fn starter_kit(app: &mut App) {
+    let slot = |k: WeaponKind| crate::weapon::WEAPONS.iter().position(|w| *w == k).unwrap();
+    crate::quartermaster::grant(&mut app.world_mut().resource_mut::<Save>(), WeaponKind::Revolver);
+    let mut a = app.world_mut().resource_mut::<Arsenal>();
+    a.current = slot(WeaponKind::Revolver);
+    a.last = crate::weapon::KNIFE;
+}
+
+#[test]
+fn only_owned_weapons_can_be_drawn_and_x_toggles_the_knife() {
+    let slot = |k: WeaponKind| crate::weapon::WEAPONS.iter().position(|w| *w == k).unwrap();
+    let mut app = make_app(Tuning::default());
+    starter_kit(&mut app);
+    for number in [slot(WeaponKind::Rifle), slot(WeaponKind::RocketLauncher), slot(WeaponKind::Pistol)] {
+        input(&mut app).weapon_select = Some(number);
+        run(&mut app, 0.1);
+        assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::Revolver, "slot {number} was never sold to you");
+    }
+    input(&mut app).weapon_select = Some(crate::weapon::KNIFE);
+    run(&mut app, 0.1);
+    assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::Knife);
+    input(&mut app).weapon_select = Some(crate::weapon::KNIFE);
+    run(&mut app, 0.1);
+    assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::Revolver, "the same key puts it away");
+    // Scrolling passes over the rest: the Warden, the knife, round again.
+    input(&mut app).weapon_step = 1;
+    run(&mut app, 0.1);
+    assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::Knife);
+    input(&mut app).weapon_step = 1;
+    run(&mut app, 0.1);
+    assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::Revolver);
+    // Bought, it can be drawn.
+    app.world_mut().resource_mut::<Save>().weapons.push("rifle".into());
+    input(&mut app).weapon_select = Some(slot(WeaponKind::Rifle));
+    run(&mut app, 0.1);
+    assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::Rifle);
+}
+
+#[test]
+fn the_knife_cuts_what_is_in_reach_and_nothing_beyond() {
+    let t = Tuning::default();
+    let mut app = make_app(t.clone());
+    run(&mut app, 0.5);
+    let near = dummy_at(&mut app, controller::SPAWN + Vec3::new(0.0, -1.0, -1.6));
+    select_weapon(&mut app, WeaponKind::Knife);
+    input(&mut app).fire_held = true;
+    run(&mut app, 0.1);
+    let one = t.target_health - t.knife.damage;
+    assert!((target_health(&mut app, near) - one).abs() < 0.01, "one slash: {}", target_health(&mut app, near));
+    // Held, the next slash waits out the cooldown.
+    run(&mut app, t.knife.cooldown * 0.5);
+    assert!((target_health(&mut app, near) - one).abs() < 0.01, "too soon");
+    run(&mut app, t.knife.cooldown);
+    assert!(!app.world().get::<Target>(near).unwrap().alive(), "two slashes of {} kill a {} hp dummy", t.knife.damage, t.target_health);
+
+    let mut far = make_app(t.clone());
+    run(&mut far, 0.5);
+    let dummy = dummy_at(&mut far, controller::SPAWN + Vec3::new(0.0, -1.0, -(t.knife.range + 2.0)));
+    select_weapon(&mut far, WeaponKind::Knife);
+    input(&mut far).fire_held = true;
+    run(&mut far, 0.1);
+    assert_eq!(target_health(&mut far, dummy), t.target_health, "out of arm's reach");
+}
+
 #[test]
 fn magazines_run_dry_and_reload() {
     let mut app = make_app(Tuning::default());
@@ -2403,8 +2472,9 @@ fn system_app() -> App {
     app
 }
 
+/// The player's ship, the first in `ships.toml`.
 fn ship_entity(app: &mut App) -> Entity {
-    app.world_mut().query_filtered::<Entity, With<Ship>>().single(app.world()).unwrap()
+    app.world_mut().query::<(Entity, &Ship)>().iter(app.world()).find(|(_, s)| s.spec == 0).map(|(e, _)| e).unwrap()
 }
 
 /// Boards the ship, which must be in reach.
@@ -2479,6 +2549,19 @@ fn the_ship_takes_its_stick_from_the_input() {
     assert!((c.lift - 1.0).abs() < 1e-5, "lift: {}", c.lift);
     assert!((c.turn.z + 0.5).abs() < 1e-5, "roll: {}", c.turn.z);
     assert!(c.boost, "A boosts");
+}
+
+#[test]
+fn the_pilot_cannot_leave_a_ship_at_flying_speed() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    board(&mut app);
+    let ship = ship_entity(&mut app);
+    app.world_mut().entity_mut(ship).insert(LinearVelocity(Vec3::new(0.0, 0.0, -110.0)));
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 0.1);
+    let id = app.world_mut().query_filtered::<Entity, With<Player>>().single(app.world()).unwrap();
+    assert!(app.world().get::<Driving>(id).is_some(), "still flying at 110 m/s");
 }
 
 #[test]
@@ -2561,9 +2644,514 @@ fn flying_down_to_ash_hands_off_to_the_moon_and_streams_its_ground() {
 
 #[test]
 fn boosting_is_capped_by_height_over_the_ground() {
-    use solar::ship::speed_cap;
+    let ships = solar::ship::Ships::load();
+    let speed_cap = |clearance: f32, boost: bool| ships.ship[0].speed_cap(clearance, boost);
     assert_eq!(speed_cap(50.0, false), speed_cap(2000.0, false), "cruising speed near the ground");
     assert!(speed_cap(100_000.0, false).is_infinite(), "coasting in space");
     assert!(speed_cap(100.0, true) < speed_cap(1000.0, true) && speed_cap(1000.0, true) < speed_cap(1.0e6, true));
     assert_eq!(speed_cap(1.0e9, true), 6000.0);
+}
+
+// --------------------------------------------------------------------------- the faction ships
+
+#[test]
+fn ships_toml_lists_four_ships_with_models_and_matching_rest_heights() {
+    let ships = solar::ship::Ships::load();
+    assert_eq!(ships.ship.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["kestrel", "litany", "mule", "vantage"]);
+    for s in &ships.ship {
+        assert!(std::path::Path::new(&format!("assets/models/ships/{}.glb", s.id)).exists(), "{} has a model", s.id);
+        assert!((s.bottom() + s.rest).abs() < 0.05, "{}: collider bottom {} vs rest {}", s.id, s.bottom(), s.rest);
+        assert!(s.mass > 0.0 && s.thrust > 0.0 && s.lift > 0.0 && s.cruise > 0.0 && s.boost_max > s.cruise);
+    }
+    let k = &ships.ship[0];
+    assert_eq!((k.mass, k.thrust, k.lift, k.cruise, k.boost_max, k.rest), (6000.0, 30.0, 20.0, 160.0, 6000.0, 1.6));
+}
+
+#[test]
+fn each_ship_caps_speed_by_its_own_numbers() {
+    let ships = solar::ship::Ships::load();
+    let (k, v) = (&ships.ship[0], &ships.ship[3]);
+    assert_eq!(k.speed_cap(100.0, false), 160.0);
+    assert_eq!(v.speed_cap(100.0, false), 190.0);
+    assert_eq!(k.speed_cap(1.0e9, true), 6000.0);
+    assert_eq!(v.speed_cap(1.0e9, true), 6500.0);
+    assert_eq!(k.speed_cap(1.0e5, false), f32::INFINITY);
+}
+
+#[test]
+fn a_ship_without_assets_still_flies() {
+    // Headless apps have no renderer or materials: the Kestrel must still board and move.
+    let mut app = system_app();
+    board(&mut app);
+    let (p0, _) = ship_state(&mut app);
+    input(&mut app).thrust = 1.0;
+    run(&mut app, 2.0);
+    let (p1, _) = ship_state(&mut app);
+    // Sitting on its skids the pad holds it back, so this checks the thrust is plumbed through, not the number.
+    assert!(p0.distance(p1) > 10.0, "moved {} m", p0.distance(p1));
+    let ship = ship_entity(&mut app);
+    assert_eq!(app.world().get::<Ship>(ship).unwrap().spec, 0);
+    assert_eq!(app.world().get::<Mass>(ship).unwrap().0, 6000.0);
+}
+
+#[test]
+fn leaving_the_ship_uses_its_exit_point() {
+    let mut app = system_app();
+    board(&mut app);
+    run(&mut app, 0.5);
+    let ship = ship_entity(&mut app);
+    let tf = *app.world().get::<Transform>(ship).unwrap();
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 0.1);
+    let stood = app.world_mut().query_filtered::<&Transform, With<Player>>().single(app.world()).unwrap().translation;
+    let spec = app.world().resource::<solar::ship::Ships>().ship[0].clone();
+    let exit = Vec3::from(spec.exit);
+    let expect = tf.translation + tf.rotation * exit;
+    assert!(stood.distance(expect) < 1.5, "stood up {} m from the cabin spot", stood.distance(expect));
+    run(&mut app, 1.0);
+    assert_eq!(player_state(&mut app), MoveState::Ground, "standing on the cabin floor");
+    // Walking backwards from the seat's heading goes aft, down the ramp and onto the apron.
+    input(&mut app).movement = Vec2::new(0.0, -1.0);
+    run(&mut app, 4.0);
+    input(&mut app).movement = Vec2::ZERO;
+    run(&mut app, 0.5);
+    let (pos, _, state) = player(&mut app);
+    let local = tf.rotation.inverse() * (pos - tf.translation);
+    assert!(local.z > spec.ramp_foot().z + 1.0, "walked out the back: {local}");
+    assert!(local.y < spec.cabin[0], "down on the apron, below the cabin floor: {local}");
+    assert_eq!(state, MoveState::Ground, "standing on the apron");
+}
+
+#[test]
+fn four_ships_rest_in_a_row_on_the_apron_without_touching() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    let ships = app.world().resource::<solar::ship::Ships>().clone();
+    let mut parked: Vec<(usize, Vec3)> = app.world_mut().query::<(&Ship, &Transform)>().iter(app.world()).map(|(s, tf)| (s.spec, tf.translation)).collect();
+    parked.sort_by_key(|p| p.0);
+    assert_eq!(parked.len(), 4);
+    let origin = *app.world().resource::<Origin>();
+    let pad = app.world().resource::<Solar>().pad;
+    let frame = app.world().resource::<Surface>().frame(pad);
+    let Surface::Sphere(sphere) = app.world().resource::<Surface>().clone() else { panic!("round world") };
+    for (spec, at) in &parked {
+        let local = frame.inverse() * (origin.body(*at) - pad);
+        let deck = if *spec == 0 { crate::planet::COURSE_DECK } else { solar::berth_deck(&sphere, pad, solar::ship::BERTHS[*spec]) };
+        let rest = deck + ships.ship[*spec].rest;
+        assert!((local.y - rest).abs() < 2.0, "{} rests at {} (want {})", ships.ship[*spec].id, local.y, rest);
+    }
+    // Berths along the row never overlap, and no ship's door opens into a neighbour.
+    for a in 0..4 {
+        for b in 0..4 {
+            if a == b {
+                continue;
+            }
+            let (sa, sb) = (&ships.ship[a], &ships.ship[b]);
+            let dx = (parked[a].1 - parked[b].1).length();
+            assert!(dx > sa.half_width() + sb.half_width(), "{} and {} touch", sa.id, sb.id);
+            let foot = (parked[a].1 + frame * sa.ramp_foot()).distance(parked[b].1);
+            assert!(foot > sb.half_width() + 2.0, "{}'s ramp lands beside {}", sa.id, sb.id);
+        }
+    }
+}
+
+#[test]
+fn respawn_follows_the_last_flown_ship() {
+    let mut app = system_app();
+    // Walk to the Litany, board it, leave it: the respawn moves to its door.
+    let litany = app.world_mut().query::<(Entity, &Ship, &Transform)>().iter(app.world()).find(|(_, s, _)| s.spec == 1).map(|(e, _, tf)| (e, *tf)).unwrap();
+    let player = app.world_mut().query_filtered::<Entity, With<Player>>().single(app.world()).unwrap();
+    let near = litany.1.translation + litany.1.rotation * Vec3::new(-4.0, 0.0, 0.0);
+    set_player(&mut app, near, Vec3::ZERO);
+    run(&mut app, 0.5);
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 0.1);
+    assert_eq!(app.world().get::<Driving>(player).map(|d| d.0), Some(litany.0), "flying the Litany");
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 1.0);
+    let spawn = app.world().resource::<controller::WorldBounds>().spawn;
+    let origin = *app.world().resource::<Origin>();
+    let exit = Vec3::from(app.world().resource::<solar::ship::Ships>().ship[1].exit);
+    let expect = origin.body(litany.1.translation + litany.1.rotation * exit);
+    assert!(spawn.distance(expect) < 3.0, "respawn {} m from the Litany's cabin spot", spawn.distance(expect));
+}
+
+
+#[test]
+fn every_cabin_fits_a_standing_player_and_its_ramp_reaches_the_ground() {
+    let ships = solar::ship::Ships::load();
+    for spec in &ships.ship {
+        let exit = Vec3::from(spec.exit);
+        // A 1.8 m, 0.4 m radius capsule standing on the cabin floor: bottom and top sphere centres.
+        for p in [exit + Vec3::Y * -0.45, exit, exit + Vec3::Y * 0.45] {
+            for b in &spec.collider {
+                assert!(!b.touches(p, 0.4), "{}: a standing player at {exit} hits the box at {:?}", spec.id, b.center);
+            }
+        }
+        assert!(exit.y - 0.95 > spec.cabin[0] - 0.05 && exit.y + 0.95 < spec.cabin[1], "{}: exit stands on the floor under the ceiling", spec.id);
+        assert!(spec.cabin[1] - spec.cabin[0] >= 2.2, "{}: cabin {} m tall", spec.id, spec.cabin[1] - spec.cabin[0]);
+        let foot = spec.ramp_foot();
+        assert!((foot.y + spec.rest).abs() < 0.3, "{}: ramp foot at {} vs ground {}", spec.id, foot.y, -spec.rest);
+        // The doorway over the hinge is clear for a standing player.
+        let door = Vec3::from(spec.ramp) + Vec3::new(0.0, 0.95, -0.5);
+        for b in &spec.collider {
+            assert!(!b.touches(door, 0.35), "{}: the doorway is blocked by the box at {:?}", spec.id, b.center);
+        }
+    }
+}
+
+#[test]
+fn a_parked_ship_is_static_until_boarded() {
+    let mut app = system_app();
+    run(&mut app, 2.0);
+    let ship = ship_entity(&mut app);
+    assert_eq!(*app.world().get::<RigidBody>(ship).unwrap(), RigidBody::Static, "parked");
+    board(&mut app);
+    run(&mut app, 0.2);
+    assert_eq!(*app.world().get::<RigidBody>(ship).unwrap(), RigidBody::Dynamic, "woken by its pilot");
+    input(&mut app).lift = 1.0;
+    run(&mut app, 1.0);
+    input(&mut app).lift = -1.0;
+    run(&mut app, 4.0);
+    input(&mut app).lift = 0.0;
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 3.0);
+    assert_eq!(*app.world().get::<RigidBody>(ship).unwrap(), RigidBody::Static, "parked again after landing");
+}
+
+// --------------------------------------------------------------------------- the faction bases
+
+#[test]
+fn bases_toml_lists_four_bases_on_four_worlds_with_models_and_clear_doorways() {
+    let bases = solar::base::Bases::load();
+    assert_eq!(bases.base.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["roost", "reliquary", "yard", "outpost"]);
+    assert_eq!(bases.base.iter().map(|b| b.body.as_str()).collect::<Vec<_>>(), ["home", "bastion", "cinder", "frost"]);
+    let bodies = solar::orbit::Bodies::new(&crate::system::System::load());
+    assert_eq!(bases.base.iter().map(|b| b.faction.as_str()).collect::<Vec<_>>(), ["deserters", "regime", "scrappers", "pmc"]);
+    for b in &bases.base {
+        assert!(bodies.bodies.contains_key(&b.body), "{}: {} is a world", b.id, b.body);
+        assert!(std::path::Path::new(&format!("assets/models/bases/{}.glb", b.id)).exists(), "{} has a model", b.id);
+        assert!(!b.collider.is_empty() && b.footprint.iter().all(|f| *f > 0.0));
+        assert!(b.near_pad.is_some() || b.pad.is_some(), "{}: a pad to land on", b.id);
+        // A standing player fits through the door and a metre inside it, with a floor under them.
+        let door = Vec3::from(b.door);
+        for p in [door, door + Vec3::NEG_Z] {
+            for bx in &b.collider {
+                assert!(!bx.touches(p, 0.35), "{}: the doorway at {p} is blocked by the box at {:?}", b.id, bx.center);
+            }
+            assert!(b.floor_under(p, 2.0).is_some(), "{}: no floor under {p}", b.id);
+        }
+    }
+}
+
+/// The base and foundation fixtures standing on the anchor: (base id, how many slabs).
+fn standing(app: &mut App) -> (Vec<String>, usize) {
+    let specs = app.world().resource::<solar::base::Bases>().clone();
+    let ids: Vec<String> = app.world_mut().query::<&solar::base::Base>().iter(app.world()).map(|b| specs.base[b.spec].id.clone()).collect();
+    let slabs = app.world_mut().query_filtered::<&Name, With<solar::Fixture>>().iter(app.world()).filter(|n| n.as_str() == "Foundation" || n.as_str() == "Pad").count();
+    (ids, slabs)
+}
+
+#[test]
+fn the_roost_stands_north_of_the_apron_and_bastions_base_replaces_it_after_a_handoff() {
+    let mut app = system_app();
+    run(&mut app, 0.5);
+    let (ids, slabs) = standing(&mut app);
+    assert_eq!(ids, ["roost"], "Haven's base");
+    assert_eq!(slabs, 2, "Haven's pad and the Roost's foundation");
+    let origin = *app.world().resource::<Origin>();
+    let pad = app.world().resource::<Solar>().pad;
+    let frame = app.world().resource::<Surface>().frame(pad);
+    let at = app.world_mut().query::<(&Transform, &solar::base::Base)>().single(app.world()).map(|(tf, _)| tf.translation).unwrap();
+    let local = frame.inverse() * (origin.body(at) - pad);
+    assert!((local.x - 70.0).abs() < 0.5 && (local.z - 85.0).abs() < 0.5, "south-east of the pad, at {local}");
+    assert!(local.y.abs() < 30.0, "on the ground near the pad's height, {}", local.y);
+    let (_, base) = app.world_mut().query::<(&Transform, &solar::base::Base)>().single(app.world()).map(|(tf, b)| (*tf, b.spec)).unwrap();
+    let door = app.world().resource::<solar::base::Bases>().base[base].door;
+    let base_tf = app.world_mut().query::<(&Transform, &solar::base::Base)>().single(app.world()).map(|(tf, _)| *tf).unwrap();
+    let door_local = frame.inverse() * (origin.body(base_tf.translation + base_tf.rotation * Vec3::from(door)) - pad);
+    assert!(door_local.z < local.z - 3.0, "the door faces the pad: door at z {} vs centre {}", door_local.z, local.z);
+    let Surface::Sphere(sphere) = app.world().resource::<Surface>().clone() else { panic!("round world") };
+    let ground = sphere.height(origin.body(at).normalize());
+    let altitude = app.world().resource::<Surface>().altitude(origin.body(at));
+    assert!(altitude > ground && altitude - ground < 15.0, "the deck sits just over the ground: {altitude} vs {ground}");
+    // Fly to Bastion: the Roost and the apron go, the Reliquary and its pad stand there.
+    board(&mut app);
+    let over = Vec3::Y * 8000.0;
+    let (p, v) = {
+        let solar = app.world().resource::<Solar>();
+        let (p, v) = solar.bodies.convert("bastion", "home", solar.epoch, over.as_dvec3(), bevy::math::DVec3::ZERO);
+        (p.as_vec3(), v.as_vec3())
+    };
+    put_ship(&mut app, p, v);
+    run(&mut app, 0.3);
+    assert_eq!(app.world().resource::<Solar>().anchor, "bastion");
+    let (ids, slabs) = standing(&mut app);
+    assert_eq!(ids, ["reliquary"], "Bastion's base");
+    assert_eq!(slabs, 2, "the Reliquary's foundation and pad");
+    assert!(app.world_mut().query_filtered::<&Name, With<solar::Fixture>>().iter(app.world()).all(|n| n.as_str() != "Berth"), "Haven's berths went");
+    let base = app.world_mut().query::<(&Transform, &solar::base::Base)>().single(app.world()).map(|(tf, _)| *tf).unwrap();
+    let origin = *app.world().resource::<Origin>();
+    let Surface::Sphere(sphere) = app.world().resource::<Surface>().clone() else { panic!("round world") };
+    let here = origin.body(base.translation);
+    let ground = sphere.height(here.normalize());
+    let altitude = app.world().resource::<Surface>().altitude(here);
+    assert!(altitude > ground && altitude - ground < 20.0, "on Bastion's ground: {altitude} vs {ground}");
+    assert!((base.rotation * Vec3::Y).dot(here.normalize()) > 0.999, "stands upright");
+}
+
+
+// ------------------------------------------------------------------------------- waypoints
+
+#[test]
+fn every_base_and_the_ship_get_a_waypoint_in_the_faction_colour() {
+    let mut app = system_app();
+    run(&mut app, 0.2);
+    let bases = app.world().resource::<solar::base::Bases>().clone();
+    let mut pins: Vec<String> = Vec::new();
+    for (target, text) in app.world_mut().query::<(&solar::waypoint::Target, &Children)>().iter(app.world()).map(|(t, c)| (t.clone(), c.to_vec())) {
+        match target {
+            solar::waypoint::Target::Base(i) => pins.push(bases.base[i].id.clone()),
+            solar::waypoint::Target::Ship => pins.push("ship".into()),
+        }
+        assert_eq!(text.len(), 2, "a diamond and a label");
+    }
+    pins.sort();
+    assert_eq!(pins, ["outpost", "reliquary", "roost", "ship", "yard"]);
+    // Four factions, four different colours, none of them white (that is the ship's).
+    let mut colours: Vec<[u32; 3]> = bases.base.iter().map(|b| b.color.map(|c| (c * 100.0) as u32)).collect();
+    colours.sort();
+    colours.dedup();
+    assert_eq!(colours.len(), 4);
+    assert!(bases.base.iter().all(|b| b.color != [1.0; 3]));
+}
+
+// ---------------------------------------------------------------------------- base stations
+
+use solar::station::{Blessing, Contract, Station, StationKind, BLESSING_HP, TITHE, UPGRADE_COST};
+
+#[test]
+fn every_base_has_its_station_on_a_floor_clear_of_the_furniture() {
+    let bases = solar::base::Bases::load();
+    let roles: Vec<(&str, Vec<StationKind>)> = vec![
+        ("roost", vec![StationKind::Resupply, StationKind::Locker]),
+        ("reliquary", vec![StationKind::Shrine]),
+        ("yard", vec![StationKind::Workshop]),
+        ("outpost", vec![StationKind::Contracts]),
+    ];
+    for (id, kinds) in roles {
+        let b = bases.base.iter().find(|b| b.id == id).unwrap();
+        assert_eq!(b.stations.iter().map(|s| s.kind).collect::<Vec<_>>(), kinds, "{id}'s stations");
+        for s in &b.stations {
+            let at = Vec3::from(s.at);
+            let floor = b.floor_under(at, 2.0).unwrap_or_else(|| panic!("{id}: no floor under {}", s.label));
+            assert!((0.8..1.6).contains(&(at.y - floor)), "{id}: {} is {} m over the floor", s.label, at.y - floor);
+            // Someone can stand a metre from it, at chest height, in the open.
+            let stand = Vec3::new(at.x, floor + 1.0, at.z);
+            assert!(b.collider.iter().all(|bx| !bx.touches(stand, 0.2)), "{id}: {} is inside a wall or a counter", s.label);
+        }
+    }
+}
+
+/// Stands the player beside a station of `kind` that the test puts there (so it works on any world).
+fn stand_at_station(app: &mut App, kind: StationKind, base: usize) {
+    let at = player(app).0;
+    app.world_mut().spawn((Station { base, kind, label: "Test".into() }, GlobalTransform::from_translation(at)));
+}
+
+fn press_use(app: &mut App) {
+    input(app).interact_pressed = true;
+    run(app, 0.1);
+}
+
+#[test]
+fn the_quartermaster_tops_you_up_for_free_and_uses_the_press_up() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    // The real one in the Roost's depot, wherever the base ended up on Haven.
+    let at = app.world_mut().query::<(&Station, &GlobalTransform)>().iter(app.world()).find(|(s, _)| s.kind == StationKind::Resupply).map(|(_, g)| g.translation()).expect("the Roost's quartermaster");
+    set_player(&mut app, at, Vec3::ZERO);
+    app.world_mut().resource_mut::<PlayerHealth>().hp = 20.0;
+    app.world_mut().resource_mut::<Arsenal>().spent[0] = 7;
+    press_use(&mut app);
+    assert_eq!(app.world().resource::<PlayerHealth>().hp, app.world().resource::<PlayerHealth>().max);
+    assert_eq!(app.world().resource::<Arsenal>().spent[0], 0, "magazines refilled");
+    assert!(app.world().resource::<solar::station::Prompt>().text().contains("Resupplied"));
+    let id = app.world_mut().query_filtered::<Entity, With<Player>>().single(app.world()).unwrap();
+    assert!(app.world().get::<Driving>(id).is_none(), "the same press did not board the ship");
+}
+
+#[test]
+fn the_tuning_rig_sells_three_levels_for_banked_money() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    stand_at_station(&mut app, StationKind::Workshop, 2);
+    app.world_mut().resource_mut::<Save>().banked = UPGRADE_COST[0] - 1;
+    press_use(&mut app);
+    assert_eq!((app.world().resource::<Save>().ship_level, app.world().resource::<Save>().banked), (0, UPGRADE_COST[0] - 1), "too poor");
+    let total: u32 = UPGRADE_COST.iter().sum();
+    app.world_mut().resource_mut::<Save>().banked = total + 10;
+    for level in 1..=3 {
+        press_use(&mut app);
+        assert_eq!(app.world().resource::<Save>().ship_level, level);
+    }
+    press_use(&mut app);
+    let save = app.world().resource::<Save>();
+    assert_eq!((save.ship_level, save.banked), (3, 10), "three levels and no more");
+}
+
+#[test]
+fn a_tuned_ship_climbs_faster() {
+    fn lifted(level: u8) -> f32 {
+        let mut app = system_app();
+        run(&mut app, 1.0);
+        app.world_mut().resource_mut::<Save>().ship_level = level;
+        board(&mut app);
+        let surface = app.world().resource::<Surface>().clone();
+        let start = surface.altitude(ship_state(&mut app).0);
+        input(&mut app).lift = 1.0;
+        run(&mut app, 2.0);
+        surface.altitude(ship_state(&mut app).0) - start
+    }
+    let (stock, tuned) = (lifted(0), lifted(3));
+    assert!(tuned > stock * 1.2, "Mk3 climbs {tuned} m, stock {stock} m in 2 s");
+}
+
+#[test]
+fn a_parcel_is_taken_at_the_desk_and_pays_at_the_other_bases_door() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    let bases = app.world().resource::<solar::base::Bases>().clone();
+    let vantage = bases.base.iter().position(|b| b.id == "outpost").unwrap();
+    stand_at_station(&mut app, StationKind::Contracts, vantage);
+    press_use(&mut app);
+    let contract = app.world().resource::<Save>().contract.clone().expect("a contract was handed out");
+    assert_ne!(contract.to, "outpost");
+    // A second press while carrying one gives nothing new.
+    press_use(&mut app);
+    assert_eq!(app.world().resource::<Save>().contract, Some(contract.clone()));
+    // Carry it to the Roost, the only base on this world, and stand in its doorway.
+    app.world_mut().resource_mut::<Save>().contract = Some(Contract { to: "roost".into(), pay: 250 });
+    let (at, base) = app.world_mut().query::<(&GlobalTransform, &solar::base::Base)>().single(app.world()).map(|(g, b)| (*g, b.spec)).unwrap();
+    let door = at.translation() + at.rotation() * Vec3::from(bases.base[base].door);
+    set_player(&mut app, door, Vec3::ZERO);
+    run(&mut app, 0.2);
+    let save = app.world().resource::<Save>();
+    assert_eq!((save.banked, save.contracts_done, save.contract.clone()), (250, 1, None), "paid on arrival");
+}
+
+/// The solar system with the menu and input devices, played from the title screen on.
+fn counter_app() -> App {
+    use crate::menu::{MenuPlugin, Screen};
+    let mut app = build_app(Tuning::default());
+    drop_flat_floor(&mut app);
+    app.add_plugins((solar::SolarPlugin, crate::gunsmith::GunsmithPlugin, MenuPlugin));
+    with_input_devices(&mut app);
+    app.finish();
+    app.update();
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Playing);
+    run(&mut app, 1.0);
+    app
+}
+
+#[test]
+fn the_solar_system_starts_you_with_the_warden_a_knife_and_nothing_else() {
+    let mut app = counter_app();
+    // The pilot class wears Runner, who starts with the Warden.
+    assert_eq!(app.world().resource::<Save>().weapons, ["revolver", "knife"]);
+    assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::Revolver);
+    for slot in 0..4 {
+        assert_eq!(app.world().resource::<crate::gunsmith::Loadout>().part(WeaponKind::Revolver, slot), 0, "no attachments");
+    }
+    let c = app.world().resource::<crate::character::Characters>();
+    assert_eq!((c.start("zealot"), c.start("acolyte"), c.start("nobody")), (WeaponKind::Pistol, WeaponKind::Revolver, WeaponKind::Pistol));
+    assert!(c.problems().is_empty(), "{:?}", c.problems());
+    run(&mut app, 0.1);
+}
+
+#[test]
+fn the_counter_opens_at_the_quartermaster_sells_for_banked_money_and_hands_back_the_game() {
+    use crate::menu::{Menu, Panel, Screen};
+    let mut app = counter_app();
+    app.world_mut().resource_mut::<Save>().banked = 1500;
+    let at = app.world_mut().query::<(&Station, &GlobalTransform)>().iter(app.world()).find(|(s, _)| s.kind == StationKind::Resupply).map(|(_, g)| g.translation()).expect("the Roost's quartermaster");
+    set_player(&mut app, at, Vec3::ZERO);
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 0.3);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Paused);
+    let menu = app.world().resource::<Menu>();
+    assert_eq!((menu.panel, menu.from_station), (Panel::Quartermaster, true));
+
+    // E steps the picker on from the Warden to the Thumper (1000); Enter buys it, then steps on to the Harpoon.
+    tap(&mut app, KeyCode::KeyE);
+    assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::Grenade);
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!((app.world().resource::<Save>().banked, app.world().resource::<Save>().weapons.contains(&"grenade".to_string())), (500, true));
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::Harpoon, "Enter on a gun you own just steps on");
+    assert_eq!(app.world().resource::<Save>().banked, 500);
+    // The Power fist is 600: short, nothing sold.
+    tap(&mut app, KeyCode::KeyE);
+    assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::Fist);
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!((app.world().resource::<Save>().banked, app.world().resource::<Save>().weapons.len()), (500, 3));
+    assert!(app.world().resource::<Menu>().note.contains("$100 short"), "{}", app.world().resource::<Menu>().note);
+
+    // Back to the game: the gun on the counter was not yours, so you hold the Warden again.
+    tap(&mut app, KeyCode::Escape);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Playing);
+    assert_eq!(app.world().resource::<Arsenal>().kind(), WeaponKind::Revolver);
+}
+
+#[test]
+fn attachments_are_bought_once_and_tried_on_for_free() {
+    use crate::menu::Screen;
+    let mut app = counter_app();
+    app.world_mut().resource_mut::<Save>().banked = 250;
+    let at = app.world_mut().query::<(&Station, &GlobalTransform)>().iter(app.world()).find(|(s, _)| s.kind == StationKind::Resupply).map(|(_, g)| g.translation()).unwrap();
+    set_player(&mut app, at, Vec3::ZERO);
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 0.3);
+    // Down to the optic row, right to the red dot (200), Enter buys it.
+    tap(&mut app, KeyCode::KeyS);
+    tap(&mut app, KeyCode::KeyD);
+    assert_eq!(app.world().resource::<crate::gunsmith::Loadout>().part(WeaponKind::Revolver, 0), 1);
+    assert_eq!(app.world().resource::<Save>().banked, 250, "trying it on is free");
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!((app.world().resource::<Save>().banked, app.world().resource::<Save>().parts[0]), (50, 0b10));
+    // The scope (400) is out of reach; leaving takes it off again and keeps the red dot's slot bare, as the dot is gone with it.
+    tap(&mut app, KeyCode::KeyD);
+    assert_eq!(app.world().resource::<crate::gunsmith::Loadout>().part(WeaponKind::Revolver, 0), 2);
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!(app.world().resource::<Save>().banked, 50, "too poor for the scope");
+    tap(&mut app, KeyCode::KeyA);
+    assert_eq!(app.world().resource::<crate::gunsmith::Loadout>().part(WeaponKind::Revolver, 0), 1);
+    tap(&mut app, KeyCode::KeyD);
+    tap(&mut app, KeyCode::Escape);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Playing);
+    assert_eq!(app.world().resource::<crate::gunsmith::Loadout>().part(WeaponKind::Revolver, 0), 0, "the unbought scope came off");
+}
+
+#[test]
+fn the_shrine_sells_a_blessing_that_lengthens_the_health_bar_for_a_while() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    stand_at_station(&mut app, StationKind::Shrine, 1);
+    app.world_mut().resource_mut::<Save>().banked = TITHE - 1;
+    press_use(&mut app);
+    assert_eq!(app.world().resource::<Blessing>().0, 0.0, "the tithe is not met");
+    app.world_mut().resource_mut::<Save>().banked = TITHE + 5;
+    let plain = app.world().resource::<PlayerHealth>().max;
+    press_use(&mut app);
+    run(&mut app, 0.2);
+    assert_eq!(app.world().resource::<Save>().banked, 5);
+    let health = app.world().resource::<PlayerHealth>().clone();
+    assert!(app.world().resource::<Blessing>().0 > 0.0 && (health.max - (plain + BLESSING_HP)).abs() < 0.01, "blessed, max {}", health.max);
+    assert!(health.hp > plain, "and healed past the usual maximum, {}", health.hp);
+    // It wears off.
+    app.world_mut().resource_mut::<Blessing>().0 = 0.05;
+    run(&mut app, 0.3);
+    let health = app.world().resource::<PlayerHealth>().clone();
+    assert!((health.max - plain).abs() < 0.01 && health.hp <= health.max, "back to normal: {} / {}", health.hp, health.max);
 }

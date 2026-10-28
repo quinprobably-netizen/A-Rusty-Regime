@@ -24,7 +24,7 @@ from kit import check, preview  # noqa: E402
 ROOT = os.path.dirname(os.path.dirname(HERE))
 OUT = os.path.join(ROOT, "assets", "models", "weapons")
 SHOTS = os.path.join(ROOT, "screenshots", "weapons")
-ORDER = ["rocket", "rifle", "shotgun", "pistol", "smg", "dmr", "revolver", "grenade", "harpoon", "fist"]
+ORDER = ["rocket", "rifle", "shotgun", "pistol", "smg", "dmr", "revolver", "grenade", "harpoon", "fist", "knife"]
 
 
 def spec(gid):

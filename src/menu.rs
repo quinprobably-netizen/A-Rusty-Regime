@@ -1,8 +1,8 @@
-//! The front end: title screen, pause menu, settings, controls sheet, gunsmith and wardrobe, all
+//! The front end: title screen, pause menu, settings, controls sheet, quartermaster and wardrobe, all
 //! Bevy UI over the live world. Titanfall-style: a tall uppercase list on the left, the island
 //! behind it, button hints along the bottom. Time stands still while a menu is up.
 //!
-//! `RUST_REGIME_MENU=title|pause|settings|controls|gunsmith|wardrobe` opens straight into a
+//! `RUST_REGIME_MENU=title|pause|settings|controls|maps|quartermaster|wardrobe` opens straight into a
 //! screen (handy with `RUST_REGIME_SCREENSHOT`).
 
 use bevy::app::AppExit;
@@ -19,6 +19,7 @@ use crate::character::{Characters, OutfitDef};
 use crate::gunsmith::{self, Loadout, PARTS, SLOTS, TUNE_MAX, TUNES};
 use crate::hud::HudRoot;
 use crate::loot::{Save, SaveFile};
+use crate::quartermaster::{self, Sale};
 use crate::tuning::Tuning;
 use crate::wardrobe::{self, Wardrobe};
 use crate::weapon::{Arsenal, WEAPONS};
@@ -40,7 +41,8 @@ pub enum Panel {
     Maps,
     Settings,
     Controls,
-    Gunsmith,
+    /// The Roost's counter: guns and attachments, bought with banked money.
+    Quartermaster,
     Wardrobe,
 }
 
@@ -48,7 +50,7 @@ pub enum Panel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Showcase {
     None,
-    /// The first-person weapon turned to the camera (gunsmith).
+    /// The first-person weapon turned to the camera (quartermaster).
     Gun,
     /// The worn character in the dressing room (wardrobe).
     Body,
@@ -60,13 +62,21 @@ pub struct Menu {
     /// Highlighted row, counting only selectable rows.
     pub cursor: usize,
     pub playing: bool,
+    /// The counter was opened by walking up to it in the world: Back returns to the game.
+    pub from_station: bool,
+    /// The last thing the counter said: a sale, or why there was none.
+    pub note: String,
 }
+
+/// Set by the quartermaster's station: open the counter when the pause screen comes up.
+#[derive(Resource, Default)]
+pub struct Counter(pub bool);
 
 impl Menu {
     pub fn showcase(&self) -> Showcase {
         match self.panel {
             _ if self.playing => Showcase::None,
-            Panel::Gunsmith => Showcase::Gun,
+            Panel::Quartermaster => Showcase::Gun,
             Panel::Wardrobe => Showcase::Body,
             _ => Showcase::None,
         }
@@ -276,12 +286,13 @@ enum Action {
     Play,
     Resume,
     Maps,
-    Gunsmith,
     Wardrobe,
     Settings,
     Controls,
     Quit,
     Back,
+    /// A random look in the wardrobe.
+    Randomize,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -289,16 +300,16 @@ enum Row {
     Section(&'static str),
     Action(&'static str, Action),
     Field(usize),
-    /// The gunsmith's weapon picker.
+    /// The quartermaster's weapon picker: every gun for sale, owned or not.
     Weapon,
-    /// A gunsmith attachment slot.
+    /// An attachment slot of the gun on the counter.
     Slot(usize),
     /// The tuning slider under a fitted part.
     Tune(usize),
-    /// The wardrobe's character picker.
-    Character,
-    /// A wardrobe colour (primary, secondary, accent).
-    Colour(usize),
+    /// The wardrobe's preset picker.
+    Preset,
+    /// A wardrobe slot (an entry of `wardrobe::SLOTS`).
+    Look(usize),
     /// An entry of [`MAPS`].
     Map(usize),
 }
@@ -311,20 +322,17 @@ struct MapDef {
     desc: &'static str,
 }
 
+/// The island, arena and moon are still reachable with `RUST_REGIME_LEVEL`, just not from the menu.
 const MAPS: &[MapDef] = &[
-    MapDef { level: "island", mode: "", name: "ISLAND", desc: "4 km open island: sites, caches, extraction, missions" },
-    MapDef { level: "island", mode: "6v6", name: "ISLAND  6V6", desc: "You and five bots against six at the fort" },
-    MapDef { level: "arena", mode: "", name: "ARENA", desc: "The old walled parkour arena" },
     MapDef { level: "system", mode: "", name: "SOLAR SYSTEM", desc: "Haven, its moon Ash and your ship: fly between worlds" },
-    MapDef { level: "moon", mode: "", name: "MOON", desc: "Debug round world with a parkour course" },
 ];
 
-/// The [`MAPS`] entry this run was started with. An unknown level is the island, as in `main`.
+/// The [`MAPS`] entry this run was started with. An unknown level is the solar system, as in `main`.
 fn current_map() -> usize {
     let level = std::env::var("RUST_REGIME_LEVEL").ok();
     let level = match level.as_deref() {
-        Some(l @ ("arena" | "moon" | "system")) => l,
-        _ => "island",
+        Some(l @ ("island" | "arena" | "moon")) => l,
+        _ => "system",
     };
     let mode = if std::env::var("RUST_REGIME_MODE").is_ok_and(|m| m == "6v6") { "6v6" } else { "" };
     MAPS.iter().position(|m| m.level == level && m.mode == mode).unwrap_or(0)
@@ -355,14 +363,13 @@ pub fn wait_for_relaunch() -> Option<i32> {
     Some(child.wait().ok()?.code().unwrap_or(1))
 }
 
-/// `tuned[slot]` says whether that gunsmith slot has a part to tune.
-fn rows(panel: Panel, screen: Screen, tuned: [bool; 4]) -> Vec<Row> {
+/// `tuned[slot]` says whether that slot has a part to tune; `fits` whether the gun on the counter takes parts.
+fn rows(panel: Panel, screen: Screen, tuned: [bool; 4], fits: bool) -> Vec<Row> {
     let mut rows = vec![];
     match panel {
         Panel::Main => {
             rows.push(if screen == Screen::Paused { Row::Action("RESUME", Action::Resume) } else { Row::Action("PLAY", Action::Play) });
             rows.push(Row::Action("MAPS", Action::Maps));
-            rows.push(Row::Action("GUNSMITH", Action::Gunsmith));
             rows.push(Row::Action("WARDROBE", Action::Wardrobe));
             rows.push(Row::Action("SETTINGS", Action::Settings));
             rows.push(Row::Action("CONTROLS", Action::Controls));
@@ -384,9 +391,9 @@ fn rows(panel: Panel, screen: Screen, tuned: [bool; 4]) -> Vec<Row> {
             rows.extend((0..MAPS.len()).map(Row::Map));
             rows.push(Row::Action("BACK", Action::Back));
         }
-        Panel::Gunsmith => {
+        Panel::Quartermaster => {
             rows.push(Row::Weapon);
-            for slot in 0..SLOTS.len() {
+            for slot in (0..SLOTS.len()).filter(|_| fits) {
                 rows.push(Row::Slot(slot));
                 if tuned[slot] {
                     rows.push(Row::Tune(slot));
@@ -395,8 +402,9 @@ fn rows(panel: Panel, screen: Screen, tuned: [bool; 4]) -> Vec<Row> {
             rows.push(Row::Action("BACK", Action::Back));
         }
         Panel::Wardrobe => {
-            rows.push(Row::Character);
-            rows.extend((0..3).map(Row::Colour));
+            rows.push(Row::Preset);
+            rows.extend((0..wardrobe::SLOTS.len()).map(Row::Look));
+            rows.push(Row::Action("RANDOMISE", Action::Randomize));
             rows.push(Row::Action("BACK", Action::Back));
         }
     }
@@ -411,11 +419,10 @@ fn selectable(rows: &[Row]) -> impl Iterator<Item = Row> + '_ {
 fn main_cursor(panel: Panel) -> usize {
     match panel {
         Panel::Maps => 1,
-        Panel::Gunsmith => 2,
-        Panel::Wardrobe => 3,
-        Panel::Settings => 4,
-        Panel::Controls => 5,
-        Panel::Main => 0,
+        Panel::Wardrobe => 2,
+        Panel::Settings => 3,
+        Panel::Controls => 4,
+        Panel::Main | Panel::Quartermaster => 0,
     }
 }
 
@@ -446,6 +453,7 @@ impl Plugin for MenuPlugin {
         app.insert_state(initial())
             .insert_resource(settings)
             .init_resource::<Menu>()
+            .init_resource::<Counter>()
             .init_resource::<Nav>()
             .add_systems(OnEnter(Screen::Playing), enter_play)
             .add_systems(OnEnter(Screen::Paused), enter_menu)
@@ -458,7 +466,7 @@ impl Plugin for MenuPlugin {
 /// Boot to the title, unless a screenshot run asks for the game or a particular screen.
 fn initial() -> Screen {
     match std::env::var("RUST_REGIME_MENU").as_deref() {
-        Ok("pause" | "settings" | "controls" | "maps" | "gunsmith" | "wardrobe") => Screen::Paused,
+        Ok("pause" | "settings" | "controls" | "maps" | "quartermaster" | "wardrobe") => Screen::Paused,
         Ok("play") => Screen::Playing,
         Ok(_) => Screen::Title,
         Err(_) if std::env::var_os("RUST_REGIME_SCREENSHOT").is_some() => Screen::Playing,
@@ -470,26 +478,34 @@ fn enter_play(mut menu: ResMut<Menu>, cursor: Option<Single<&mut CursorOptions>>
     menu.panel = Panel::Main;
     menu.cursor = 0;
     menu.playing = true;
+    menu.from_station = false;
     if let Some(mut cursor) = cursor {
         cursor.grab_mode = CursorGrabMode::Locked;
         cursor.visible = false;
     }
 }
 
-fn enter_menu(mut menu: ResMut<Menu>, cursor: Option<Single<&mut CursorOptions>>, mut first: Local<bool>) {
+fn enter_menu(mut menu: ResMut<Menu>, mut counter: ResMut<Counter>, cursor: Option<Single<&mut CursorOptions>>, mut first: Local<bool>) {
     menu.playing = false;
     menu.panel = Panel::Main;
     menu.cursor = 0;
+    menu.from_station = false;
+    menu.note.clear();
+    let counter = std::mem::take(&mut counter.0);
+    if counter {
+        menu.panel = Panel::Quartermaster;
+        menu.from_station = true;
+    }
     if !*first {
         *first = true;
-        menu.panel = match std::env::var("RUST_REGIME_MENU").as_deref() {
+        menu.panel = if counter { Panel::Quartermaster } else { match std::env::var("RUST_REGIME_MENU").as_deref() {
             Ok("settings") => Panel::Settings,
             Ok("controls") => Panel::Controls,
             Ok("maps") => Panel::Maps,
-            Ok("gunsmith") => Panel::Gunsmith,
+            Ok("quartermaster") => Panel::Quartermaster,
             Ok("wardrobe") => Panel::Wardrobe,
             _ => Panel::Main,
-        };
+        } };
     }
     if let Some(mut cursor) = cursor {
         cursor.grab_mode = CursorGrabMode::None;
@@ -609,7 +625,7 @@ fn act(
         }
         return;
     }
-    let rows = rows(menu.panel, screen, tuned(&loadout, arsenal.kind()));
+    let rows = rows(menu.panel, screen, tuned(&loadout, arsenal.kind()), gunsmith::customizable(arsenal.kind()));
     let count = selectable(&rows).count();
     if nav.back {
         match menu.panel {
@@ -618,10 +634,7 @@ fn act(
                     next.set(Screen::Playing);
                 }
             }
-            p => {
-                menu.cursor = main_cursor(p);
-                menu.panel = Panel::Main;
-            }
+            p => leave(&mut menu, &mut next, p, save.as_deref(), &mut loadout, &mut arsenal, &closet),
         }
         return;
     }
@@ -633,7 +646,7 @@ fn act(
     if nav.moved != 0 && count > 0 {
         menu.cursor = (menu.cursor as i32 + nav.moved).rem_euclid(count as i32) as usize;
     }
-    if nav.weapon != 0 && menu.panel == Panel::Gunsmith {
+    if nav.weapon != 0 && menu.panel == Panel::Quartermaster {
         switch_weapon(&mut arsenal, nav.weapon);
     }
     let (cursor, dir, select) = match nav.click {
@@ -656,20 +669,27 @@ fn act(
                         exit.write(AppExit::Success);
                     }
                     Action::Back => {
-                        menu.cursor = main_cursor(menu.panel);
-                        menu.panel = Panel::Main;
-                    }
-                    Action::Gunsmith => {
-                        open(&mut menu, Panel::Gunsmith);
-                        if !gunsmith::customizable(arsenal.kind()) {
-                            switch_weapon(&mut arsenal, 1);
-                        }
+                        let panel = menu.panel;
+                        leave(&mut menu, &mut next, panel, save.as_deref(), &mut loadout, &mut arsenal, &closet);
                     }
                     Action::Maps => {
                         open(&mut menu, Panel::Maps);
                         menu.cursor = current_map();
                     }
                     Action::Wardrobe => open(&mut menu, Panel::Wardrobe),
+                    Action::Randomize => {
+                        if let Some(mut outfit) = closet.outfit()
+                            && let Some(w) = closet.wardrobe.as_mut()
+                        {
+                            let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_millis() as u64);
+                            wardrobe::randomize(&mut outfit, seed);
+                            w.set(outfit.clone());
+                            if let (Some(mut save), Some(file)) = (save, file) {
+                                wardrobe::persist(&mut save, &outfit);
+                                file.write(&save);
+                            }
+                        }
+                    }
                     Action::Settings => open(&mut menu, Panel::Settings),
                     Action::Controls => open(&mut menu, Panel::Controls),
                 }
@@ -697,39 +717,89 @@ fn act(
             }
         }
         Row::Weapon => {
-            if step != 0 {
+            let kind = arsenal.kind();
+            if select && !quartermaster::owns_weapon(save.as_deref(), kind) {
+                if let (Some(mut save), Some(file)) = (save, file) {
+                    let sale = quartermaster::buy_weapon(&mut save, kind);
+                    menu.note = sold(sale, kind.name());
+                    file.write(&save);
+                }
+            } else if step != 0 {
                 switch_weapon(&mut arsenal, step);
             }
         }
         Row::Slot(slot) | Row::Tune(slot) => {
-            if step != 0 {
+            let kind = arsenal.kind();
+            let part = loadout.part(kind, slot);
+            if row == Row::Slot(slot) && select && !quartermaster::owns_part(save.as_deref(), slot, part) {
+                if let (Some(mut save), Some(file)) = (save, file) {
+                    let sale = quartermaster::buy_part(&mut save, slot, part);
+                    menu.note = sold(sale, PARTS[slot][part].name);
+                    gunsmith::persist(&loadout, &mut save, &file);
+                }
+            } else if step != 0 {
                 if row == Row::Slot(slot) {
-                    loadout.cycle(arsenal.kind(), slot, step);
+                    loadout.cycle(kind, slot, step);
                 } else {
-                    loadout.cycle_tune(arsenal.kind(), slot, step);
+                    loadout.cycle_tune(kind, slot, step);
                 }
                 if let (Some(mut save), Some(file)) = (save, file) {
                     gunsmith::persist(&loadout, &mut save, &file);
                 }
             }
         }
-        Row::Character | Row::Colour(_) => {
+        Row::Preset | Row::Look(_) => {
             if step != 0
                 && let Some(mut outfit) = closet.outfit()
                 && let Some(characters) = closet.characters.as_deref()
                 && let Some(w) = closet.wardrobe.as_mut()
             {
+                let mut save = save;
                 match row {
-                    Row::Colour(c) => wardrobe::cycle_colour(&mut outfit, c),
-                    _ => wardrobe::cycle_character(characters, &mut outfit, step),
+                    Row::Look(i) => wardrobe::SLOTS[i].cycle(&mut outfit, characters, step),
+                    _ => {
+                        if let Some(save) = save.as_mut() {
+                            outfit = wardrobe::switch_preset(save, outfit, step);
+                        }
+                    }
                 }
                 w.set(outfit.clone());
                 if let (Some(mut save), Some(file)) = (save, file) {
-                    save.outfit = Some(outfit);
+                    wardrobe::persist(&mut save, &outfit);
                     file.write(&save);
                 }
             }
         }
+    }
+}
+
+/// Close the counter, or any other panel: the counter takes back what was only tried on and hands
+/// you the game again if you walked up to it.
+#[allow(clippy::too_many_arguments)]
+fn leave(menu: &mut Menu, next: &mut NextState<Screen>, panel: Panel, save: Option<&Save>, loadout: &mut Loadout, arsenal: &mut Arsenal, closet: &Closet) {
+    menu.note.clear();
+    if panel == Panel::Quartermaster {
+        if let Some(save) = save {
+            let start = quartermaster::starter(closet.characters.as_deref(), closet.class.as_deref());
+            quartermaster::sanitize(save, loadout, arsenal, start);
+        }
+        if menu.from_station {
+            menu.from_station = false;
+            next.set(Screen::Playing);
+            return;
+        }
+    }
+    menu.cursor = main_cursor(panel);
+    menu.panel = Panel::Main;
+}
+
+/// What the counter says about a sale.
+fn sold(sale: Sale, what: &str) -> String {
+    match sale {
+        Sale::Bought(cost) => format!("Bought {what}: -${cost}"),
+        Sale::Poor(short) => format!("{what}: ${short} short"),
+        Sale::Owned => format!("{what} is already yours"),
+        Sale::NotForSale => format!("{what} is not for sale"),
     }
 }
 
@@ -742,12 +812,12 @@ fn open(menu: &mut Menu, panel: Panel) {
     menu.cursor = 0;
 }
 
-/// Next customizable weapon in `dir`, raised at once for the gunsmith.
+/// Next weapon on the counter in `dir` (the knife is not for sale), raised at once.
 fn switch_weapon(arsenal: &mut Arsenal, dir: i32) {
     let mut i = arsenal.current as i32;
     for _ in 0..WEAPONS.len() {
-        i = (i + dir).rem_euclid(WEAPONS.len() as i32);
-        if gunsmith::customizable(WEAPONS[i as usize]) {
+        i = (i + dir.signum()).rem_euclid(WEAPONS.len() as i32);
+        if quartermaster::price(WEAPONS[i as usize]).is_some() {
             break;
         }
     }
@@ -821,9 +891,10 @@ fn rebuild(
     arsenal: Res<Arsenal>,
     tuning: Res<Tuning>,
     closet: Closet,
+    save: Option<Res<Save>>,
 ) {
     let wardrobe_changed = closet.wardrobe.as_ref().is_some_and(|w| w.is_changed());
-    let gun_changed = menu.panel == Panel::Gunsmith && arsenal.is_changed();
+    let gun_changed = menu.panel == Panel::Quartermaster && (arsenal.is_changed() || save.as_ref().is_some_and(|s| s.is_changed()));
     if !(menu.is_changed() || screen.is_changed() || settings.is_changed() || loadout.is_changed() || gun_changed || wardrobe_changed) {
         return;
     }
@@ -835,7 +906,7 @@ fn rebuild(
         return;
     }
     let kind = arsenal.kind();
-    let rows = rows(menu.panel, screen, tuned(&loadout, kind));
+    let rows = rows(menu.panel, screen, tuned(&loadout, kind), gunsmith::customizable(kind));
     let outfit = closet.outfit();
     let base = tuning.gun(kind).cloned();
     let fitted = base.as_ref().map(|g| loadout.gun(kind, g));
@@ -853,10 +924,14 @@ fn rebuild(
                 (Panel::Settings, _) => ("RUST REGIME", "SETTINGS"),
                 (Panel::Controls, _) => ("RUST REGIME", "CONTROLS"),
                 (Panel::Maps, _) => ("RUST REGIME", "MAPS"),
-                (Panel::Gunsmith, _) => ("RUST REGIME", "GUNSMITH"),
+                (Panel::Quartermaster, _) => ("BANKED", "QUARTERMASTER"),
                 (Panel::Wardrobe, _) => ("RUST REGIME", "WARDROBE"),
             };
-            h.spawn(text(small, 14.0, AMBER));
+            if menu.panel == Panel::Quartermaster {
+                h.spawn(text(format!("BANKED  ${}", save.as_ref().map_or(0, |s| s.banked)), 14.0, AMBER));
+            } else {
+                h.spawn(text(small, 14.0, AMBER));
+            }
             h.spawn(text(big, if big == "RUST REGIME" { 64.0 } else { 44.0 }, WHITE));
             h.spawn((Node { width: Val::Px(320.0), height: Val::Px(2.0), margin: UiRect::top(Val::Px(6.0)), ..default() }, BackgroundColor(AMBER)));
         });
@@ -870,17 +945,24 @@ fn rebuild(
         };
         p.spawn(Node { position_type: PositionType::Absolute, left: Val::Px(LEFT), top: Val::Px(top), bottom: Val::Px(44.0), width: Val::Px(width), flex_direction: FlexDirection::Column, row_gap: Val::Px(2.0), overflow: Overflow::clip_y(), ..default() }).with_children(|list| {
             if menu.panel == Panel::Wardrobe {
-                list.spawn(Node { display: Display::Grid, grid_template_columns: RepeatedGridTrack::px(3, 196.0), row_gap: Val::Px(8.0), column_gap: Val::Px(8.0), ..default() }).with_children(|grid| {
+                let preset = save.as_ref().map_or(0, |s| s.preset);
+                list.spawn(Node { display: Display::Grid, grid_template_columns: RepeatedGridTrack::px(4, 146.0), row_gap: Val::Px(6.0), column_gap: Val::Px(6.0), ..default() }).with_children(|grid| {
                     let mut index = 0;
                     for row in &rows {
-                        if let Row::Character | Row::Colour(_) = row {
-                            tile(grid, *row, index, index == menu.cursor, outfit.as_ref(), closet.characters.as_deref());
+                        if let Row::Preset | Row::Look(_) = row {
+                            tile(grid, *row, index, index == menu.cursor, outfit.as_ref(), closet.characters.as_deref(), preset);
                             index += 1;
                         }
                     }
                 });
-                list.spawn(Node { height: Val::Px(12.0), ..default() });
-                action_row(list, "BACK", rows.len() - 1, menu.cursor == rows.len() - 1, 22.0);
+                list.spawn(Node { height: Val::Px(10.0), ..default() });
+                let mut index = selectable(&rows).filter(|r| matches!(r, Row::Preset | Row::Look(_))).count();
+                for row in &rows {
+                    if let Row::Action(label, _) = row {
+                        action_row(list, label, index, menu.cursor == index, 22.0);
+                        index += 1;
+                    }
+                }
                 return;
             }
             let mut index = 0;
@@ -905,13 +987,22 @@ fn rebuild(
                         index += 1;
                     }
                     Row::Weapon => {
-                        value_row(list, "WEAPON", kind.name(), None, None, index, index == menu.cursor, true);
+                        let value = match (quartermaster::owns_weapon(save.as_deref(), kind), quartermaster::price(kind)) {
+                            (false, Some(cost)) => format!("{}  ${cost}", kind.name()),
+                            _ => format!("{}  OWNED", kind.name()),
+                        };
+                        let note = (!quartermaster::owns_weapon(save.as_deref(), kind)).then_some("ENTER buys it");
+                        value_row(list, "WEAPON", &value, None, note, index, index == menu.cursor, true);
                         list.spawn(Node { height: Val::Px(10.0), ..default() });
                         index += 1;
                     }
                     Row::Slot(slot) => {
-                        let part = &PARTS[slot][loadout.part(kind, slot)];
-                        value_row(list, SLOTS[slot], part.name, None, Some(part.desc), index, index == menu.cursor, true);
+                        let at = loadout.part(kind, slot);
+                        let part = &PARTS[slot][at];
+                        let owned = quartermaster::owns_part(save.as_deref(), slot, at);
+                        let value = if owned { part.name.to_string() } else { format!("{}  ${}", part.name, quartermaster::PART_PRICES[slot][at]) };
+                        let note = if owned { part.desc.to_string() } else { format!("{}.  ENTER buys it", part.desc) };
+                        value_row(list, SLOTS[slot], &value, None, Some(&note), index, index == menu.cursor, true);
                         index += 1;
                     }
                     Row::Tune(slot) => {
@@ -925,8 +1016,11 @@ fn rebuild(
                         value_row(list, m.name, if i == current_map() { "LOADED" } else { "" }, None, Some(m.desc), index, index == menu.cursor, false);
                         index += 1;
                     }
-                    Row::Character | Row::Colour(_) => {}
+                    Row::Preset | Row::Look(_) => {}
                 }
+            }
+            if menu.panel == Panel::Quartermaster && !menu.note.is_empty() {
+                list.spawn((text(menu.note.clone(), 15.0, AMBER), Node { margin: UiRect::top(Val::Px(10.0)), ..default() }));
             }
             if menu.panel == Panel::Settings {
                 list.spawn((text("* takes effect after a restart.  Saved to settings.toml.", 12.0, DIM), Node { margin: UiRect::top(Val::Px(4.0)), ..default() }));
@@ -936,8 +1030,8 @@ fn rebuild(
             }
         });
 
-        // Gunsmith stat bars, bottom right.
-        if let (Panel::Gunsmith, Some(base), Some(fitted)) = (menu.panel, &base, &fitted) {
+        // The gun's stat bars, bottom right.
+        if let (Panel::Quartermaster, Some(base), Some(fitted)) = (menu.panel, &base, &fitted) {
             p.spawn((Node { width: Val::Px(360.0), padding: UiRect::all(Val::Px(16.0)), row_gap: Val::Px(8.0), border: UiRect::all(Val::Px(1.0)), ..abs(None, Some(LEFT), Some(56.0), None) }, BackgroundColor(PANEL), BorderColor::all(FAINT))).with_children(|s| {
                 s.spawn(text(format!("{}  STATS", kind.name()), 14.0, AMBER));
                 for ((name, b), (_, f)) in gunsmith::stats(base).into_iter().zip(gunsmith::stats(fitted)) {
@@ -959,8 +1053,8 @@ fn rebuild(
                 Panel::Main if screen == Screen::Paused => &[("ENTER / A", "SELECT"), ("ESC / B", "RESUME")],
                 Panel::Main => &[("ENTER / A", "SELECT"), ("W S", "MOVE")],
                 Panel::Settings => &[("A D", "ADJUST"), ("ENTER / A", "TOGGLE"), ("ESC / B", "BACK")],
-                Panel::Gunsmith => &[("Q E / LB RB", "WEAPON"), ("A D", "PART / TUNE"), ("ESC / B", "BACK")],
-                Panel::Wardrobe => &[("A D", "STYLE"), ("ENTER / A", "NEXT"), ("ESC / B", "BACK")],
+                Panel::Quartermaster => &[("Q E / LB RB", "WEAPON"), ("A D", "PART / TUNE"), ("ENTER / A", "BUY"), ("ESC / B", "BACK")],
+                Panel::Wardrobe => &[("W S", "SLOT"), ("A D", "CHANGE"), ("ESC / B", "BACK")],
                 Panel::Controls => &[("ESC / B", "BACK")],
                 Panel::Maps => &[("ENTER / A", "PLAY"), ("ESC / B", "BACK")],
             };
@@ -1026,26 +1120,24 @@ fn arrow(p: &mut ChildSpawnerCommands, index: usize, dir: i32, selected: bool) {
         .with_child(text(if dir < 0 { "<" } else { ">" }, 16.0, if selected { AMBER } else { DIM }));
 }
 
-/// A wardrobe tile: the character worn, or a colour swatch.
-fn tile(p: &mut ChildSpawnerCommands, row: Row, index: usize, selected: bool, outfit: Option<&OutfitDef>, characters: Option<&Characters>) {
+/// A wardrobe tile: the preset in use, or one slot's value (with a swatch when it is a colour).
+fn tile(p: &mut ChildSpawnerCommands, row: Row, index: usize, selected: bool, outfit: Option<&OutfitDef>, characters: Option<&Characters>, preset: usize) {
     let (name, worn, swatch) = match row {
-        Row::Character => {
-            let worn = match (outfit, characters) {
-                (Some(o), Some(c)) => c.label(&o.character),
-                _ => "none".into(),
+        Row::Preset => ("PRESET".to_string(), format!("{} / {}", preset + 1, wardrobe::PRESETS), None),
+        Row::Look(i) => {
+            let slot = wardrobe::SLOTS[i];
+            let (worn, swatch) = match (outfit, characters) {
+                (Some(o), Some(c)) => (slot.value(o, c), slot.swatch(o)),
+                _ => ("none".into(), None),
             };
-            ("CHARACTER".to_string(), worn.to_uppercase(), None)
-        }
-        Row::Colour(c) => {
-            let hex = outfit.map(|o| [&o.primary, &o.secondary, &o.accent][c].clone()).unwrap_or_default();
-            (["PRIMARY", "SECONDARY", "ACCENT"][c].to_string(), hex.clone(), Srgba::hex(&hex).ok().map(Color::from))
+            (slot.label().to_string(), worn, swatch)
         }
         _ => return,
     };
     p.spawn((
         Button,
         RowId(index),
-        Node { height: Val::Px(74.0), padding: UiRect::all(Val::Px(10.0)), flex_direction: FlexDirection::Column, justify_content: JustifyContent::SpaceBetween, border: UiRect::all(Val::Px(1.0)), ..default() },
+        Node { height: Val::Px(64.0), padding: UiRect::all(Val::Px(8.0)), flex_direction: FlexDirection::Column, justify_content: JustifyContent::SpaceBetween, border: UiRect::all(Val::Px(1.0)), overflow: Overflow::clip(), ..default() },
         BorderColor::all(if selected { AMBER } else { FAINT }),
         BackgroundColor(if selected { Color::srgba(1.0, 0.72, 0.25, 0.12) } else { PANEL }),
     ))
@@ -1100,19 +1192,22 @@ mod tests {
 
     #[test]
     fn every_panel_has_rows_and_back_lands_on_its_opener() {
-        for panel in [Panel::Main, Panel::Maps, Panel::Settings, Panel::Controls, Panel::Gunsmith, Panel::Wardrobe] {
-            let panel_rows = rows(panel, Screen::Paused, [true; 4]);
+        for panel in [Panel::Main, Panel::Maps, Panel::Settings, Panel::Controls, Panel::Quartermaster, Panel::Wardrobe] {
+            let panel_rows = rows(panel, Screen::Paused, [true; 4], true);
             assert!(selectable(&panel_rows).count() > 0, "{panel:?}");
-            if panel != Panel::Main {
-                let main = rows(Panel::Main, Screen::Paused, [false; 4]);
+            if !matches!(panel, Panel::Main | Panel::Quartermaster) {
+                let main = rows(Panel::Main, Screen::Paused, [false; 4], false);
                 let opener = selectable(&main).nth(main_cursor(panel)).unwrap();
                 assert!(matches!(opener, Row::Action(name, _) if name == format!("{panel:?}").to_uppercase()), "{panel:?} -> {opener:?}");
             }
         }
-        assert_eq!(rows(Panel::Main, Screen::Title, [false; 4])[0], Row::Action("PLAY", Action::Play));
-        assert_eq!(rows(Panel::Main, Screen::Paused, [false; 4])[0], Row::Action("RESUME", Action::Resume));
-        assert_eq!(selectable(&rows(Panel::Maps, Screen::Title, [false; 4])).count(), MAPS.len() + 1);
-        assert!(MAPS.iter().any(|m| m.level == "island" && m.mode.is_empty()) && MAPS[0].mode.is_empty(), "the island leads");
-        assert_eq!(selectable(&rows(Panel::Gunsmith, Screen::Paused, [true, false, false, false])).count(), 1 + 4 + 1 + 1, "a tune row under the fitted optic");
+        assert_eq!(rows(Panel::Main, Screen::Title, [false; 4], false)[0], Row::Action("PLAY", Action::Play));
+        assert_eq!(rows(Panel::Main, Screen::Paused, [false; 4], false)[0], Row::Action("RESUME", Action::Resume));
+        assert_eq!(selectable(&rows(Panel::Maps, Screen::Title, [false; 4], false)).count(), MAPS.len() + 1);
+        assert!(MAPS.iter().any(|m| m.level == "system" && m.mode.is_empty()) && MAPS[0].mode.is_empty(), "the solar system leads");
+        assert_eq!(selectable(&rows(Panel::Quartermaster, Screen::Paused, [true, false, false, false], true)).count(), 1 + 4 + 1 + 1, "a tune row under the fitted optic");
+        assert_eq!(selectable(&rows(Panel::Quartermaster, Screen::Paused, [false; 4], false)).count(), 2, "a rocket launcher has the picker and Back");
+        let main = rows(Panel::Main, Screen::Paused, [false; 4], false);
+        assert!(!main.iter().any(|r| matches!(r, Row::Action(name, _) if name.contains("GUNSMITH"))), "the quartermaster replaced the gunsmith");
     }
 }

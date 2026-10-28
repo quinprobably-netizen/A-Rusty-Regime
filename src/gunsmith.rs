@@ -1,6 +1,7 @@
 //! Gun customization: four attachment slots per hitscan weapon, each part a multiplier on the
 //! gun's tuning and a real mesh on the weapon model (`att.<slot>.<part>`, shown by `viewmodel.rs`).
-//! The loadout lives in `save.toml`; the menu in `menu.rs` edits it.
+//! The loadout lives in `save.toml`; the quartermaster's counter in `menu.rs` edits it, and
+//! `quartermaster.rs` decides which parts and guns you own.
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -179,7 +180,7 @@ impl Plugin for GunsmithPlugin {
     }
 }
 
-fn restore(save: Option<Res<Save>>, mut loadout: ResMut<Loadout>) {
+pub fn restore(save: Option<Res<Save>>, mut loadout: ResMut<Loadout>) {
     if let Some(l) = save.and_then(|s| s.loadout.clone()) {
         *loadout = l;
     }

@@ -99,8 +99,22 @@ pub struct Save {
     pub missions_done: usize,
     /// Clothes picked at the camp wardrobe, over the class default.
     pub outfit: Option<crate::character::OutfitDef>,
+    /// The wardrobe's saved looks and which one `outfit` is.
+    pub presets: Vec<crate::character::OutfitDef>,
+    pub preset: usize,
     /// Gunsmith parts fitted to each weapon.
     pub loadout: Option<crate::gunsmith::Loadout>,
+    /// Weapons owned, by id: the starter kit, then whatever the quartermaster has sold. Empty on
+    /// worlds with no quartermaster (and in an old save, until the solar system grants the kit),
+    /// where every weapon is yours.
+    pub weapons: Vec<String>,
+    /// Attachments bought, a bit per part in each slot (part 0, the bare gun's own, is always yours).
+    pub parts: [u8; 4],
+    /// How far the Yard has tuned the Kestrel's engines.
+    pub ship_level: u8,
+    /// The courier parcel being carried, and how many have been delivered.
+    pub contract: Option<crate::solar::station::Contract>,
+    pub contracts_done: u32,
 }
 
 /// What you carry right now.
