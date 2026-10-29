@@ -230,7 +230,8 @@ pub(crate) fn gather(
     input.jump_pressed |= pressed(Action::Jump);
     input.crouch_held = held(Action::Crouch);
     input.fire_held = held(Action::Fire);
-    input.aim_held = held(Action::Aim);
+    // Flying, right mouse is the missile trigger, read from the same field (`solar::ship`).
+    input.aim_held = held(Action::Aim) || held(Action::Missile);
     input.fire_pressed |= pressed(Action::Fire);
     input.reset_pressed |= pressed(Action::Respawn);
     input.reload_pressed |= pressed(Action::Reload);

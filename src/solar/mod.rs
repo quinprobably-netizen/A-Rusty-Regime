@@ -12,6 +12,7 @@ pub mod ai;
 pub mod base;
 pub mod combat;
 pub mod enemy;
+pub mod missile;
 pub mod loss;
 pub mod orbit;
 pub mod ship;
@@ -127,6 +128,7 @@ impl Plugin for SolarPlugin {
         add_streaming(app);
         ship::build(app);
         combat::build(app);
+        missile::build(app);
         ai::build(app);
         enemy::build(app);
         loss::build(app);
@@ -581,6 +583,7 @@ pub fn hand_off(world: &mut World, new: &str, to: Option<Vec3>) {
         let (translation, rotation) = (new_origin.world(p), (turn * tf.rotation).normalize());
         entity.insert((Transform { translation, rotation, ..tf }, Position(translation), Rotation(rotation), LinearVelocity(v), AngularVelocity(carry_spin(w))));
     }
+    missile::carry(world, &origin, &new_origin, turn, convert);
     {
         let translation = new_origin.world(player_new);
         let mut entity = world.entity_mut(player_entity);
@@ -760,12 +763,13 @@ fn flight_text(
             f(Action::ToggleView),
             f(Action::Use),
         ));
-        // The nose guns, on a ship that has them (the pad's button is still to be decided).
+        // The nose guns and missiles, on a ship that has them (the pad's buttons are still to be
+        // decided).
         if let Some((_, _, ship)) = flying
             && !specs.ship[ship.spec].guns.is_empty()
             && !pad
         {
-            line.push_str(&format!("  [{}] guns", f(Action::Fire)));
+            line.push_str(&format!("  [{}] guns  [{}] missile", f(Action::Fire), f(Action::Missile)));
         }
         if hud.as_ref().is_some_and(|h| h.too_fast > 0.0) {
             line.push_str(&format!("\nTOO FAST TO LEAVE: slow under {:.0} m/s, [{}] stops", ship::LEAVE_SPEED, f(Action::Stop)));

@@ -26,7 +26,9 @@
 # breaks off for about `break_time` seconds (2.5) at `break_turn` of full stick (1: a hard turn;
 # less is a wide one) and opens out to three times that range before it turns back in; at
 # `flee_hull` of its hull it runs for good (0, never); further than `boost_range` (1500) it
-# boosts; its aim wanders up to `wobble` degrees across the lead (1).
+# boosts; its aim wanders up to `wobble` degrees across the lead (1). With `missiles = true` it
+# flies with homing missiles (`src/solar/missile.rs`; every ship with guns carries them): while it
+# has one it holds its nose on you to lock and fires once locked (default false: guns only).
 
 [[ship]]
 id = "kestrel"
@@ -230,7 +232,7 @@ faction = "pmc"
 shield = 50
 hull = 70
 guns = [[-1.6, -0.05, -1.0], [1.6, -0.05, -1.0]]
-ai = { attack_range = 1200, hold = 600, break_range = 300, break_time = 3, break_turn = 0.9, wobble = 1.2 }   # stands off and shoots
+ai = { attack_range = 1200, hold = 600, break_range = 300, break_time = 3, break_turn = 0.9, wobble = 1.2, missiles = true }   # stands off, prefers missiles
 mass = 3500          # the PMC's patrol: light and quick, keeps its distance
 thrust = 38
 lift = 22

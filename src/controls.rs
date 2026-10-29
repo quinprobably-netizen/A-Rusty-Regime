@@ -71,6 +71,8 @@ pub enum Action {
     Stop,
     /// Hold to look around the cockpit or the hull; let go and the view swings back.
     FreeLook,
+    /// Fire a homing missile at the locked ship (`solar::missile`), or straight ahead.
+    Missile,
     // Menus
     Up,
     Down,
@@ -111,6 +113,7 @@ impl Action {
             Action::Boost => "Boost",
             Action::Stop => "Stop (match ground speed)",
             Action::FreeLook => "Look around (hold)",
+            Action::Missile => "Missile (hold a ship in the nose to lock)",
             Action::Up => "Up",
             Action::Down => "Down",
             Action::Left => "Left / decrease",
@@ -264,6 +267,7 @@ pub const BINDINGS: &[Bind] = &[
     scaled(pad(Fly, Yaw, P::RightTrigger), -1.0),
     key(Fly, Boost, K::ShiftLeft),
     bind(Fly, Fire, Source::Mouse(MouseButton::Left)),
+    bind(Fly, Missile, Source::Mouse(MouseButton::Right)),
     pad(Fly, Boost, P::South),
     key(Fly, Stop, K::KeyX),
     pad(Fly, Stop, P::North),
