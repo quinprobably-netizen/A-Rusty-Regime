@@ -354,11 +354,9 @@ fn spawn_fleet(world: &mut World) {
     let frame = surface.frame(pad);
     let Surface::Sphere(sphere) = &surface else { return };
     let count = world.resource::<Ships>().ship.len().min(BERTHS.len());
-    for (spec, &x) in BERTHS.iter().enumerate().take(count) {
-        let rest = world.resource::<Ships>().ship[spec].rest;
-        let deck = if spec == 0 { crate::planet::COURSE_DECK } else { super::berth_deck(sphere, pad, x) };
-        let at = origin.world(pad + frame * Vec3::new(x, deck + rest + 0.05, -2.0));
-        spawn(world, spec, Transform::from_translation(at).with_rotation(frame));
+    for spec in 0..count {
+        let Some((at, rotation)) = berth(world, spec) else { continue };
+        spawn(world, spec, Transform::from_translation(origin.world(at)).with_rotation(rotation));
     }
     // One fighter parked on its own slab off the apron, nose west, to look at (and, with
     // `combat`, to shoot at). `RUST_REGIME_FIGHTER=<id>` picks another; see `place_fighter`.
@@ -368,6 +366,19 @@ fn spawn_fleet(world: &mut World) {
     let deck = super::fighter_deck(sphere, pad) + ships.ship[spec].rest + 0.05;
     let at = origin.world(pad + frame * Vec3::new(FIGHTER_BERTH[0], deck, FIGHTER_BERTH[1]));
     spawn(world, spec, Transform::from_translation(at).with_rotation(frame * Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)));
+}
+
+/// Where apron ship `spec` stands on its berth at Haven (the Roost's apron), nose north: its
+/// centre in Haven's body coordinates and its turn there. `None` for a ship with no berth.
+pub fn berth(world: &World, spec: usize) -> Option<(Vec3, Quat)> {
+    let &x = BERTHS.get(spec)?;
+    let solar = world.resource::<Solar>();
+    let sphere = solar.spheres.get("home")?;
+    let pad = solar.pad;
+    let frame = Surface::Sphere(sphere.clone()).frame(pad);
+    let rest = world.resource::<Ships>().ship.get(spec)?.rest;
+    let deck = if spec == 0 { crate::planet::COURSE_DECK } else { super::berth_deck(sphere, pad, x) };
+    Some((pad + frame * Vec3::new(x, deck + rest + 0.05, -2.0), frame))
 }
 
 /// Dev aid: with `RUST_REGIME_FIGHTER=<id>[,<metres>]` the parked fighter waits in front of the

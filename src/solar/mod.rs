@@ -13,6 +13,7 @@ pub mod base;
 pub mod combat;
 pub mod enemy;
 pub mod missile;
+pub mod loss;
 pub mod orbit;
 pub mod ship;
 pub mod station;
@@ -130,6 +131,7 @@ impl Plugin for SolarPlugin {
         missile::build(app);
         ai::build(app);
         enemy::build(app);
+        loss::build(app);
         base::build(app);
         station::build(app);
         app.add_systems(Startup, crate::quartermaster::start_kit.after(crate::gunsmith::restore));
@@ -533,9 +535,26 @@ pub fn switch_anchor(world: &mut World) {
     let p_old = origin.body(player_tf.translation).as_dvec3();
     let (inertial, _) = solar.bodies.pose(&old, epoch).to_inertial(p_old, velocity.as_dvec3());
     let new = solar.bodies.anchor_at(inertial, epoch);
-    if new == old {
-        return;
+    if new != old {
+        hand_off(world, &new, None);
     }
+}
+
+/// Re-anchors physics on body `new`: the player and every ship are carried into its frame with
+/// their inertial positions and velocities kept, the origin restarts on the player, the old ground
+/// and fixtures go and the new body's stream in. With `to` the player is put there instead (body
+/// coordinates on `new`), at rest, as a respawn after being shot down does; `new` may then be the
+/// anchor already, which just restarts the origin and the ground there.
+pub fn hand_off(world: &mut World, new: &str, to: Option<Vec3>) {
+    let solar = world.resource::<Solar>();
+    let epoch = solar.epoch;
+    let old = solar.anchor.clone();
+    let new = new.to_string();
+    let origin = *world.resource::<Origin>();
+    let Ok((player_entity, player_tf, player)) = world.query::<(Entity, &Transform, &Player)>().single(world).map(|(e, t, p)| (e, *t, p.velocity)) else { return };
+    let driving = world.get::<crate::vehicle::Driving>(player_entity).map(|d| d.0);
+    let velocity = driving.and_then(|ship| world.get::<LinearVelocity>(ship)).map_or(player, |v| v.0);
+    let solar = world.resource::<Solar>();
     let bodies = solar.bodies.clone();
     let sphere = solar.spheres[&new].clone();
     info!("anchor {old} -> {new} at epoch {epoch:.0} s");
@@ -551,7 +570,7 @@ pub fn switch_anchor(world: &mut World) {
     };
 
     // Where the player lands in the new frame decides the new origin.
-    let (player_new, player_v) = convert(origin.body(player_tf.translation), velocity);
+    let (player_new, player_v) = to.map_or_else(|| convert(origin.body(player_tf.translation), velocity), |p| (p, Vec3::ZERO));
     let new_origin = Origin::at(player_new, QUANTUM);
 
     let ships: Vec<Entity> = world.query_filtered::<Entity, With<ship::Ship>>().iter(world).collect();

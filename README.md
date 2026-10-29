@@ -159,7 +159,7 @@ zooms in and tightens the spread.
 
 ## Survival and the world
 - **Health**: heavy hits make you bleed until a medkit. Health regenerates only up to 60% and not while bleeding.
-- **Save**: banked money, runs and deaths persist in `save.toml` next to the binary (`RUST_REGIME_SAVE` overrides the path).
+- **Save**: banked money, what you own, ships shot down (by faction) and times you were shot down persist in `save.toml` next to the binary (`RUST_REGIME_SAVE` overrides the path).
 - **Sound** is synthesized at startup. Put a CC0 `.ogg` with the same name in
   `assets/sounds/` (rifle, shotgun, pistol, rocket, explosion, hit, hurt, jump, land,
   wind) to replace one.
@@ -230,6 +230,15 @@ strafing passes and wide turns, the Welder closes right in); the rest is in `[sh
 `RUST_REGIME_RAIDERS=1` sends a pack at once, and `RUST_REGIME_SCREENSHOT_LOOK=<yaw>,<pitch>`
 (degrees, or `enemy` for the nearest enemy) holds the flight view looking round, e.g.
 `RUST_REGIME_AT=home,1500 RUST_REGIME_RAIDERS=1 RUST_REGIME_SCREENSHOT_LOOK=100,10`.
+**Bounty and loss:** an enemy you shoot down pays a bounty into the bank (Jackal $60, Sentry
+$120, Censer $150, Welder $200) with a `+$60 BOUNTY` line over the HUD, and counts in the save's
+`kills` and its faction's tally; a kill by anyone else pays nothing. If your own ship is shot
+down, the camera holds on the blast for three seconds under a SHOT DOWN card, then you are back
+on the Roost's apron at Haven, from anywhere in the system, in a fresh Kestrel on the pad. It
+costs the courier parcel and a quarter of the bank (rounded down; nothing if both are empty) and
+counts in `deaths`; your guns, parts and engine tune are kept. The numbers are in
+`[ship_combat]`. `RUST_REGIME_DIE=<seconds>` shoots down the ship you fly after that long, for
+screenshots of the card.
 
 Each faction has a base on its world, from `assets/bases.toml` and
 `assets/models/bases/<id>.glb` (built like the ships: `tools/bases/build.sh [ids]

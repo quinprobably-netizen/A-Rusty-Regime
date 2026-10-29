@@ -231,11 +231,11 @@ pub fn navigate(rel: Vec3, v: Vec3, target_v: Vec3, nav: f32) -> Vec3 {
     heading.cross(pull) / speed
 }
 
-/// A missile's hit on `hull`: its damage, shield first, the same path as a shot. `_by` is the ship
-/// that fired it, for the kill to be put down to once `Hull` records who hit it (the loss-rule
-/// and bounty step): then this is `hull.hit_by(t.missile_damage, by, t)`.
-fn strike(hull: &mut Hull, _by: Entity, t: &ShipCombat) {
-    hull.hit(t.missile_damage, t);
+/// A missile's hit on `hull`: its damage, shield first, the same path as a shot. `by` is the ship
+/// that fired it, which `Hull` records so the kill is put down to it (the bounty goes to the
+/// player when it was the player's ship).
+fn strike(hull: &mut Hull, by: Entity, t: &ShipCombat) {
+    hull.hit_by(t.missile_damage, by, t);
 }
 
 /// Flies every missile one tick: speeds it up, homes it, and bursts it on whatever it reaches.

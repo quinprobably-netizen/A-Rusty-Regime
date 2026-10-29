@@ -310,3 +310,9 @@ missile_life = 8    # s, then it bursts on its own
 missile_fuse = 8    # m from its target it bursts
 missile_damage = 80 # shield first, then hull
 ai_missile_gap = 8  # s between an enemy pilot's launches
+# what a fight pays and costs
+bounty = { jackal = 60, sentry = 120, censer = 150, welder = 200 }  # $ into the bank per kill, by ship id
+bank_loss = 0.25    # share of the bank lost when your ship is shot down, rounded down
+downed = 3          # s watching the wreck before you are back at the Roost in a fresh Kestrel
+loss_card = 4       # s the SHOT DOWN card stays up after that
+bounty_line = 3     # s the +$ BOUNTY line stays over the HUD

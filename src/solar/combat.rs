@@ -4,7 +4,9 @@
 //! short-lived projectile at `[ship_combat] gun_speed` on top of the ship's own velocity, swept by
 //! a ray each tick so nothing tunnels at a closing speed of kilometres a second, with no gravity
 //! and a little drag in air. It never hurts its own ship or its own side. Damage drains the shield
-//! first, which comes back after a quiet spell; a hull at zero blows the ship apart.
+//! first, which comes back after a quiet spell; a hull at zero blows the ship apart. Each hull
+//! remembers whose fire hit it last, so the `ShipDestroyed` message names the killer (`loss` pays
+//! the bounty from it and takes the player's own ship through the loss rule).
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -49,19 +51,29 @@ pub struct Hull {
     pub max_shield: f32,
     /// Seconds until the shield starts to come back; every hit starts the wait again.
     pub shield_regen_after: f32,
+    /// The ship whose fire landed the last hit, if anyone's did: at zero hp it is the killer.
+    pub last_hit_by: Option<Entity>,
 }
 
 impl Hull {
     pub fn new(hp: f32, shield: f32) -> Self {
-        Self { hp, shield, max_shield: shield, shield_regen_after: 0.0 }
+        Self { hp, shield, max_shield: shield, shield_regen_after: 0.0, last_hit_by: None }
     }
 
-    /// Takes `damage`: the shield holds what it can and the hull takes the rest.
+    /// Takes `damage` from nobody's fire: the shield holds what it can and the hull takes the rest.
     pub fn hit(&mut self, damage: f32, t: &ShipCombat) {
         let held = damage.min(self.shield);
         self.shield -= held;
         self.hp = (self.hp - (damage - held)).max(0.0);
         self.shield_regen_after = t.shield_delay;
+        self.last_hit_by = None;
+    }
+
+    /// Takes `damage` fired by ship `by` (a shot's or a missile's owner), who is then the killer
+    /// if this hit or none after it empties the hull.
+    pub fn hit_by(&mut self, damage: f32, by: Entity, t: &ShipCombat) {
+        self.hit(damage, t);
+        self.last_hit_by = Some(by);
     }
 
     /// `dt` seconds go by: after the quiet spell the shield comes back.
@@ -95,6 +107,16 @@ pub struct Projectile {
     faction: Faction,
 }
 
+/// A ship's hull reached zero this tick. Written for every ship, the flown one too; `killer` is
+/// the ship whose fire landed the last hit (`Hull::last_hit_by`), if anyone's.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct ShipDestroyed {
+    pub ship: Entity,
+    pub spec: usize,
+    pub faction: Faction,
+    pub killer: Option<Entity>,
+}
+
 /// What every shot looks like: a glowing streak.
 #[derive(Resource)]
 struct ShotLook {
@@ -103,7 +125,8 @@ struct ShotLook {
 }
 
 pub fn build(app: &mut App) {
-    app.add_observer(arm)
+    app.add_message::<ShipDestroyed>()
+        .add_observer(arm)
         .add_systems(Startup, load_look)
         .add_systems(FixedUpdate, (shields, fire, fly_projectiles, wreck).chain().after(crate::controller::ControllerSet));
 }
@@ -232,7 +255,7 @@ fn fly_projectiles(
             && let Ok((mut hull, faction)) = hulls.get_mut(body)
             && *faction != shot.faction
         {
-            hull.hit(t.gun_damage, t);
+            hull.hit_by(t.gun_damage, shot.owner, t);
         }
         if let (Some(fx), Some(materials)) = (&fx, materials.as_mut()) {
             spawn_blast(&mut commands, fx, materials, point - dir * 0.2, 0.8);
@@ -241,14 +264,23 @@ fn fly_projectiles(
     }
 }
 
-/// A ship whose hull is gone blows apart. The player's own ship is left to the loss rule, which
-/// is still to come, so one being flown is never removed from under its pilot.
-pub(super) fn wreck(mut commands: Commands, specs: Res<Ships>, fx: Option<Res<FxAssets>>, mut materials: Option<ResMut<Assets<StandardMaterial>>>, ships: Query<(Entity, &Ship, &Hull, &Transform)>) {
-    for (entity, ship, hull, tf) in &ships {
-        if hull.hp > 0.0 || ship.pilot.is_some() {
+/// A ship whose hull is gone blows apart, and says so in a `ShipDestroyed`. The one the player
+/// flies is not removed from under its pilot here: `loss` takes it through the loss rule.
+#[allow(clippy::type_complexity)]
+pub(super) fn wreck(
+    mut commands: Commands,
+    specs: Res<Ships>,
+    fx: Option<Res<FxAssets>>,
+    mut materials: Option<ResMut<Assets<StandardMaterial>>>,
+    mut destroyed: MessageWriter<ShipDestroyed>,
+    ships: Query<(Entity, &Ship, &Hull, &Faction, &Transform)>,
+) {
+    for (entity, ship, hull, faction, tf) in &ships {
+        if hull.hp > 0.0 {
             continue;
         }
         info!("{} destroyed", specs.ship[ship.spec].name);
+        destroyed.write(ShipDestroyed { ship: entity, spec: ship.spec, faction: *faction, killer: hull.last_hit_by });
         if let (Some(fx), Some(materials)) = (&fx, materials.as_mut()) {
             let size = specs.ship[ship.spec].collider.first().map_or(Vec3::splat(4.0), |b| Vec3::from(b.size));
             spawn_blast(&mut commands, fx, materials, tf.translation, size.max_element() * 0.8);
@@ -256,6 +288,8 @@ pub(super) fn wreck(mut commands: Commands, specs: Res<Ships>, fx: Option<Res<Fx
                 spawn_blast(&mut commands, fx, materials, tf.translation + tf.rotation * (corner * size), size.max_element() * 0.45);
             }
         }
-        commands.entity(entity).despawn();
+        if ship.pilot.is_none() {
+            commands.entity(entity).despawn();
+        }
     }
 }
