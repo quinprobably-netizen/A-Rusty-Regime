@@ -103,7 +103,8 @@ pub struct Projectile {
     pub velocity: Vec3,
     /// Seconds left before it is gone (its range at muzzle speed).
     life: f32,
-    owner: Entity,
+    /// The ship that fired it.
+    pub owner: Entity,
     faction: Faction,
 }
 
@@ -117,6 +118,12 @@ pub struct ShipDestroyed {
     pub killer: Option<Entity>,
 }
 
+/// A shot from ship `by` took shield or hull off another ship: the cockpit's hit marker.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct ShotLanded {
+    pub by: Entity,
+}
+
 /// What every shot looks like: a glowing streak.
 #[derive(Resource)]
 struct ShotLook {
@@ -126,6 +133,7 @@ struct ShotLook {
 
 pub fn build(app: &mut App) {
     app.add_message::<ShipDestroyed>()
+        .add_message::<ShotLanded>()
         .add_observer(arm)
         .add_systems(Startup, load_look)
         .add_systems(FixedUpdate, (shields, fire, fly_projectiles, wreck).chain().after(crate::controller::ControllerSet));
@@ -222,6 +230,7 @@ fn fly_projectiles(
     spatial: SpatialQuery,
     fx: Option<Res<FxAssets>>,
     mut materials: Option<ResMut<Assets<StandardMaterial>>>,
+    mut landed: MessageWriter<ShotLanded>,
     mut shots: Query<(Entity, &mut Projectile, &mut Transform)>,
     bodies: Query<&ColliderOf>,
     mut hulls: Query<(&mut Hull, &Faction)>,
@@ -256,6 +265,7 @@ fn fly_projectiles(
             && *faction != shot.faction
         {
             hull.hit_by(t.gun_damage, shot.owner, t);
+            landed.write(ShotLanded { by: shot.owner });
         }
         if let (Some(fx), Some(materials)) = (&fx, materials.as_mut()) {
             spawn_blast(&mut commands, fx, materials, point - dir * 0.2, 0.8);

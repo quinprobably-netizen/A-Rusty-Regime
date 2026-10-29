@@ -18,7 +18,7 @@ use crate::surface::Origin;
 const ARRIVED: f32 = 30.0;
 /// How far inside the screen edge a clamped marker sits, pixels: clear of the compass above and
 /// the plates below.
-const MARGIN: Vec2 = Vec2::new(36.0, 105.0);
+pub(super) const MARGIN: Vec2 = Vec2::new(36.0, 105.0);
 /// Past this fraction of the screen width a label goes to the left of its diamond.
 const FLIP_AT: f32 = 0.7;
 /// How high over a base the marker floats, metres.
@@ -67,7 +67,7 @@ pub fn project(local: Vec3, tan_half: f32, size: Vec2, margin: Vec2) -> (Vec2, b
     (centre + dir * k, false)
 }
 
-fn km(m: f32) -> String {
+pub(super) fn km(m: f32) -> String {
     if m >= 10_000.0 { format!("{:.0} km", m / 1000.0) } else if m >= 1000.0 { format!("{:.1} km", m / 1000.0) } else { format!("{m:.0} m") }
 }
 

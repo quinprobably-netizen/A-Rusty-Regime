@@ -94,6 +94,15 @@ Enter buys it, once, for every gun. Whatever is not bought comes off again when 
 Compass tape, health plate bottom left, movement readout (or ship
 dials) bottom centre, weapon plate with slot pips, fitted parts and heat bottom right, and a
 crosshair that opens with the gun's real spread. The Esc hint fades after a few seconds.
+Flying, the ship card (hull in segments and the shield bar) and the guns card (nose gun heat,
+red and OVERHEATED while they cool, and the missiles on the rails with the next one's reload)
+take the health and weapon plates' places, which stay hidden until you are on foot again, the
+SHOT DOWN pause and card included. Each enemy ship within 4 km (the nearest eight) carries a
+diamond in its faction's colour with its type and distance, clamped to the screen edge like
+the waypoints; the one in your nose gets a ring of ticks that light up as the missile lock
+comes on and close into a solid ring once it is locked. Four white ticks flash round the nose
+when your shots land, wider and red on a kill, and MISSILE LOCK / MISSILE! shows under the
+compass while a Sentry has you locked or its missile is in the air.
 
 ## Movement
 - **Source/TF2 core** at 66 ticks/s: ground friction and acceleration, air strafing (30u air cap), bunny hopping (jump on the landing tick to skip friction), crouch-jumping (legs tuck up in the air), ramp sliding and surfing on steep slopes, stair stepping.
@@ -162,7 +171,13 @@ zooms in and tightens the spread.
 - **Save**: banked money, what you own, ships shot down (by faction) and times you were shot down persist in `save.toml` next to the binary (`RUST_REGIME_SAVE` overrides the path).
 - **Sound** is synthesized at startup. Put a CC0 `.ogg` with the same name in
   `assets/sounds/` (rifle, shotgun, pistol, rocket, explosion, hit, hurt, jump, land,
-  wind) to replace one.
+  wind, ship_gun_0..2, missile_launch, shield_hit, hull_hit, lock_beep, lock_tone,
+  missile_warning) to replace one. In a ship fight you hear the nose guns (other ships' quieter
+  with distance), missile launches, wrecks (the explosion, deeper) and missile bursts, a crackle
+  on your shield and a clang through to the hull, lock beeps that climb as the lock fills and a
+  steady tone once locked, and a chirp while an enemy missile is on you. Sound does not carry in
+  vacuum: outside the ship, things are as loud as the air around you lets them be (nothing on
+  Frost or in space), while your own cockpit's sounds always play.
 
 All numbers live in `tuning.toml`.
 

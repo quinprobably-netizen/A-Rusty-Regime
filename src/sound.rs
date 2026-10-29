@@ -1,6 +1,8 @@
 //! Sound (hyper-realism stage R2), all synthesized at startup so the download stays small:
 //! gunshots with a crack, a thump and a tail; footsteps, landings and hits; looping engines
-//! pitched by rpm on each vehicle; wind that grows with height and speed;
+//! pitched by rpm on each vehicle; wind that grows with height and speed; and the ship fight's
+//! nose guns, missile launches, wrecks, shield and hull hits, lock tone and missile warning,
+//! played as `solar::cockpit` cues them (it has already counted distance and the air).
 //! Drop CC0 samples in `assets/sounds/`
 //! later and `load` picks them over the synthesis.
 
@@ -13,6 +15,8 @@ use bevy::prelude::*;
 use crate::camera::PlayerCamera;
 use crate::controller::{MoveState, Player};
 use crate::health::{PlayerHealth, PlayerHit};
+use crate::hud::FlightHud;
+use crate::solar::cockpit::{Cue, Sfx};
 use crate::tuning::Tuning;
 use crate::weapon::{Arsenal, Bullet, Explosion, WeaponFired, WeaponKind, WEAPONS};
 
@@ -22,7 +26,7 @@ impl Plugin for SoundPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, load).add_systems(
             Update,
-            (listener, weapons, explosions, hits, steps, ambience, reload_foley, whizz_by).run_if(resource_exists::<Sounds>),
+            (listener, weapons, explosions, hits, steps, ambience, reload_foley, whizz_by, fight, lock_tone).run_if(resource_exists::<Sounds>),
         );
     }
 }
@@ -46,6 +50,15 @@ pub struct Sounds {
     whizz: Handle<AudioSource>,
     draw: Handle<AudioSource>,
     foley: Vec<Handle<AudioSource>>,
+    /// The ship fight: takes of a nose gun's shot, a missile launch, shield and hull hits, a lock
+    /// beep, the steady locked tone (a loop) and the missile warning.
+    ship_gun: Vec<Handle<AudioSource>>,
+    launch: Handle<AudioSource>,
+    shield_hit: Handle<AudioSource>,
+    hull_hit: Handle<AudioSource>,
+    lock_beep: Handle<AudioSource>,
+    lock_tone: Handle<AudioSource>,
+    warning: Handle<AudioSource>,
 }
 
 const RATE: u32 = 22050;
@@ -266,6 +279,68 @@ fn whoosh(seed: u64) -> Vec<f32> {
         .collect()
 }
 
+/// A missile leaving its rail: a thump as the motor lights, then a roar whose filter opens and a
+/// hiss, trailing off as it pulls away.
+fn launch(seed: u64) -> Vec<f32> {
+    let mut rng = Rng(seed);
+    let mut lp = LowPass::new(250.0);
+    let mut hp = LowPass::new(4000.0);
+    (0..(1.4 * RATE as f32) as usize)
+        .map(|i| {
+            let t = i as f32 / RATE as f32;
+            lp.a = (TAU * (250.0 + 2200.0 * (t / 0.3).min(1.0)) / RATE as f32).min(1.0);
+            let n = rng.next();
+            let roar = lp.run(n) * (t / 0.04).min(1.0) * (-t / 0.4).exp() * 1.6;
+            let hiss = (n - hp.run(n)) * (-t / 0.15).exp() * 0.35;
+            let thump = (TAU * 48.0 * t).sin() * (-t / 0.1).exp() * 0.9;
+            soft(roar + hiss + thump)
+        })
+        .collect()
+}
+
+/// The shield taking a hit: a fizz and a buzzing zap that drops in pitch.
+fn zap(seed: u64) -> Vec<f32> {
+    let mut rng = Rng(seed);
+    let mut phase = 0.0;
+    (0..(0.3 * RATE as f32) as usize)
+        .map(|i| {
+            let t = i as f32 / RATE as f32;
+            phase += TAU * (280.0 + 1400.0 * (-t / 0.05).exp()) / RATE as f32;
+            let buzz = (phase.sin().signum() * 0.3 + phase.sin() * 0.4) * (0.65 + 0.35 * (TAU * 55.0 * t).sin());
+            let fizz = rng.next() * (-t / 0.015).exp() * 0.6;
+            soft((buzz + fizz) * (-t / 0.08).exp() * 1.2)
+        })
+        .collect()
+}
+
+/// A pure tone of `hz` for `seconds`, `edge` seconds of fade in and out (none for a loop, which
+/// then wants a whole number of cycles).
+fn tone(seconds: f32, hz: f32, level: f32, edge: f32) -> Vec<f32> {
+    let n = (seconds * RATE as f32) as usize;
+    (0..n)
+        .map(|i| {
+            let t = i as f32 / RATE as f32;
+            let fade = if edge > 0.0 { (t / edge).min((seconds - t) / edge).clamp(0.0, 1.0) } else { 1.0 };
+            ((TAU * hz * t).sin() * 0.8 + (TAU * hz * 2.0 * t).sin() * 0.2) * level * fade
+        })
+        .collect()
+}
+
+/// The missile warning: two quick chirps sweeping up.
+fn chirp() -> Vec<f32> {
+    let one = |len: f32| -> Vec<f32> {
+        let mut phase = 0.0;
+        (0..(len * RATE as f32) as usize)
+            .map(|i| {
+                let t = i as f32 / RATE as f32;
+                phase += TAU * (1500.0 + 1100.0 * t / len) / RATE as f32;
+                phase.sin() * 0.6 * (t / 0.004).min((len - t) / 0.006).clamp(0.0, 1.0)
+            })
+            .collect()
+    };
+    mix(&[(0.0, one(0.06)), (0.09, one(0.06))])
+}
+
 fn thud(seconds: f32, cutoff: f32, tau: f32, hz: f32, amount: f32, seed: u64) -> Vec<f32> {
     let mut rng = Rng(seed);
     let mut lp = LowPass::new(cutoff);
@@ -369,6 +444,13 @@ fn load(mut commands: Commands, tuning: Res<Tuning>, server: Res<AssetServer>, m
         whizz: clip("whizz", whizz(73)),
         draw: clip("draw", mix(&[(0.0, scrape(0.08, 74)), (0.07, clack(0.08, 1100.0, 0.012, 75))])),
         foley,
+        ship_gun: (0..3).map(|take| clip(&format!("ship_gun_{take}"), shot(&Voice { crack: 0.008, body: 0.05, cutoff: 3500.0, sub_hz: 62.0, sub: 1.0, tail: 0.14, click: 0.0 }, take, 401 + take as u64 * 3))).collect(),
+        launch: clip("missile_launch", launch(411)),
+        shield_hit: clip("shield_hit", zap(421)),
+        hull_hit: clip("hull_hit", mix(&[(0.0, gunshot(0.3, 0.005, 95.0, 0.6, 0.05, 6500.0, 431)), (0.0, clack(0.45, 280.0, 0.1, 432))]).into_iter().map(|x| x * 0.6).collect()),
+        lock_beep: clip("lock_beep", tone(0.07, 1000.0, 0.5, 0.008)),
+        lock_tone: clip("lock_tone", tone(1.0, 1250.0, 0.4, 0.0)),
+        warning: clip("missile_warning", chirp()),
     };
     commands.insert_resource(GlobalVolume { volume: Volume::Linear(tuning.sound.master) });
     commands.insert_resource(sounds);
@@ -475,6 +557,44 @@ fn explosions(mut commands: Commands, s: Res<Sounds>, tuning: Res<Tuning>, blast
     }
 }
 
+/// The ship fight's sounds, as `solar::cockpit` cues them. A wreck is the explosion played slower,
+/// so deeper and longer than a missile's burst.
+fn fight(mut commands: Commands, s: Res<Sounds>, tuning: Res<Tuning>, mut cues: MessageReader<Cue>, mut n: Local<usize>) {
+    let (guns, effects) = (tuning.sound.guns, tuning.sound.effects);
+    for cue in cues.read() {
+        let (clip, level) = match cue.sfx {
+            Sfx::Gun => {
+                *n += 1;
+                (&s.ship_gun[*n % s.ship_gun.len()], guns * 0.8)
+            }
+            Sfx::Launch => (&s.launch, guns),
+            Sfx::Wreck => (&s.explosion, guns * 1.3),
+            Sfx::Burst => (&s.explosion, guns),
+            Sfx::ShieldHit => (&s.shield_hit, effects * 0.8),
+            Sfx::HullHit => (&s.hull_hit, effects),
+            Sfx::LockBeep => (&s.lock_beep, effects * 0.5),
+            Sfx::Warning => (&s.warning, effects * 0.7),
+        };
+        oneshot(&mut commands, clip, level * cue.volume, cue.pitch);
+    }
+}
+
+#[derive(Component)]
+struct LockTone;
+
+/// A steady tone while your missiles hold a lock (the beeps before it are cues).
+fn lock_tone(mut commands: Commands, s: Res<Sounds>, tuning: Res<Tuning>, flight: Res<FlightHud>, mut tone: Query<&mut AudioSink, With<LockTone>>, mut started: Local<bool>) {
+    if !*started {
+        *started = true;
+        commands.spawn((LockTone, AudioPlayer(s.lock_tone.clone()), PlaybackSettings::LOOP.with_volume(Volume::Linear(0.0))));
+        return;
+    }
+    let locked = flight.active && flight.fight.lock >= 1.0;
+    for mut sink in &mut tone {
+        sink.set_volume(Volume::Linear(if locked { tuning.sound.effects * 0.35 } else { 0.0 }));
+    }
+}
+
 fn hits(
     mut commands: Commands,
     s: Res<Sounds>,
@@ -565,7 +685,7 @@ mod tests {
     #[test]
     fn shots_and_foley_are_bounded() {
         let v = Voice { crack: 0.012, body: 0.05, cutoff: 7000.0, sub_hz: 110.0, sub: 0.5, tail: 0.16, click: 0.4 };
-        for clip in [shot(&v, 0, 1), shot(&v, 2, 2), clack(0.1, 900.0, 0.015, 3), scrape(0.1, 4), whizz(5), mix(&[(0.0, scrape(0.1, 6)), (0.1, clack(0.1, 900.0, 0.02, 7))])] {
+        for clip in [shot(&v, 0, 1), shot(&v, 2, 2), clack(0.1, 900.0, 0.015, 3), scrape(0.1, 4), whizz(5), mix(&[(0.0, scrape(0.1, 6)), (0.1, clack(0.1, 900.0, 0.02, 7))]), chirp(), tone(0.07, 1000.0, 0.5, 0.008)] {
             assert!(clip.len() > 100 && clip.iter().all(|x| x.is_finite() && x.abs() <= 1.01 * 2.0), "clip stays in range");
         }
         assert!(shot(&v, 0, 1) != shot(&v, 2, 1), "takes differ");
@@ -573,7 +693,7 @@ mod tests {
 
     #[test]
     fn clips_are_bounded_and_decay() {
-        for clip in [gunshot(0.4, 0.018, 130.0, 0.7, 0.14, 6000.0, 21), whoosh(11), thud(0.25, 600.0, 0.06, 60.0, 0.7, 71)] {
+        for clip in [gunshot(0.4, 0.018, 130.0, 0.7, 0.14, 6000.0, 21), whoosh(11), thud(0.25, 600.0, 0.06, 60.0, 0.7, 71), launch(411), zap(421)] {
             assert!(clip.iter().all(|s| s.abs() <= 1.0));
             let head: f32 = clip[..clip.len() / 10].iter().map(|s| s.abs()).sum::<f32>() / (clip.len() / 10) as f32;
             let tail: f32 = clip[clip.len() * 9 / 10..].iter().map(|s| s.abs()).sum::<f32>() / (clip.len() / 10) as f32;
@@ -585,6 +705,10 @@ mod tests {
     fn loops_are_seamless() {
         let w = wind(3);
         assert_eq!(w.len(), (4.0 * RATE as f32) as usize - (0.5 * RATE as f32) as usize);
+        // The lock tone is whole cycles: its last sample runs on into its first.
+        let lock = tone(1.0, 1250.0, 0.4, 0.0);
+        let next = (TAU * 1250.0 * lock.len() as f32 / RATE as f32).sin() * 0.8 + (TAU * 2500.0 * lock.len() as f32 / RATE as f32).sin() * 0.2;
+        assert!((next * 0.4 - lock[0]).abs() < 0.01 && lock.iter().all(|x| x.abs() <= 0.4));
     }
 
     #[test]

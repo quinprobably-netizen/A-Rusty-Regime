@@ -2809,6 +2809,9 @@ fn a_raider_closes_on_the_kestrel_and_fires_only_with_it_in_the_cone() {
 fn an_enemy_pilot_diving_on_a_low_target_never_flies_into_the_ground() {
     let mut app = aloft(60.0);
     let ship = ship_entity(&mut app);
+    // The target outlasts the 40 s: shot down, it would be back at the Roost, and the raiders
+    // left 6 km behind would be gone.
+    app.world_mut().entity_mut(ship).insert(Hull::new(1e6, 0.0));
     let rot = app.world().get::<Rotation>(ship).unwrap().0;
     let mut ships = Vec::new();
     for id in ["jackal", "censer", "welder", "sentry"] {
@@ -3362,4 +3365,188 @@ fn an_old_save_without_kills_or_deaths_still_loads() {
     file.write(&tallied);
     assert_eq!(file.load(), tallied);
     std::fs::remove_file(&path).ok();
+}
+
+// ------------------------------------------------------------------ the cockpit: HUD and sounds
+
+use crate::hud::{FlightHud, Threat};
+use solar::cockpit::{Cue, Sfx};
+
+/// `aloft` with the HUD on: the Kestrel boarded and hanging `height` metres up.
+fn aloft_with_hud(height: f32) -> App {
+    let mut app = build_app(Tuning::default());
+    drop_flat_floor(&mut app);
+    app.add_plugins((solar::SolarPlugin, crate::hud::HudPlugin));
+    app.finish();
+    app.update();
+    run(&mut app, 0.5);
+    board(&mut app);
+    let (p, _) = ship_state(&mut app);
+    put_ship(&mut app, p + p.normalize() * height, Vec3::ZERO);
+    run(&mut app, 0.1);
+    app
+}
+
+/// Whether the on-foot health card, weapon card and crosshair show, and whether the ship card does.
+fn cards(app: &mut App) -> (bool, bool, bool, bool) {
+    use crate::hud::{CrosshairDot, HealthCard, ShipCard, WeaponPlate};
+    let w = app.world_mut();
+    let shown = |n: &Node| n.display != Display::None;
+    let health = shown(w.query_filtered::<&Node, With<HealthCard>>().single(w).unwrap());
+    let weapon = shown(w.query_filtered::<&Node, With<WeaponPlate>>().single(w).unwrap());
+    let crosshair = w.query_filtered::<&BackgroundColor, With<CrosshairDot>>().single(w).unwrap().0.alpha() > 0.0;
+    let ship = shown(w.query_filtered::<&Node, With<ShipCard>>().single(w).unwrap());
+    (health, weapon, crosshair, ship)
+}
+
+#[test]
+fn flying_and_the_whole_shot_down_card_hide_the_on_foot_cards() {
+    let mut app = aloft_with_hud(600.0);
+    let t = Tuning::default().ship_combat;
+    assert_eq!(cards(&mut app), (false, false, false, true), "flying: the ship card, none of the on-foot cards");
+    let fight = app.world().resource::<FlightHud>().fight.clone();
+    assert_eq!((fight.hull, fight.max_hull, fight.shield, fight.missiles), (100.0, 100.0, 60.0, 4), "the Kestrel's hull, shield and rails");
+    let wreck = shoot_down(&mut app);
+    run(&mut app, 0.2);
+    assert_eq!(cards(&mut app), (false, false, false, false), "the wreck burning: nobody flies, and still nothing on foot");
+    back_at_the_roost(&mut app, wreck);
+    assert!(app.world().resource::<Downed>().showing());
+    assert_eq!(cards(&mut app), (false, false, false, false), "on foot in the fresh Kestrel, the card still up");
+    run(&mut app, t.loss_card);
+    assert!(!app.world().resource::<Downed>().showing());
+    assert_eq!(cards(&mut app), (true, true, true, false), "the card gone: on foot again");
+}
+
+#[test]
+fn a_landed_shot_flashes_the_hit_marker_and_a_kill_the_kill_marker() {
+    let (mut app, jackal) = gunnery_range(300.0);
+    let fight = |app: &App| app.world().resource::<FlightHud>().fight.clone();
+    assert_eq!(fight(&app).hit, 0.0);
+    let mut ticks = 0;
+    while fight(&app).hit == 0.0 && ticks < 66 {
+        input(&mut app).fire_held = true;
+        app.update();
+        ticks += 1;
+    }
+    let f = fight(&app);
+    assert!(f.hit > 0.0 && !f.kill, "a shot landed within a second: the hit marker, not a kill");
+    // The last shots take a quarter of a second to reach it.
+    run(&mut app, 0.3 + solar::cockpit::HIT_MARK + 0.1);
+    assert_eq!(fight(&app).hit, 0.0, "it clears once the guns stop");
+    while app.world().get_entity(jackal).is_ok() && ticks < 66 * 8 {
+        input(&mut app).fire_held = true;
+        app.update();
+        ticks += 1;
+    }
+    assert!(app.world().get_entity(jackal).is_err(), "shot down");
+    let f = fight(&app);
+    assert!(f.kill && f.hit > solar::cockpit::HIT_MARK, "the kill marker, longer than a hit's");
+    run(&mut app, solar::cockpit::KILL_MARK);
+    assert_eq!(fight(&app).hit, 0.0);
+}
+
+#[test]
+fn the_lock_ring_fills_as_the_lock_comes_on() {
+    use solar::contacts::{lit, TICKS};
+    let (mut app, _) = gunnery_range(800.0);
+    let ship = ship_entity(&mut app);
+    let mut seen = Vec::new();
+    for _ in 0..(1.4 / DT) as usize {
+        app.update();
+        let lock = app.world().resource::<FlightHud>().fight.lock;
+        assert_eq!(lock, missiles(&app, ship).lock, "the HUD reads the ship's own lock");
+        seen.push(lit(lock));
+    }
+    assert!(seen.windows(2).all(|w| w[0] <= w[1]), "it only fills");
+    assert!(seen.contains(&(TICKS / 2)) && seen.contains(&(TICKS - 1)), "through every stage: {seen:?}");
+    assert_eq!(*seen.last().unwrap(), TICKS, "and whole once locked");
+}
+
+/// Runs `seconds`, doing `each` before every frame, and gathers every cue for the fight's sounds.
+fn listen(app: &mut App, seconds: f32, mut each: impl FnMut(&mut App)) -> Vec<Cue> {
+    let mut cursor = app.world().resource::<Messages<Cue>>().get_cursor_current();
+    let mut heard = Vec::new();
+    for _ in 0..(seconds / DT).round() as usize {
+        each(app);
+        app.update();
+        heard.extend(cursor.read(app.world().resource::<Messages<Cue>>()).copied());
+    }
+    heard
+}
+
+fn of(cues: &[Cue], sfx: Sfx) -> Vec<Cue> {
+    cues.iter().filter(|c| c.sfx == sfx).copied().collect()
+}
+
+#[test]
+fn the_fights_sounds_are_cued_on_their_triggers_and_nothing_outside_carries_in_vacuum() {
+    let (mut app, jackal) = gunnery_range(300.0);
+    let ship = ship_entity(&mut app);
+    // The lock comes on: beeps climbing in pitch, then none once it is locked.
+    let heard = listen(&mut app, 1.4, |_| {});
+    let beeps = of(&heard, Sfx::LockBeep);
+    assert!(beeps.len() >= 4 && beeps.windows(2).all(|w| w[0].pitch < w[1].pitch), "rising beeps: {beeps:?}");
+    assert!(of(&listen(&mut app, 0.5, |_| {}), Sfx::LockBeep).is_empty(), "locked: the steady tone, no beeps");
+    // Your own guns and missile, in the cockpit at full level.
+    let heard = listen(&mut app, 0.5, |app| input(app).fire_held = true);
+    let guns = of(&heard, Sfx::Gun);
+    assert!(guns.len() >= 2 && guns.iter().all(|c| c.volume == 1.0), "own guns: {guns:?}");
+    let mut heard = listen(&mut app, DT, |app| input(app).aim_held = true);
+    heard.extend(listen(&mut app, 0.1, |_| {}));
+    assert!(of(&heard, Sfx::Launch).iter().any(|c| c.volume == 1.0), "own launch");
+    // The Jackal's guns 300 m off, through Haven's air: heard, but quieter.
+    let heard = listen(&mut app, 0.5, |app| app.world_mut().get_mut::<ShipControls>(jackal).unwrap().fire = true);
+    let theirs: Vec<Cue> = of(&heard, Sfx::Gun).into_iter().filter(|c| c.volume < 1.0).collect();
+    assert!(!theirs.is_empty() && theirs.iter().all(|c| c.volume > 0.2 && c.volume < 0.5), "another ship's guns at 300 m: {theirs:?}");
+    // Hits on your own hull: the shield's sound, then the hull's once through it.
+    let t = Tuning::default().ship_combat;
+    app.world_mut().get_mut::<Hull>(ship).unwrap().hit(10.0, &t);
+    let heard = listen(&mut app, 0.1, |_| {});
+    assert_eq!((of(&heard, Sfx::ShieldHit).len(), of(&heard, Sfx::HullHit).len()), (1, 0), "shield hit");
+    app.world_mut().get_mut::<Hull>(ship).unwrap().hit(60.0, &t);
+    let heard = listen(&mut app, 0.1, |_| {});
+    assert_eq!(of(&heard, Sfx::HullHit).len(), 1, "through the shield: the hull's clang");
+    // The Jackal blown apart 300 m off: the wreck's deeper explosion, at less than full level.
+    app.world_mut().get_mut::<Hull>(jackal).unwrap().hp = 0.0;
+    let heard = listen(&mut app, 0.1, |_| {});
+    let wreck = of(&heard, Sfx::Wreck);
+    assert!(wreck.len() == 1 && wreck[0].volume > 0.3 && wreck[0].volume < 1.0 && wreck[0].pitch < 1.0, "{wreck:?}");
+
+    // High above Haven's air the same guns are not heard at all, and your own still are.
+    let (mut app, jackal) = gunnery_range(300.0);
+    let (p, _) = ship_state(&mut app);
+    put_ship(&mut app, p + p.normalize() * 150_000.0, Vec3::ZERO);
+    run(&mut app, 0.1);
+    let ship = ship_entity(&mut app);
+    let tf = *app.world().get::<Transform>(ship).unwrap();
+    let at = tf.translation + tf.rotation * Vec3::NEG_Z * 300.0;
+    app.world_mut().entity_mut(jackal).insert((Transform::from_translation(at).with_rotation(tf.rotation), Position(at), Rotation(tf.rotation)));
+    let heard = listen(&mut app, 0.5, |app| {
+        input(app).fire_held = true;
+        app.world_mut().get_mut::<ShipControls>(jackal).unwrap().fire = true;
+    });
+    let guns = of(&heard, Sfx::Gun);
+    assert!(!guns.is_empty() && guns.iter().all(|c| c.volume == 1.0), "only your own guns in vacuum: {guns:?}");
+}
+
+#[test]
+fn a_sentrys_lock_and_its_missile_set_off_the_warning() {
+    let mut app = aloft(2000.0);
+    let ship = ship_entity(&mut app);
+    let rot = app.world().get::<Rotation>(ship).unwrap().0;
+    enemy_near(&mut app, "sentry", rot * Vec3::new(0.0, 100.0, 700.0), Role::Raider);
+    let mut threats = Vec::new();
+    let heard = listen(&mut app, 10.0, |app| threats.push(app.world().resource::<FlightHud>().fight.threat));
+    assert!(threats.contains(&Threat::Locked) && threats.contains(&Threat::Missile), "locked, then a missile in the air");
+    let warnings = of(&heard, Sfx::Warning);
+    assert!(warnings.len() >= 3, "it chirps: {}", warnings.len());
+    // A Jackal holding you in its nose sets nothing off: it carries no missiles to fire.
+    let mut app = aloft(2000.0);
+    let ship = ship_entity(&mut app);
+    let rot = app.world().get::<Rotation>(ship).unwrap().0;
+    let jackal = enemy_near(&mut app, "jackal", rot * Vec3::new(0.0, 100.0, 700.0), Role::Raider);
+    let heard = listen(&mut app, 3.0, |app| {
+        app.world_mut().entity_mut(jackal).insert(Hull::new(1000.0, 1000.0));
+    });
+    assert!(of(&heard, Sfx::Warning).is_empty() && app.world().resource::<FlightHud>().fight.threat == Threat::None);
 }
