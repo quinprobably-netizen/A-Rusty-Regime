@@ -1,20 +1,24 @@
-//! Where enemy ships exist (sections 5 and 6 of
+//! Where enemy ships exist (sections 5 to 7 of
 //! `docs/superpowers/specs/2026-10-29-ship-combat-stage-1-design.md`): only near the player, at
 //! most `enemy_cap` at once. **Raiders** come in packs of Jackals while the player flies a ship:
 //! a clock runs while no raiders are about, faster the longer the flight has gone without a fight,
 //! and a pack comes in 1.5 to 3 km off to one side, never ahead of the nose, but never in the
-//! first minute after boarding or within 3 km of a base. A raider past 6 km is gone, and a patrol
-//! whose base is gone or far behind. The numbers are in `[ship_combat]`.
+//! first minute after boarding or within 3 km of a base. A raider past 6 km is gone. **Patrols**
+//! circle every base whose faction flies a fighter, two each while the player is within 8 km; one
+//! shot down comes back after ten minutes of game time, and the rest go when the player leaves or
+//! the world changes, so nothing about them needs saving. The numbers are in `[ship_combat]`.
 //!
 //! Every enemy ship is kept awake (`KeepAwake`): the bubble would freeze a body this far from the
 //! player, and they all fly, so none ever rests on ground for the bubble to wake it on.
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
+use std::collections::HashMap;
 
 use super::ai::{Enemy, Mode, Role};
-use super::base::Base;
-use super::ship::{clearance, Autopilot, Ship, Ships};
+use super::base::{Base, Bases};
+use super::combat::Hull;
+use super::ship::{clearance, Autopilot, Ship, ShipKind, Ships};
 use super::Solar;
 use crate::controller::Player;
 use crate::planet::bubble::KeepAwake;
@@ -45,6 +49,13 @@ impl Default for Raids {
     }
 }
 
+/// When each base's patrols were shot down, by `(base, slot)`, on a clock of game time.
+#[derive(Resource, Default)]
+pub struct Patrols {
+    pub clock: f64,
+    pub lost: HashMap<(usize, usize), f64>,
+}
+
 /// A small generator for where packs come in and how many.
 pub struct Rng(pub u64);
 
@@ -62,7 +73,10 @@ impl Rng {
 }
 
 pub fn build(app: &mut App) {
-    app.init_resource::<Raids>().add_systems(FixedUpdate, (cull, raid).chain().after(super::ship::board).before(super::ai::think));
+    app.init_resource::<Raids>()
+        .init_resource::<Patrols>()
+        .add_observer(lost)
+        .add_systems(FixedUpdate, (cull, raid, guard).chain().after(super::ship::board).before(super::ai::think));
 }
 
 /// An enemy ship of spec `spec` at `at`, turned `rotation` and moving at `velocity`, flown by its
@@ -98,6 +112,11 @@ pub fn pack_spots(rng: &mut Rng, from: Vec3, nose: Vec3, up: Vec3, n: usize, t: 
         }
     }
     Vec::new()
+}
+
+/// The fighter a faction patrols its base with: the first fighter of its side in `ships.toml`.
+pub fn patrol_ship(specs: &Ships, faction: &str) -> Option<usize> {
+    specs.ship.iter().position(|s| s.kind == ShipKind::Fighter && s.faction.id() == faction)
 }
 
 /// Raiders past `despawn`, and patrols whose base is gone (another world) or far behind, go
@@ -170,4 +189,62 @@ fn raid(
             spawn_enemy(world, raider, at, facing, velocity, Role::Raider);
         }
     });
+}
+
+/// Puts up each base's patrols while the player is within `patrol_range` of it: evenly round the
+/// loop at patrol height, flying it. A slot shot down waits out `patrol_respawn`.
+#[allow(clippy::too_many_arguments)]
+fn guard(
+    mut commands: Commands,
+    time: Res<Time>,
+    tuning: Res<Tuning>,
+    specs: Res<Ships>,
+    base_specs: Res<Bases>,
+    mut patrols: ResMut<Patrols>,
+    players: Query<&Transform, With<Player>>,
+    bases: Query<(&Transform, &Base)>,
+    enemies: Query<&Enemy>,
+) {
+    let t = &tuning.ship_combat;
+    patrols.clock += time.delta_secs_f64();
+    let Ok(player) = players.single() else { return };
+    let mut alive = enemies.iter().count();
+    for (tf, base) in &bases {
+        if tf.translation.distance(player.translation) > t.patrol_range {
+            continue;
+        }
+        let Some(ship) = patrol_ship(&specs, &base_specs.base[base.spec].faction) else { continue };
+        for slot in 0..t.patrols {
+            let role = Role::Patrol { base: base.spec, slot };
+            if enemies.iter().any(|e| e.role == role) || alive >= t.enemy_cap {
+                continue;
+            }
+            if patrols.lost.get(&(base.spec, slot)).is_some_and(|at| patrols.clock < at + t.patrol_respawn as f64) {
+                continue;
+            }
+            patrols.lost.remove(&(base.spec, slot));
+            alive += 1;
+            let up = tf.rotation * Vec3::Y;
+            let out = Quat::from_axis_angle(up, slot as f32 / t.patrols as f32 * std::f32::consts::TAU) * (tf.rotation * Vec3::X);
+            let at = tf.translation + out * t.patrol_radius + up * t.patrol_altitude;
+            // Round the loop the way `ai` flies it.
+            let along = up.cross(out);
+            let rotation = Transform::default().looking_to(along, up).rotation;
+            let velocity = along * specs.ship[ship].cruise * 0.5;
+            commands.queue(move |world: &mut World| {
+                spawn_enemy(world, ship, at, rotation, velocity, role);
+            });
+        }
+    }
+}
+
+/// A patrol shot down starts its slot's wait.
+fn lost(remove: On<Remove, Enemy>, enemies: Query<(&Enemy, &Hull)>, mut patrols: ResMut<Patrols>) {
+    let Ok((enemy, hull)) = enemies.get(remove.entity) else { return };
+    if let Role::Patrol { base, slot } = enemy.role
+        && hull.hp <= 0.0
+    {
+        let now = patrols.clock;
+        patrols.lost.insert((base, slot), now);
+    }
 }

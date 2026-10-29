@@ -28,6 +28,19 @@ pub enum Faction {
     Raiders,
 }
 
+impl Faction {
+    /// Its name in the data files, as in `bases.toml`.
+    pub fn id(self) -> &'static str {
+        match self {
+            Faction::Deserters => "deserters",
+            Faction::Regime => "regime",
+            Faction::Scrappers => "scrappers",
+            Faction::Pmc => "pmc",
+            Faction::Raiders => "raiders",
+        }
+    }
+}
+
 /// A ship's hull points behind its shield.
 #[derive(Component, Clone, Copy, Debug)]
 pub struct Hull {

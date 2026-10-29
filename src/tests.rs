@@ -2522,7 +2522,7 @@ fn the_shrine_sells_a_blessing_that_lengthens_the_health_bar_for_a_while() {
 // ------------------------------------------------------------------- raiders, patrols and the AI
 
 use solar::ai::{Enemy, Mode, Role};
-use solar::enemy::{spawn_enemy, Raids};
+use solar::enemy::{spawn_enemy, Patrols, Raids};
 
 /// Every enemy ship: its entity, why it is there and what it is doing.
 fn enemies(app: &mut App) -> Vec<(Entity, Role, Mode)> {
@@ -2645,6 +2645,87 @@ fn the_raid_clock_runs_faster_the_longer_the_flight_goes_without_a_fight() {
     run(&mut app, 2.0);
     let late = app.world().resource::<Raids>().clock - before;
     assert!(late > early * 2.5, "four quiet minutes in, it runs about three times as fast: {early:.2} then {late:.2}");
+}
+
+/// Hands the flight over to `body` with the Kestrel at `p` (that body's coordinates), at rest
+/// over its ground, then lets its fixtures stand.
+fn fly_to(app: &mut App, body: &str, p: Vec3) {
+    let (q, v) = {
+        let solar = app.world().resource::<Solar>();
+        let (q, v) = solar.bodies.convert(body, &solar.anchor, solar.epoch, p.as_dvec3(), bevy::math::DVec3::ZERO);
+        (q.as_vec3(), v.as_vec3())
+    };
+    put_ship(app, q, v);
+    run(app, 0.3);
+    assert_eq!(app.world().resource::<Solar>().anchor, body);
+}
+
+/// The Reliquary's ground point and up on Bastion, body coordinates.
+fn reliquary(app: &App) -> (Vec3, Vec3) {
+    let bases = app.world().resource::<solar::base::Bases>().clone();
+    let solar = app.world().resource::<Solar>();
+    let spec = bases.base.iter().find(|b| b.id == "reliquary").unwrap();
+    let (ground, frame, deck) = solar::base::site(spec, &solar.spheres["bastion"], solar.pad);
+    (ground + frame * Vec3::Y * deck, frame * Vec3::Y)
+}
+
+/// The patrols in the sky: what each is doing.
+fn patrol_modes(app: &mut App) -> Vec<Mode> {
+    enemies(app).into_iter().filter(|e| matches!(e.1, Role::Patrol { .. })).map(|e| e.2).collect()
+}
+
+#[test]
+fn patrols_guard_a_base_inside_eight_km_attack_inside_two_and_a_half_and_come_back_after_ten_minutes() {
+    let t = Tuning::default().ship_combat;
+    let mut app = system_app();
+    run(&mut app, 0.5);
+    run(&mut app, 0.5);
+    assert!(enemies(&mut app).is_empty(), "the Roost has no patrols");
+    board(&mut app);
+    let (base, up) = reliquary(&app);
+    fly_to(&mut app, "bastion", base + up * 9000.0);
+    run(&mut app, 0.5);
+    assert!(patrol_modes(&mut app).is_empty(), "9 km off: none up");
+    put_ship(&mut app, base + up * 7500.0, Vec3::ZERO);
+    run(&mut app, 0.5);
+    assert_eq!(patrol_modes(&mut app), [Mode::Patrol, Mode::Patrol], "7.5 km off: two up, flying their loop");
+    let censer = spec_of(&app, "censer");
+    let origin = *app.world().resource::<Origin>();
+    for (e, _, _) in enemies(&mut app) {
+        assert_eq!(app.world().get::<Ship>(e).unwrap().spec, censer, "the Regime flies Censers");
+        let (p, _, _) = pose(&app, e);
+        let height = (origin.body(p) - base).dot(up);
+        assert!((height - t.patrol_altitude).abs() < 20.0, "at patrol height: {height:.0} m");
+        assert!(app.world().get::<crate::planet::bubble::KeepAwake>(e).is_some(), "kept awake so far from you");
+    }
+    put_ship(&mut app, base + up * 3000.0, Vec3::ZERO);
+    run(&mut app, 0.5);
+    assert!(patrol_modes(&mut app).iter().all(|m| *m == Mode::Patrol), "3 km off: left alone");
+    put_ship(&mut app, base + up * 2000.0, Vec3::ZERO);
+    run(&mut app, 0.3);
+    assert!(patrol_modes(&mut app).iter().all(|m| *m != Mode::Patrol), "2 km off: they come for you, {:?}", patrol_modes(&mut app));
+    put_ship(&mut app, base + up * 3500.0, Vec3::ZERO);
+    run(&mut app, 0.3);
+    assert!(patrol_modes(&mut app).iter().all(|m| *m != Mode::Patrol), "3.5 km off: they keep after you");
+    put_ship(&mut app, base + up * 4500.0, Vec3::ZERO);
+    run(&mut app, 0.3);
+    assert!(patrol_modes(&mut app).iter().all(|m| *m == Mode::Patrol), "4.5 km off: they give up, {:?}", patrol_modes(&mut app));
+    // One shot down: back only after ten minutes of game time.
+    let (shot, _, _) = enemies(&mut app)[0];
+    app.world_mut().get_mut::<Hull>(shot).unwrap().hp = 0.0;
+    run(&mut app, 0.5);
+    assert!(app.world().get_entity(shot).is_err(), "shot down");
+    assert_eq!(patrol_modes(&mut app).len(), 1, "one left");
+    app.world_mut().resource_mut::<Patrols>().clock += t.patrol_respawn as f64 - 5.0;
+    run(&mut app, 0.5);
+    assert_eq!(patrol_modes(&mut app).len(), 1, "not yet");
+    app.world_mut().resource_mut::<Patrols>().clock += 5.0;
+    run(&mut app, 0.5);
+    assert_eq!(patrol_modes(&mut app).len(), 2, "back after ten minutes");
+    // Leaving: they go.
+    put_ship(&mut app, base + up * 9000.0, Vec3::ZERO);
+    run(&mut app, 0.2);
+    assert!(patrol_modes(&mut app).is_empty(), "gone once you are well away");
 }
 
 #[test]
