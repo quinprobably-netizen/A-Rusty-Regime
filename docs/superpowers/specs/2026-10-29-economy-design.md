@@ -1,7 +1,10 @@
 # Economy: one ledger, boards at every base, scrap as cargo
 
 Follows `2026-10-29-ship-combat-stages-2-3-design.md` (standing and salvage, both merged). Q asked
-on 2026-10-29 for "a proper economy system". This is a spec for review; nothing is built from it.
+on 2026-10-29 for "a proper economy system" and approved it the same day with the pocket-at-risk
+death rule. **Stage A is built** (`docs/superpowers/plans/2026-10-29-economy-stage-a.md`, with two
+simplifications: the Roost charges list price, and selling scrap is at the Yard only until stage
+B gives Vantage a board screen). B, C and D are not built.
 
 ## TL;DR
 

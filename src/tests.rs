@@ -2441,7 +2441,19 @@ fn every_base_and_the_ship_get_a_waypoint_in_the_faction_colour() {
 
 // ---------------------------------------------------------------------------- base stations
 
-use solar::station::{Blessing, Contract, Station, StationKind, BLESSING_HP, TITHE, UPGRADE_COST};
+use solar::station::{Blessing, Contract, Station, StationKind, BLESSING_HP};
+
+const UPGRADE_COST: [u32; 3] = [300, 700, 1400];
+const TITHE: u32 = 150;
+
+#[test]
+fn the_economy_section_in_tuning_toml_matches_the_defaults() {
+    let text = std::fs::read_to_string("tuning.toml").unwrap();
+    let parsed: Tuning = toml::from_str(&text).unwrap();
+    let e = Tuning::default().economy;
+    assert_eq!(parsed.economy, e);
+    assert_eq!((e.guns["rocket"], e.tune, e.tithe), (1500, UPGRADE_COST, TITHE));
+}
 
 #[test]
 fn every_base_has_its_station_on_a_floor_clear_of_the_furniture() {
@@ -3374,11 +3386,13 @@ fn back_at_the_roost(app: &mut App, wreck: Entity) {
 }
 
 #[test]
-fn shot_down_you_lose_the_parcel_and_a_quarter_of_the_bank_and_keep_guns_parts_and_tune() {
+fn shot_down_you_lose_the_pocket_the_hold_and_the_parcel_and_pay_the_rebuy() {
     let mut app = aloft(600.0);
     {
         let mut save = app.world_mut().resource_mut::<Save>();
         save.banked = 1003;
+        save.pocket = 120;
+        save.scrap = 30;
         save.contract = Some(Contract { to: "reliquary".into(), pay: 400 });
         save.ship_level = 2;
         save.parts = [3, 1, 0, 2];
@@ -3390,30 +3404,33 @@ fn shot_down_you_lose_the_parcel_and_a_quarter_of_the_bank_and_keep_guns_parts_a
     // The camera hangs on the blast: the wreck is out of sight and out of the physics.
     let downed = app.world().resource::<Downed>();
     assert_eq!(downed.wreck, Some(wreck), "watching the wreck");
-    assert_eq!(downed.lost, Loss { bank: 250, parcel: before.contract.clone() });
+    assert_eq!(downed.lost, Loss { pocket: 120, scrap: 30, parcel: before.contract.clone(), fee: 100 }, "a tenth of a $1000 tune is the $100 floor");
     assert_eq!(*app.world().get::<Visibility>(wreck).unwrap(), Visibility::Hidden);
     let bases = app.world().resource::<solar::base::Bases>().clone();
-    assert_eq!(solar::loss::card_text(&app.world().resource::<Downed>().lost, &bases), "Lost the parcel for The Reliquary and $250 of the bank");
+    assert_eq!(solar::loss::card_text(&app.world().resource::<Downed>().lost, &bases), "Lost $120 unbanked, 30 scrap and the parcel for The Reliquary. Rebuy $100");
     let save = app.world().resource::<Save>().clone();
-    assert_eq!((save.banked, save.contract.clone(), save.deaths), (753, None, 1), "a quarter of 1003, rounded down, and the parcel");
+    assert_eq!((save.banked, save.pocket, save.scrap, save.contract.clone(), save.deaths), (903, 0, 0, None, 1), "the bank only pays the rebuy");
     assert_eq!((&save.weapons, save.parts, save.ship_level, &save.loadout), (&before.weapons, before.parts, before.ship_level, &before.loadout), "guns, parts and tune kept");
     back_at_the_roost(&mut app, wreck);
-    assert_eq!(app.world().resource::<Save>().banked, 753, "lost once");
+    assert_eq!(app.world().resource::<Save>().banked, 903, "paid once");
     assert!(app.world().resource::<Downed>().showing(), "the card is still up");
 }
 
 #[test]
-fn shot_down_with_an_empty_bank_and_no_parcel_costs_nothing() {
-    let mut save = Save { banked: 3, ..default() };
-    assert_eq!(solar::loss::lose(&mut save, 0.25), Loss::default(), "a quarter of $3 rounds down to nothing");
-    assert_eq!((save.banked, save.deaths), (3, 1));
+fn shot_down_with_a_poor_bank_rebuys_for_what_is_there() {
+    let (e, t) = (Tuning::default().economy, Tuning::default().ship_combat);
+    let bases = solar::base::Bases::load();
+    let mut save = Save { banked: 40, ..default() };
+    let lost = solar::loss::lose(&mut save, &e, &t);
+    assert_eq!((lost.clone(), save.banked, save.deaths), (Loss { fee: 40, ..default() }, 0, 1), "never more than the bank holds");
+    assert_eq!(solar::loss::card_text(&lost, &bases), "Nothing aboard lost. Rebuy $40");
+    let lost = solar::loss::lose(&mut save, &e, &t);
+    assert_eq!((lost.clone(), save.banked), (Loss::default(), 0));
+    assert_eq!(solar::loss::card_text(&lost, &bases), "Nothing aboard lost. Rebuy free: the bank is empty");
     let mut app = aloft(600.0);
     let wreck = shoot_down(&mut app);
     run(&mut app, 0.2);
-    let bases = app.world().resource::<solar::base::Bases>().clone();
-    let downed = app.world().resource::<Downed>();
-    assert_eq!(downed.lost, Loss::default());
-    assert_eq!(solar::loss::card_text(&downed.lost, &bases), "Nothing lost: no parcel aboard, nothing in the bank");
+    assert_eq!(app.world().resource::<Downed>().lost, Loss::default(), "a new save has nothing to lose");
     assert_eq!(app.world().resource::<Save>().banked, 0);
     back_at_the_roost(&mut app, wreck);
 }
@@ -3450,7 +3467,7 @@ fn shooting_down_an_enemy_pays_its_bounty_and_counts_the_kill_by_faction() {
     run(&mut app, 0.2);
     assert!(app.world().get_entity(jackal).is_err(), "the Jackal is destroyed");
     let save = app.world().resource::<Save>().clone();
-    assert_eq!((save.banked, save.kills), (60, 1));
+    assert_eq!((save.pocket, save.banked, save.kills), (60, 0, 1), "into the pocket, not the bank");
     assert_eq!(save.faction_kills, [("raiders".to_string(), 1)].into_iter().collect());
     let line = app.world().resource::<BountyLine>();
     assert_eq!(line.text, "+$60 BOUNTY  JACKAL");
@@ -4031,6 +4048,59 @@ fn salvage_is_pulled_in_from_40_m_by_the_ship_you_fly_and_never_on_foot() {
 }
 
 #[test]
+fn a_full_hold_leaves_scrap_floating() {
+    let mut app = aloft(600.0);
+    app.world_mut().resource_mut::<Save>().scrap = 60;
+    let near = salvage_near(&mut app, Loot::Scrap(4), Vec3::X * 30.0);
+    run(&mut app, 1.0);
+    assert!(app.world().get_entity(near).is_ok(), "no room: it stays out there");
+    assert_eq!(app.world().resource::<Save>().scrap, 60);
+    assert_eq!(app.world().resource::<SalvageLine>().text(), "HOLD FULL");
+    // A level of plating makes room for it.
+    app.world_mut().resource_mut::<Save>().ship_parts[0] = 1;
+    run(&mut app, 1.0);
+    assert!(app.world().get_entity(near).is_err(), "aboard once there is room");
+    assert_eq!(app.world().resource::<Save>().scrap, 64);
+}
+
+/// Stands the player on foot in the Roost's doorway.
+fn at_the_roost_door(app: &mut App) {
+    let bases = app.world().resource::<solar::base::Bases>().clone();
+    let (at, base) = app.world_mut().query::<(&GlobalTransform, &solar::base::Base)>().single(app.world()).map(|(g, b)| (*g, b.spec)).unwrap();
+    let door = at.translation() + at.rotation() * Vec3::from(bases.base[base].door);
+    set_player(app, door, Vec3::ZERO);
+}
+
+#[test]
+fn the_pocket_banks_and_the_landed_ship_is_repaired_at_a_bases_door() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    let ship = ship_entity(&mut app);
+    let max = app.world().get::<Hull>(ship).unwrap().max_hp;
+    app.world_mut().get_mut::<Hull>(ship).unwrap().hp = max - 30.0;
+    {
+        let mut save = app.world_mut().resource_mut::<Save>();
+        save.pocket = 200;
+        save.banked = 100;
+    }
+    at_the_roost_door(&mut app);
+    run(&mut app, 0.2);
+    let save = app.world().resource::<Save>().clone();
+    assert_eq!((save.banked, save.pocket), (270, 0), "+200 banked, -30 for the repair");
+    assert_eq!(app.world().get::<Hull>(ship).unwrap().hp, max, "repaired");
+    let prompt = app.world().resource::<solar::station::Prompt>().text();
+    assert!(prompt.contains("Banked $200") && prompt.contains("Repaired 30 hull: -$30"), "{prompt}");
+    // Standing there does it once.
+    app.world_mut().get_mut::<Hull>(ship).unwrap().hp = max - 10.0;
+    run(&mut app, 1.0);
+    assert_eq!(app.world().resource::<Save>().banked, 270, "once per arrival");
+    // A new bounty banks while you stand there.
+    app.world_mut().resource_mut::<Save>().pocket = 60;
+    run(&mut app, 0.2);
+    assert_eq!(app.world().resource::<Save>().banked, 330);
+}
+
+#[test]
 fn a_wreck_of_your_own_ship_drops_nothing() {
     let mut app = aloft(600.0);
     let wreck = shoot_down(&mut app);
@@ -4101,6 +4171,20 @@ fn the_yards_parts_rack_opens_its_menu_and_sells_for_scrap_at_the_scrappers_pric
     tap(&mut app, KeyCode::Enter);
     assert_eq!((app.world().resource::<Save>().scrap, app.world().resource::<Save>().ship_parts[3]), (87, 1), "Mk1 rack for 13");
     tap(&mut app, KeyCode::Escape);
+    // The row under the parts sells the hold: 87 scrap at a friend's $7.
+    press_use(&mut app);
+    run(&mut app, 0.2);
+    let banked = app.world().resource::<Save>().banked;
+    for _ in 0..4 {
+        tap(&mut app, KeyCode::KeyS);
+    }
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!((app.world().resource::<Save>().scrap, app.world().resource::<Save>().banked), (0, banked + 87 * 7), "sold to a friend at $7");
+    assert_eq!(app.world().resource::<Menu>().note, format!("Sold 87 scrap: +${}", 87 * 7));
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!(app.world().resource::<Menu>().note, "The hold is empty");
+    tap(&mut app, KeyCode::Escape);
+    app.world_mut().resource_mut::<Save>().scrap = 87;
     // At -60 the Yard will not sell to you: the menu does not open.
     set_standing(&mut app, Faction::Scrappers, -60);
     press_use(&mut app);
@@ -4334,6 +4418,8 @@ fn fitted_modules_are_kept_through_being_shot_down() {
 
 #[test]
 fn the_hud_shows_your_scrap_beside_the_bank() {
-    assert_eq!(crate::hud::haul(&Save { banked: 750, scrap: 12, ..default() }), "BANK 750   SCRAP 12");
+    let e = Tuning::default().economy;
+    assert_eq!(crate::hud::haul(&Save { banked: 750, scrap: 12, ..default() }, &e), "BANK 750   SCRAP 12/60");
+    assert_eq!(crate::hud::haul(&Save { banked: 750, pocket: 120, scrap: 12, ship_parts: [1, 0, 0, 0], ..default() }, &e), "BANK 750 +120   SCRAP 12/80");
 }
 

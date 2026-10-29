@@ -551,16 +551,17 @@ fn update_crosshair(
     }
 }
 
-fn update_haul(save: Option<Res<Save>>, mut haul_text: Single<&mut Text, With<HaulText>>) {
-    let s = save.map_or(String::new(), |save| haul(&save));
+fn update_haul(save: Option<Res<Save>>, tuning: Res<crate::tuning::Tuning>, mut haul_text: Single<&mut Text, With<HaulText>>) {
+    let s = save.map_or(String::new(), |save| haul(&save, &tuning.economy));
     if haul_text.0 != s {
         haul_text.0 = s;
     }
 }
 
-/// The top right's haul: the bank, and the scrap beside it.
-pub fn haul(save: &Save) -> String {
-    format!("BANK {}   SCRAP {}", save.banked, save.scrap)
+/// The top right's haul: the bank and what is in your pocket, and the scrap in the hold.
+pub fn haul(save: &Save, e: &crate::tuning::Economy) -> String {
+    let pocket = if save.pocket > 0 { format!(" +{}", save.pocket) } else { String::new() };
+    format!("BANK {}{pocket}   SCRAP {}/{}", save.banked, save.scrap, crate::solar::economy::hold_cap(save, e))
 }
 
 /// Slide the compass ticks past the notch; yaw 0 looks down -Z, which is north.

@@ -311,8 +311,7 @@ missile_fuse = 8    # m from its target it bursts
 missile_damage = 80 # shield first, then hull
 ai_missile_gap = 8  # s between an enemy pilot's launches
 # what a fight pays and costs
-bounty = { jackal = 60, sentry = 120, censer = 150, welder = 200 }  # $ into the bank per kill, by ship id
-bank_loss = 0.25    # share of the bank lost when your ship is shot down, rounded down
+bounty = { jackal = 60, sentry = 120, censer = 150, welder = 200 }  # $ into your pocket per kill, by ship id (banked at a base's door)
 downed = 3          # s watching the wreck before you are back at the Roost in a fresh Kestrel
 loss_card = 4       # s the SHOT DOWN card stays up after that
 bounty_line = 3     # s the +$ BOUNTY line stays over the HUD
@@ -363,3 +362,19 @@ ram_thrust = 0.1          # for 10% less thrust
 regime = ["deserters", "scrappers"]
 scrappers = ["regime", "pmc"]
 pmc = []                  # the PMC sells to everyone and holds no grudge
+
+[economy]                   # money: every price, the hold, the rebuy fee, repairs (solar::economy)
+guns = { pistol = 300, revolver = 500, harpoon = 400, smg = 600, fist = 600, shotgun = 700, rifle = 900, grenade = 1000, dmr = 1100, rocket = 1500 }  # the Roost's counter, by weapon id
+attachments = [[0, 200, 400], [0, 200, 350], [0, 150, 150], [0, 200, 250]]  # by gunsmith slot, then part; the bare part is free
+tune = [300, 700, 1400]     # the Yard's engine tune, a level each
+tithe = 150                 # the Reliquary's blessing
+courier_base = 250          # a courier parcel pays this
+courier_step = 150          # and this much more for each of the next two, then round again
+scrap_value = 6             # $ a scrap: what the Yard pays, and what parts count for in the ship's value
+hold_base = 60              # scrap the hold carries
+hold_per_plating = 20       # and this much more a level of hull plating
+rebuy_share = 0.1           # shot down: a fresh Kestrel costs this share of the tune and parts on it
+rebuy_min = 100             # at least
+rebuy_max = 1500            # at most (and never more than the bank holds)
+repair_per_hp = 1           # $ a point of hull, repaired when you reach a base's door
+repair_reach = 400          # m, the ship you landed must be parked this close to that door

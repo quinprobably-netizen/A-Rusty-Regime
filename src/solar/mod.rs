@@ -11,6 +11,7 @@
 pub mod ai;
 pub mod base;
 pub mod cockpit;
+pub mod economy;
 pub mod combat;
 pub mod contacts;
 pub mod enemy;
@@ -138,6 +139,7 @@ impl Plugin for SolarPlugin {
         ai::build(app);
         enemy::build(app);
         loss::build(app);
+        economy::build(app);
         cockpit::build(app);
         base::build(app);
         life::build(app);
@@ -713,6 +715,7 @@ fn flight_text(
     base_specs: Res<base::Bases>,
     prompt: Res<station::Prompt>,
     save: Option<Res<crate::save::Save>>,
+    tuning: Res<crate::tuning::Tuning>,
     hud: Option<Res<crate::hud::FlightHud>>,
     actions: Option<Res<crate::controls::ActionState>>,
     mut text: Single<&mut Text, With<FlightText>>,
@@ -748,8 +751,9 @@ fn flight_text(
     for (d, name) in &others {
         line.push_str(&format!("\n{name}  {}", km(*d)));
     }
-    if let Some(save) = save.filter(|s| s.banked > 0 || s.scrap > 0 || s.contract.is_some()) {
-        line.push_str(&format!("\nBANK ${}   SCRAP {}", save.banked, save.scrap));
+    if let Some(save) = save.filter(|s| s.banked > 0 || s.pocket > 0 || s.scrap > 0 || s.contract.is_some()) {
+        let pocket = if save.pocket > 0 { format!(" +${} unbanked", save.pocket) } else { String::new() };
+        line.push_str(&format!("\nBANK ${}{pocket}   SCRAP {}/{}", save.banked, save.scrap, economy::hold_cap(&save, &tuning.economy)));
         if let Some(c) = &save.contract {
             line.push_str(&format!("   PARCEL for {} +${}", base_specs.base.iter().find(|b| b.id == c.to).map_or("?", |b| b.name.as_str()), c.pay));
         }

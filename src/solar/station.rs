@@ -7,7 +7,7 @@
 //!   the parts menu (`Panel::Parts`), where scrap buys hull plating, a shield cell, a gun
 //!   capacitor and a missile rack (`salvage`);
 //! - Site Vantage's courier desk hands out contracts: carry the parcel to another base's door and
-//!   it pays out (the only income in the system, so everything else is paid for with it);
+//!   it pays out;
 //! - the Reliquary's shrine sells a blessing: more health for a while;
 //! - every post's supply cache (`post`) patches you up and refills your ammunition, free.
 //!
@@ -38,10 +38,8 @@ use crate::weapon::Arsenal;
 pub const REACH: f32 = 2.8;
 /// A parcel is delivered this close to the destination's doorway, metres.
 pub const DELIVER_RADIUS: f32 = 12.0;
-/// What the tuning rig charges for each level, banked money.
-pub const UPGRADE_COST: [u32; 3] = [300, 700, 1400];
-/// What the shrine charges, how long the blessing lasts and how much health it adds.
-pub const TITHE: u32 = 150;
+/// How long the shrine's blessing lasts and how much health it adds (its tithe and the tuning
+/// rig's levels are in `[economy]`).
 pub const BLESSING_SECS: f32 = 300.0;
 pub const BLESSING_HP: f32 = 50.0;
 /// How long a message from a station stays on screen.
@@ -99,7 +97,7 @@ pub struct Prompt {
 }
 
 impl Prompt {
-    pub(super) fn say(&mut self, text: impl Into<String>) {
+    pub fn say(&mut self, text: impl Into<String>) {
         self.note = text.into();
         self.note_left = NOTE_SECS;
     }
@@ -124,10 +122,10 @@ pub fn tune(level: u8) -> (f32, f32) {
 
 /// The contract the courier desk at base `from` offers after `done` deliveries: another base, a
 /// different one each time round, paying more the longer the trip.
-pub fn offer(bases: &Bases, from: usize, done: u32) -> Option<Contract> {
+pub fn offer(bases: &Bases, from: usize, done: u32, e: &crate::tuning::Economy) -> Option<Contract> {
     let others: Vec<&str> = bases.base.iter().enumerate().filter(|(i, _)| *i != from).map(|(_, b)| b.id.as_str()).collect();
     let to = others.get(done as usize % others.len().max(1))?;
-    Some(Contract { to: to.to_string(), pay: 250 + 150 * (done % 3) })
+    Some(Contract { to: to.to_string(), pay: e.courier_base + e.courier_step * (done % 3) })
 }
 
 pub fn build(app: &mut App) {
@@ -196,7 +194,7 @@ fn use_station(
         },
         StationKind::Workshop => {
             let level = save.ship_level as usize;
-            match UPGRADE_COST.get(level).map(|c| standing::price(*c, faction, &save, t)) {
+            match tuning.economy.tune.get(level).map(|c| standing::price(*c, faction, &save, t)) {
                 None => prompt.say("The Kestrel is tuned as far as it goes"),
                 Some(cost) if save.banked < cost => prompt.say(format!("Engine tune Mk{} costs ${cost}: you have ${}", level + 1, save.banked)),
                 Some(cost) => {
@@ -219,7 +217,7 @@ fn use_station(
             if let Some(c) = &save.contract {
                 let to = bases.base.iter().find(|b| b.id == c.to).map_or("its destination", |b| b.name.as_str());
                 prompt.say(format!("You are already carrying a parcel for {to}"));
-            } else if let Some(c) = offer(&bases, station.base, save.contracts_done) {
+            } else if let Some(c) = offer(&bases, station.base, save.contracts_done, &tuning.economy) {
                 let to = bases.base.iter().find(|b| b.id == c.to).map_or("?", |b| b.name.as_str()).to_string();
                 prompt.say(format!("Parcel for {to}: it pays ${} on delivery", c.pay));
                 save.contract = Some(c);
@@ -234,7 +232,7 @@ fn use_station(
             prompt.say(if topped { "Nothing needed: you are topped off" } else { "Patched up and rearmed from the cache" });
         }
         StationKind::Shrine => {
-            let tithe = standing::price(TITHE, faction, &save, t);
+            let tithe = standing::price(tuning.economy.tithe, faction, &save, t);
             if save.banked < tithe {
                 prompt.say(format!("The tithe is ${tithe}: you have ${}", save.banked));
             } else {
@@ -251,7 +249,7 @@ fn use_station(
 
 /// Walk up to the destination's doorway with the parcel and it pays out, more to a friend.
 #[allow(clippy::too_many_arguments)]
-fn deliver(
+pub(super) fn deliver(
     time: Res<Time>,
     bases: Res<Bases>,
     tuning: Res<Tuning>,
@@ -315,7 +313,7 @@ fn nearby(
                 StationKind::Resupply => "resupply free, buy guns and attachments".to_string(),
                 StationKind::Locker => "change clothes".to_string(),
                 StationKind::Cache => "patch up and rearm, free".to_string(),
-                StationKind::Workshop => match UPGRADE_COST.get(save.ship_level as usize) {
+                StationKind::Workshop => match tuning.economy.tune.get(save.ship_level as usize) {
                     Some(cost) => format!("tune the Kestrel to Mk{}, ${}{note}", save.ship_level + 1, standing::price(*cost, faction, &save, t)),
                     None => "the Kestrel is fully tuned".to_string(),
                 },
@@ -325,7 +323,7 @@ fn nearby(
                     None => "take a courier contract".to_string(),
                 },
                 StationKind::Shrine if blessing.0 > 0.0 => format!("blessed, {:.0} s left", blessing.0),
-                StationKind::Shrine => format!("tithe ${}{note} for a blessing", standing::price(TITHE, faction, &save, t)),
+                StationKind::Shrine => format!("tithe ${}{note} for a blessing", standing::price(tuning.economy.tithe, faction, &save, t)),
             };
             format!("[{}] {}: {what}", crate::controls::hint(crate::controls::Ctx::Foot, crate::controls::Action::Use, pad), s.label)
         }
@@ -342,13 +340,14 @@ mod tests {
     #[test]
     fn contracts_visit_every_other_base_in_turn_and_pay_more_for_the_far_ones() {
         let bases = Bases::load();
+        let e = crate::tuning::Economy::default();
         let vantage = bases.base.iter().position(|b| b.id == "outpost").unwrap();
-        let trips: Vec<Contract> = (0..3).map(|n| offer(&bases, vantage, n).unwrap()).collect();
+        let trips: Vec<Contract> = (0..3).map(|n| offer(&bases, vantage, n, &e).unwrap()).collect();
         let mut to: Vec<&str> = trips.iter().map(|c| c.to.as_str()).collect();
         to.sort();
         assert_eq!(to, ["reliquary", "roost", "yard"]);
         assert!(trips.windows(2).all(|w| w[1].pay > w[0].pay));
-        assert_eq!(offer(&bases, vantage, 3).unwrap().to, trips[0].to, "round again");
+        assert_eq!(offer(&bases, vantage, 3, &e).unwrap().to, trips[0].to, "round again");
     }
 
     #[test]

@@ -356,6 +356,8 @@ enum Row {
     Tune(usize),
     /// A ship part on the parts rack (an entry of `salvage::Part::ALL`).
     Part(usize),
+    /// Sell the hold's scrap, on the parts rack.
+    Sell,
     /// One of the Kestrel's two module slots, on the Ship screen.
     Fit(usize),
     /// The wardrobe's preset picker.
@@ -463,6 +465,7 @@ fn rows(panel: Panel, screen: Screen, tuned: [bool; 4], fits: bool) -> Vec<Row> 
         }
         Panel::Parts => {
             rows.extend((0..crate::solar::salvage::Part::ALL.len()).map(Row::Part));
+            rows.push(Row::Sell);
             rows.push(Row::Action("BACK", Action::Back));
         }
         Panel::Wardrobe => {
@@ -848,7 +851,7 @@ fn act(
             let kind = arsenal.kind();
             if select && !quartermaster::owns_weapon(save.as_deref(), kind) {
                 if let (Some(mut save), Some(file)) = (save, file) {
-                    let sale = quartermaster::buy_weapon(&mut save, kind);
+                    let sale = quartermaster::buy_weapon(&mut save, kind, &tuning.economy);
                     menu.note = sold(sale, kind.name());
                     file.write(&save);
                 }
@@ -861,7 +864,7 @@ fn act(
             let part = loadout.part(kind, slot);
             if row == Row::Slot(slot) && select && !quartermaster::owns_part(save.as_deref(), slot, part) {
                 if let (Some(mut save), Some(file)) = (save, file) {
-                    let sale = quartermaster::buy_part(&mut save, slot, part);
+                    let sale = quartermaster::buy_part(&mut save, slot, part, &tuning.economy);
                     menu.note = sold(sale, PARTS[slot][part].name);
                     gunsmith::persist(&loadout, &mut save, &file);
                 }
@@ -886,6 +889,16 @@ fn act(
                     Sale::Short(short) => format!("{} Mk{}: {short} scrap short", part.name(), level + 1),
                     Sale::Top => format!("{} is at Mk3, as far as it goes", part.name()),
                     Sale::Refused => crate::solar::standing::refusal(menu.rack),
+                };
+                file.write(&save);
+            }
+        }
+        Row::Sell => {
+            if select && let (Some(mut save), Some(file)) = (save, file) {
+                let scrap = save.scrap;
+                menu.note = match crate::solar::economy::sell_scrap(&mut save, menu.rack, &tuning.economy, &tuning.ship_combat) {
+                    0 => "The hold is empty".to_string(),
+                    money => format!("Sold {scrap} scrap: +${money}"),
                 };
                 file.write(&save);
             }
@@ -967,7 +980,7 @@ fn switch_weapon(arsenal: &mut Arsenal, dir: i32) {
     let mut i = arsenal.current as i32;
     for _ in 0..WEAPONS.len() {
         i = (i + dir.signum()).rem_euclid(WEAPONS.len() as i32);
-        if quartermaster::price(WEAPONS[i as usize]).is_some() {
+        if WEAPONS[i as usize] != crate::weapon::WeaponKind::Knife {
             break;
         }
     }

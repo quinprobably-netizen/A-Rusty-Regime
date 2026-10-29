@@ -58,6 +58,9 @@ impl SaveFile {
 #[serde(default)]
 pub struct Save {
     pub banked: u32,
+    /// Money earned in the field and not yet banked (bounties): it banks at a base's door and is
+    /// lost when your ship is shot down (`solar::economy`).
+    pub pocket: u32,
     /// Clothes picked at the camp wardrobe, over the class default.
     pub outfit: Option<crate::character::OutfitDef>,
     /// The wardrobe's saved looks and which one `outfit` is.
