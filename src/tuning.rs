@@ -570,9 +570,9 @@ pub struct ShipCombat {
     /// Seconds the `+$120 BOUNTY` line stays over the HUD after a kill.
     pub bounty_line: f32,
     /// Faction standing (`solar::standing`), -100 to 100, with the Regime, the Scrappers and the
-    /// PMC: you start at `standing_start` with each; the Deserters are your own side and stay at
-    /// `standing_deserters`.
-    pub standing_start: i32,
+    /// PMC: where you start with each, by faction id (a faction not listed starts at -20, a
+    /// stranger); the Deserters are your own side and stay at `standing_deserters`.
+    pub standing_start: std::collections::BTreeMap<String, i32>,
     pub standing_deserters: i32,
     /// What moves it: a parcel delivered to a faction's base, a raider shot down (with each of
     /// the three), one of a faction's ships shot down (with it, and with each faction that holds
@@ -582,8 +582,8 @@ pub struct ShipCombat {
     pub standing_kill: i32,
     pub standing_rival_kill: i32,
     pub standing_hit: i32,
-    /// Below `standing_start` it creeps back by `standing_recovery` every `standing_day` seconds
-    /// of game time (a Haven day), no further than `standing_start`.
+    /// Below where it started it creeps back by `standing_recovery` every `standing_day` seconds
+    /// of game time (a Haven day), no further than where it started.
     pub standing_recovery: i32,
     pub standing_day: f32,
     /// At `standing_friendly` or above a base sells for `standing_discount` less and a parcel to
@@ -659,7 +659,7 @@ impl Default for ShipCombat {
             downed: 3.0,
             loss_card: 4.0,
             bounty_line: 3.0,
-            standing_start: -20,
+            standing_start: [("regime", -20), ("scrappers", 0), ("pmc", -20)].into_iter().map(|(id, v)| (id.to_string(), v)).collect(),
             standing_deserters: 50,
             standing_delivery: 10,
             standing_raider_kill: 2,

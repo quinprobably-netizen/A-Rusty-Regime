@@ -259,12 +259,14 @@ counts in `deaths`; your guns, parts and engine tune are kept. The numbers are i
 screenshots of the card.
 **Faction standing** (stage 2, `docs/superpowers/specs/2026-10-29-ship-combat-stages-2-3-design.md`,
 `solar::standing`): the Regime, the Scrappers and the PMC each think of you from -100 to 100,
-and you start a stranger at -20 with all three; the Deserters are your own side, fixed at 50.
+and you start a stranger at -20 with the Regime and the PMC, but at 0 with the Scrappers, old
+friends of the Deserters, whose patrols let you pass until you give them a reason (the starts are
+`standing_start`); the Deserters are your own side, fixed at 50.
 A parcel delivered to a faction's base is +10 with it, a raider you shoot down +2 with each of
 the three, one of a faction's ships shot down -25 with it and +5 with each faction holding a
 grudge against it (the Regime hates the Deserters and the Scrappers, the Scrappers the Regime and
 the PMC; the PMC holds none), and your first hit on one of its ships in a fight -3 (a kill after
-it costs 25 in all). Below -20 it creeps back a point a Haven day. A patrol attacks you only
+it costs 25 in all). Below where it started it creeps back a point a Haven day. A patrol attacks you only
 while its faction is below 0, or once you have shot it, until it lets you go; at 0 or above it
 flies past and its diamond is hollow. At -60 or below the faction **hunts** you: two or three of
 its patrol hulls come in like raiders, on their own clock at the raiders' rate. At its base,

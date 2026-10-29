@@ -198,6 +198,9 @@ fn standings(p: &mut ChildSpawnerCommands, t: &ComicTheme, space: &Space, save: 
                     });
                     c.spawn(body_text(word, 16.0, if v < 0 { t2.red } else { t2.ink }, true, &t2));
                     c.spawn(body_text(gives, 15.0, t2.ink, false, &t2));
+                    if let Some(note) = standing::note(faction) {
+                        c.spawn(body_text(note, 15.0, t2.muted, true, &t2));
+                    }
                 });
             }
         });
@@ -213,8 +216,8 @@ fn standings(p: &mut ChildSpawnerCommands, t: &ComicTheme, space: &Space, save: 
                 }
                 c.spawn((Node { margin: UiRect::top(Val::Px(12.0)), ..default() }, children![body_text(
                     format!(
-                        "A parcel to their base {:+}. A raider shot down {:+} with each. One of their ships shot down {:+}, and {:+} with their rivals. Your first hit on one in a fight {:+}. Below {} it creeps back {} a day.",
-                        sc2.standing_delivery, sc2.standing_raider_kill, sc2.standing_kill, sc2.standing_rival_kill, sc2.standing_hit, sc2.standing_start, sc2.standing_recovery
+                        "A parcel to their base {:+}. A raider shot down {:+} with each. One of their ships shot down {:+}, and {:+} with their rivals. Your first hit on one in a fight {:+}. Below where it started it creeps back {} a day.",
+                        sc2.standing_delivery, sc2.standing_raider_kill, sc2.standing_kill, sc2.standing_rival_kill, sc2.standing_hit, sc2.standing_recovery
                     ),
                     14.0,
                     t2.muted,

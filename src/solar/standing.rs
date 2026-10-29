@@ -1,7 +1,8 @@
 //! Faction standing (stage 2 of ship combat, `docs/superpowers/specs/2026-10-29-ship-combat-stages-2-3-design.md`):
 //! where you stand with the Regime, the Scrappers and the PMC, -100 to 100, saved in
-//! `Save::standing`. You start as a stranger at `[ship_combat] standing_start` (-20) with each;
-//! the Deserters are your own side and stay at `standing_deserters`; raiders have no standing and
+//! `Save::standing`. You start where `[ship_combat] standing_start` says: a stranger (-20) to the
+//! Regime and the PMC, and neutral (0) with the Scrappers, old friends of the Deserters, whose
+//! patrols let you pass until you give them a reason; the Deserters are your own side and stay at `standing_deserters`; raiders have no standing and
 //! always attack.
 //!
 //! **What moves it:** a parcel delivered to a faction's base (`station` writes `Delivered`), a
@@ -142,12 +143,22 @@ pub fn moves(faction: Faction) -> bool {
     FACTIONS.contains(&faction)
 }
 
+/// Where you start with `faction` (a stranger if `standing_start` does not list it).
+pub fn start(faction: Faction, t: &ShipCombat) -> i32 {
+    t.standing_start.get(faction.id()).copied().unwrap_or(-20).clamp(MIN, MAX)
+}
+
+/// A word about how a faction sees you whatever your standing, for the Standing screen.
+pub fn note(faction: Faction) -> Option<&'static str> {
+    (faction == Faction::Scrappers).then_some("Old friends of the Deserters: they let you pass until you give them a reason")
+}
+
 /// Your standing with `faction`. The raiders have none: they are always at the bottom.
 pub fn get(save: &Save, faction: Faction, t: &ShipCombat) -> i32 {
     match faction {
         Faction::Deserters => t.standing_deserters,
         Faction::Raiders => MIN,
-        f => save.standing.get(f.id()).copied().unwrap_or(t.standing_start).clamp(MIN, MAX),
+        f => save.standing.get(f.id()).copied().unwrap_or_else(|| start(f, t)).clamp(MIN, MAX),
     }
 }
 
@@ -256,9 +267,9 @@ pub fn recover(save: &mut Save, dt: f32, t: &ShipCombat) -> bool {
     save.standing_clock -= t.standing_day;
     let mut moved = false;
     for f in FACTIONS {
-        let v = get(save, f, t);
-        if v < t.standing_start {
-            save.standing.insert(f.id().to_string(), (v + t.standing_recovery).min(t.standing_start));
+        let (v, start) = (get(save, f, t), start(f, t));
+        if v < start {
+            save.standing.insert(f.id().to_string(), (v + t.standing_recovery).min(start));
             moved = true;
         }
     }
@@ -393,7 +404,8 @@ mod tests {
     fn a_stranger_starts_hostile_and_the_deserters_stay_put() {
         let t = ShipCombat::default();
         let mut save = Save::default();
-        assert!(FACTIONS.iter().all(|f| get(&save, *f, &t) == -20 && hostile(&save, *f, &t)));
+        assert_eq!(FACTIONS.map(|f| get(&save, f, &t)), [-20, 0, -20], "a stranger to the Regime and the PMC, neutral with the Scrappers");
+        assert!(hostile(&save, Faction::Regime, &t) && hostile(&save, Faction::Pmc, &t) && !hostile(&save, Faction::Scrappers, &t));
         assert_eq!(get(&save, Faction::Deserters, &t), 50);
         assert_eq!(shift(&mut save, Faction::Deserters, -40, &t), 0, "your own side never moves");
         assert_eq!(get(&save, Faction::Deserters, &t), 50);
@@ -437,7 +449,10 @@ mod tests {
         shift(&mut save, Faction::Pmc, 30, &t);
         assert!(!recover(&mut save, t.standing_day - 1.0, &t), "not a day yet");
         assert!(recover(&mut save, 1.0, &t));
-        assert_eq!((get(&save, Faction::Regime, &t), get(&save, Faction::Scrappers, &t), get(&save, Faction::Pmc, &t)), (-21, -20, 10), "only what was pushed below the start");
+        assert_eq!((get(&save, Faction::Regime, &t), get(&save, Faction::Scrappers, &t), get(&save, Faction::Pmc, &t)), (-21, 0, 10), "only what was pushed below the start");
+        shift(&mut save, Faction::Scrappers, -2, &t);
+        recover(&mut save, t.standing_day, &t);
+        assert_eq!(get(&save, Faction::Scrappers, &t), -1, "the Scrappers creep back toward their own start, 0");
         recover(&mut save, t.standing_day, &t);
         recover(&mut save, t.standing_day, &t);
         assert_eq!(get(&save, Faction::Regime, &t), -20, "back to the start and no further");

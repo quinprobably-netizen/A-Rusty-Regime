@@ -3568,14 +3568,14 @@ fn set_standing(app: &mut App, faction: Faction, v: i32) {
 fn a_new_save_starts_a_stranger_and_an_old_save_without_standing_still_loads() {
     let t = Tuning::default().ship_combat;
     let fresh = Save::default();
-    assert_eq!(standing::FACTIONS.map(|f| standing::get(&fresh, f, &t)), [-20, -20, -20], "a stranger to the Regime, the Scrappers and the PMC");
+    assert_eq!(standing::FACTIONS.map(|f| standing::get(&fresh, f, &t)), [-20, 0, -20], "a stranger to the Regime and the PMC, neutral with the Scrappers");
     assert_eq!(standing::get(&fresh, Faction::Deserters, &t), 50);
     let path = std::env::temp_dir().join(format!("rust-regime-old-standing-{}.toml", std::process::id()));
     std::fs::write(&path, "banked = 500\nkills = 2\ndeaths = 1\n\n[faction_kills]\nraiders = 2\n").unwrap();
     let file = SaveFile(Some(path.clone()));
     let save = file.load();
     assert_eq!((save.banked, save.kills), (500, 2), "the old fields are kept");
-    assert_eq!(standing::FACTIONS.map(|f| standing::get(&save, f, &t)), [-20, -20, -20], "and it starts a stranger");
+    assert_eq!(standing::FACTIONS.map(|f| standing::get(&save, f, &t)), [-20, 0, -20], "and it starts where a new one does");
     let mut moved = save.clone();
     standing::shift(&mut moved, Faction::Scrappers, 35, &t);
     moved.standing_clock = 12.5;
@@ -3590,7 +3590,7 @@ fn shooting_down_a_raider_pleases_all_three_and_the_line_says_so() {
     hold_fire(&mut app, 4.0);
     run(&mut app, 0.2);
     assert!(app.world().get_entity(jackal).is_err(), "the Jackal is destroyed");
-    assert_eq!(standing::FACTIONS.map(|f| standing_of(&app, f)), [-18, -18, -18]);
+    assert_eq!(standing::FACTIONS.map(|f| standing_of(&app, f)), [-18, 2, -18]);
     let line = app.world().resource::<StandingLine>();
     assert_eq!(line.text(), "REGIME +2  SCRAPPERS +2  PMC +2");
     assert!(line.left > 0.0, "the line is up");
@@ -3627,7 +3627,7 @@ fn a_hit_on_a_patrol_costs_3_once_a_fight_and_its_kill_25_in_all_with_5_from_its
     (hull.hp, hull.last_hit_by) = (0.0, Some(ship));
     run(&mut app, 0.2);
     assert!(app.world().get_entity(patrol).is_err(), "shot down");
-    assert_eq!((standing_of(&app, Faction::Regime), standing_of(&app, Faction::Scrappers), standing_of(&app, Faction::Pmc)), (-45, -15, -20));
+    assert_eq!((standing_of(&app, Faction::Regime), standing_of(&app, Faction::Scrappers), standing_of(&app, Faction::Pmc)), (-45, 5, -20));
     assert_eq!(app.world().resource::<StandingLine>().text(), "REGIME -25  SCRAPPERS +5", "the hit and the kill add up on the line");
     // A kill with no hit first costs the 25 on its own, and it clamps at -100.
     let (mut app, patrol) = patrol_on_the_range();
@@ -3681,6 +3681,35 @@ fn a_patrol_attacks_at_minus_20_leaves_you_be_at_0_and_comes_for_you_once_shot()
     run(&mut app, 0.3);
     assert_eq!(standing_of(&app, Faction::Regime), -3);
     assert!(patrol_modes(&mut app).iter().all(|m| *m != Mode::Patrol), "below 0 they all come for you, {:?}", patrol_modes(&mut app));
+}
+
+#[test]
+fn the_scrappers_patrols_let_you_pass_at_the_start_until_you_shoot_one() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    board(&mut app);
+    // The Yard's ground point and up on Cinder.
+    let (base, up) = {
+        let bases = app.world().resource::<solar::base::Bases>().clone();
+        let solar = app.world().resource::<Solar>();
+        let spec = bases.base.iter().find(|b| b.id == "yard").unwrap();
+        let (ground, frame, deck) = solar::base::site(spec, &solar.spheres["cinder"], solar.pad);
+        (ground + frame * Vec3::Y * deck, frame * Vec3::Y)
+    };
+    fly_to(&mut app, "cinder", base + up * 7500.0);
+    run(&mut app, 0.5);
+    assert_eq!(standing_of(&app, Faction::Scrappers), 0, "a new save is neutral with the Scrappers");
+    put_ship(&mut app, base + up * 2000.0, Vec3::ZERO);
+    run(&mut app, 1.0);
+    assert_eq!(patrol_modes(&mut app), [Mode::Patrol, Mode::Patrol], "their Welders let you pass");
+    let welder = spec_of(&app, "welder");
+    let patrols: Vec<Entity> = enemies(&mut app).into_iter().filter(|e| matches!(e.1, Role::Patrol { .. })).map(|e| e.0).collect();
+    assert!(patrols.iter().all(|e| app.world().get::<Ship>(*e).unwrap().spec == welder));
+    let ship = ship_entity(&mut app);
+    app.world_mut().write_message(solar::combat::ShotLanded { by: ship, on: patrols[0] });
+    run(&mut app, 0.3);
+    assert_eq!(standing_of(&app, Faction::Scrappers), -3);
+    assert!(patrol_modes(&mut app).iter().all(|m| *m != Mode::Patrol), "shot at, they come for you: {:?}", patrol_modes(&mut app));
 }
 
 #[test]
