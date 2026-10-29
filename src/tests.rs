@@ -2809,6 +2809,9 @@ fn a_raider_closes_on_the_kestrel_and_fires_only_with_it_in_the_cone() {
 fn an_enemy_pilot_diving_on_a_low_target_never_flies_into_the_ground() {
     let mut app = aloft(60.0);
     let ship = ship_entity(&mut app);
+    // The target outlasts the 40 s: shot down, it would be back at the Roost, and the raiders
+    // left 6 km behind would be gone.
+    app.world_mut().entity_mut(ship).insert(Hull::new(1e6, 0.0));
     let rot = app.world().get::<Rotation>(ship).unwrap().0;
     let mut ships = Vec::new();
     for id in ["jackal", "censer", "welder", "sentry"] {
