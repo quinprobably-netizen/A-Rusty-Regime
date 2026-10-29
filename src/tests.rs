@@ -2230,6 +2230,132 @@ fn bases_toml_lists_four_bases_on_four_worlds_with_models_and_clear_doorways() {
     }
 }
 
+#[test]
+fn every_base_is_staffed_by_its_own_faction_standing_on_floors_and_has_a_visitor() {
+    let bases = solar::base::Bases::load();
+    let characters = crate::character::Characters::load();
+    let ships = solar::ship::Ships::load();
+    for b in &bases.base {
+        let own = &characters.faction[&b.faction].characters;
+        assert!(b.crew.len() > b.stations.len(), "{}: a keeper per station and someone walking rounds", b.id);
+        assert!(b.crew.iter().any(|c| !c.path.is_empty()), "{}: someone walks a round", b.id);
+        for c in &b.crew {
+            assert!(own.contains(&c.character), "{}: {} is one of the {}", b.id, c.character, b.faction);
+            for p in std::iter::once(c.at).chain(c.path.iter().copied()).map(Vec3::from) {
+                assert!(b.floor_under(p + Vec3::Y * 0.01, 0.6).is_some(), "{}: {} has no floor under {p}", b.id, c.character);
+                for bx in b.collider.iter().filter(|bx| bx.rot == [0.0; 3]) {
+                    assert!(!bx.touches(p + Vec3::Y, 0.3), "{}: {} at {p} stands in the box at {:?}", b.id, c.character, bx.center);
+                }
+            }
+        }
+        let visitor = b.traffic.as_deref().unwrap_or_else(|| panic!("{}: a ship visits", b.id));
+        assert!(ships.ship.iter().any(|s| s.id == visitor), "{}: {visitor} is a ship", b.id);
+    }
+}
+
+#[test]
+fn the_roost_has_its_crew_and_its_visitor_at_start() {
+    let mut app = system_app();
+    run(&mut app, 0.5);
+    let roost = app.world().resource::<solar::base::Bases>().base.iter().find(|b| b.id == "roost").unwrap().clone();
+    let crew = app.world_mut().query_filtered::<&ChildOf, With<solar::life::Crew>>().iter(app.world()).map(|c| c.parent()).collect::<Vec<_>>();
+    let at_base = crew.iter().filter(|p| app.world().get::<solar::base::Base>(**p).is_some()).count();
+    assert_eq!(at_base, roost.crew.len());
+    let visitors = app.world_mut().query::<&solar::life::Traffic>().iter(app.world()).count();
+    assert_eq!(visitors, 1);
+}
+
+#[test]
+fn every_world_has_its_own_factions_post_with_a_cache_and_crew_on_floors() {
+    let bases = solar::base::Bases::load();
+    let posts = solar::post::Posts::load();
+    let characters = crate::character::Characters::load();
+    assert_eq!(posts.post.iter().map(|p| p.body.as_str()).collect::<Vec<_>>(), ["home", "bastion", "cinder", "frost"]);
+    for p in &posts.post {
+        let base = bases.base.iter().find(|b| b.body == p.body).unwrap();
+        assert_eq!(p.faction, base.faction, "{}: the world's own faction", p.id);
+        assert!(std::path::Path::new(&format!("assets/models/posts/{}.glb", p.id)).exists(), "{} has a model", p.id);
+        assert_eq!(p.stations.iter().map(|s| s.kind).collect::<Vec<_>>(), [StationKind::Cache]);
+        let cache = Vec3::from(p.stations[0].at);
+        assert!(p.floor_under(cache, 2.0).is_some(), "{}: a floor under the cache", p.id);
+        let own = &characters.faction[&p.faction].characters;
+        for c in &p.crew {
+            assert!(own.contains(&c.character), "{}: {} is one of the {}", p.id, c.character, p.faction);
+            assert!(p.floor_under(Vec3::from(c.at) + Vec3::Y * 0.01, 0.6).is_some(), "{}: {} has a floor", p.id, c.character);
+        }
+    }
+}
+
+#[test]
+fn posts_are_scattered_clear_of_the_bases_and_each_other_on_every_world() {
+    let app = system_app();
+    let solar = app.world().resource::<Solar>();
+    let bases = app.world().resource::<solar::base::Bases>();
+    for body in ["home", "bastion", "cinder", "frost"] {
+        let sphere = solar.spheres[body].clone();
+        let clear: Vec<Vec3> = bases.base.iter().filter(|b| b.body == body).map(|b| solar::base::site(b, &sphere, solar.pad).0).collect();
+        let sites = solar::post::sites(&sphere, &clear);
+        assert!(sites.len() >= 4, "{body}: {} posts", sites.len());
+        assert_eq!(sites.iter().map(|s| s.0).collect::<Vec<_>>(), solar::post::sites(&sphere, &clear).iter().map(|s| s.0).collect::<Vec<_>>(), "{body}: the same every time");
+        let r = sphere.sea_radius();
+        for (i, (a, _)) in sites.iter().enumerate() {
+            for c in &clear {
+                assert!(a.angle_between(*c) * r >= 399.0, "{body}: post {i} is clear of the base");
+            }
+            for (b, _) in &sites[i + 1..] {
+                assert!(a.angle_between(*b) * r >= 599.0, "{body}: posts apart");
+            }
+        }
+    }
+}
+
+#[test]
+fn havens_posts_stand_at_start_with_their_crew_and_a_found_one_gets_a_waypoint() {
+    let mut app = system_app();
+    run(&mut app, 0.5);
+    let posts: Vec<solar::post::Post> = app.world_mut().query::<&solar::post::Post>().iter(app.world()).cloned().collect();
+    assert!(posts.len() >= 4, "{} posts on Haven", posts.len());
+    assert!(posts.iter().all(|p| p.key.starts_with("home.")));
+    let crew = app.world_mut().query::<&solar::life::Crew>().iter(app.world()).count();
+    let roost = app.world().resource::<solar::base::Bases>().base[0].crew.len();
+    let per_post = app.world().resource::<solar::post::Posts>().post[0].crew.len();
+    assert_eq!(crew, roost + per_post * posts.len());
+}
+
+#[test]
+fn a_base_standing_high_over_a_slope_has_a_ramp_down_from_its_door() {
+    let app = system_app();
+    let solar = app.world().resource::<Solar>();
+    let bases = app.world().resource::<solar::base::Bases>();
+    let roost = bases.base.iter().find(|b| b.id == "roost").unwrap();
+    let sphere = solar.spheres["home"].clone();
+    let (ground, frame, deck) = solar::base::site(roost, &sphere, solar.pad);
+    let (center, tilt, size) = solar::base::approach(roost, &sphere, ground, frame, deck).expect("the Roost stands over a slope");
+    let slope = tilt * Vec3::Z;
+    assert!(slope.y < 0.0 && -slope.y / slope.z <= 0.51, "down and walkable: {slope}");
+    assert!(size.x >= 6.0, "wide enough to walk up");
+    // Its top surface starts at the deck and ends on the ground.
+    let top_end = center + tilt * Vec3::new(0.0, size.y / 2.0, -size.z / 2.0);
+    let low_end = center + tilt * Vec3::new(0.0, size.y / 2.0, size.z / 2.0);
+    assert!(top_end.y >= deck - 0.6, "it meets the deck: {} vs {deck}", top_end.y);
+    let here = sphere.height(ground.normalize());
+    let under = sphere.height((ground + frame * low_end.with_y(0.0)).normalize()) - here;
+    assert!(low_end.y <= under + 1.0, "it reaches the ground: {} vs {under}", low_end.y);
+    // And so it stands in the world: from the deck's height down to the ground.
+    let mut app = app;
+    run(&mut app, 0.2);
+    let origin = *app.world().resource::<Origin>();
+    let surface = app.world().resource::<Surface>().clone();
+    let (ramp, len) = app.world_mut().query::<(&Name, &Transform, &Collider)>().iter(app.world()).find(|(n, _, _)| n.as_str() == "Approach").map(|(_, tf, c)| (*tf, c.shape_scaled().as_cuboid().unwrap().half_extents.z)).expect("the ramp stands");
+    let base = app.world_mut().query::<(&Transform, &solar::base::Base)>().iter(app.world()).find(|(_, b)| b.spec == 0).map(|(tf, _)| *tf).unwrap();
+    let alt = |p: Vec3| surface.altitude(origin.body(p));
+    let near = ramp.translation + ramp.rotation * Vec3::NEG_Z * len;
+    let far = ramp.translation + ramp.rotation * Vec3::Z * len;
+    assert!(near.distance(base.translation) < far.distance(base.translation), "it runs away from the base");
+    assert!(alt(near) > alt(far) + 5.0, "it runs down: {} to {}", alt(near), alt(far));
+    assert!((alt(near) - alt(base.translation)).abs() < 2.5, "it starts at the deck: {} vs {}", alt(near), alt(base.translation));
+}
+
 /// The base and foundation fixtures standing on the anchor: (base id, how many slabs).
 fn standing(app: &mut App) -> (Vec<String>, usize) {
     let specs = app.world().resource::<solar::base::Bases>().clone();
@@ -2299,6 +2425,7 @@ fn every_base_and_the_ship_get_a_waypoint_in_the_faction_colour() {
         match target {
             solar::waypoint::Target::Base(i) => pins.push(bases.base[i].id.clone()),
             solar::waypoint::Target::Ship => pins.push("ship".into()),
+            solar::waypoint::Target::Post(_) => pins.push("post".into()),
         }
         assert_eq!(text.len(), 2, "a diamond and a label");
     }
@@ -2354,7 +2481,8 @@ fn every_base_has_its_station_on_a_floor_clear_of_the_furniture() {
 /// Stands the player beside a station of `kind` that the test puts there (so it works on any world).
 fn stand_at_station(app: &mut App, kind: StationKind, base: usize) {
     let at = player(app).0;
-    app.world_mut().spawn((Station { base, kind, label: "Test".into() }, GlobalTransform::from_translation(at)));
+    let faction = solar::station::faction_of(app.world().resource::<solar::base::Bases>(), base);
+    app.world_mut().spawn((Station { base, faction, kind, label: "Test".into() }, GlobalTransform::from_translation(at)));
 }
 
 fn press_use(app: &mut App) {
@@ -4400,3 +4528,4 @@ fn the_hud_shows_your_scrap_beside_the_bank() {
     assert_eq!(crate::hud::haul(&Save { banked: 750, scrap: 12, ..default() }, &e), "BANK 750   SCRAP 12/60");
     assert_eq!(crate::hud::haul(&Save { banked: 750, pocket: 120, scrap: 12, ship_parts: [1, 0, 0, 0], ..default() }, &e), "BANK 750 +120   SCRAP 12/80");
 }
+

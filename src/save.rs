@@ -127,4 +127,6 @@ pub struct Save {
     pub ship_parts: [u8; 4],
     pub modules: Vec<String>,
     pub fitted: Vec<String>,
+    /// The posts you have come across (`solar::post`), as `<body>.<n>`: each has a waypoint.
+    pub posts_found: Vec<String>,
 }

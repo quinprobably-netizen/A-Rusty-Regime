@@ -288,6 +288,10 @@ def preview(path, cam, look=(0, 0, 0), lens=35, res=(960, 600), fresh=False):
         for o in [o for o in bpy.data.objects if o.get("preview")]:
             bpy.data.objects.remove(o, do_unlink=True)
     scene.render.engine = "CYCLES"
+    # On the GPU when Cycles finds one (Q's Arc), as the wear bake is.
+    device, used = (wk.DEVICE, wk.DEVICE) if wk.DEVICE else wk.bake_device()
+    scene.cycles.device = device
+    print(f"  preview on {used}")
     scene.cycles.samples = 24
     scene.cycles.use_denoising = False
     scene.view_settings.view_transform = "Standard"

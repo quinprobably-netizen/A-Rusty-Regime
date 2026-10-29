@@ -2,9 +2,13 @@
 
 Blender frame as for the ships: +X right, +Y into the site, Z up, the front door on -Y, the origin
 at ground level under the building's centre. Every part goes in a group that exports as one mesh:
-`hull` (opaque, baked wear), `glass` and `lights` (emissive). Named empties the game looks for:
-`lamp.<n>` (a warm point light a few metres across, indoors), `flood.<n>` (a cold floodlight,
-outdoors). The SPEC of each base also carries its site and collision boxes, in this frame;
+`hull` (opaque, baked wear), `glass` and `lights` (emissive), and one group per moving part
+(`spinner`). Named empties the game looks for: `lamp.<n>` (a warm point light a few metres across,
+indoors), `flood.<n>` (a cold floodlight, outdoors), and the life layer's (`src/solar/life.rs`):
+`blink.<n>` (a red beacon), `strobe.<n>` (a white flash), `fire.<n>` (flickering firelight),
+`weld.<n>` (weld flashes and sparks), `smoke.<n>` (rising puffs) and `sound.<kind>.<n>` (a looping
+sound: generator, radio, fire, organ, bell, grinder, wind, hum, vent). See
+docs/superpowers/specs/2026-10-29-living-bases-design.md. The SPEC of each base also carries its site and collision boxes, in this frame;
 `write_toml` turns them into the game's frame (+X right, +Y up, door on +Z) for `assets/bases.toml`.
 """
 
@@ -14,10 +18,12 @@ import os
 import kit  # the ship kit: tools/ships is on sys.path
 from kit import block, cyl, join, sphere, tube, wk
 from interior import grating
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 TRIS_MAX = 115000
 TEX = 2048
+MESHES_MAX = 12
+SOUNDS = ("generator", "radio", "fire", "organ", "bell", "grinder", "wind", "hum", "vent")
 
 wk.PALETTE.update({
     "concrete": ((0.42, 0.41, 0.39), (0.55, 0.54, 0.52), 0.0, 0.9, 0.35, 0),
@@ -39,6 +45,8 @@ def ring(name, c, axis, r_out, r_in, width, material, segs=16):
 class Base(kit.Ship):
     """One base being built: the ship class with a bigger texture and wear sized for a building."""
 
+    pivots = None  # spinner group -> its pivot (Blender frame)
+
     def finish(self, out_dir, bake=True):
         groups = {}
         for obj, group in self.parts:
@@ -47,7 +55,16 @@ class Base(kit.Ship):
         for group, members in groups.items():
             for o in members:
                 wk.apply_modifiers(o)
-            objs.append(join(members, group))
+            o = join(members, group)
+            if group in (self.pivots or {}):
+                # Move the origin onto the pivot, so the game turns the node about it.
+                kit.bpy.context.view_layer.update()
+                o.data.transform(o.matrix_world)
+                o.matrix_world = Matrix.Identity(4)
+                p = Vector(self.pivots[group])
+                o.data.transform(Matrix.Translation(-p))
+                o.location = p
+            objs.append(o)
         self.objects = objs
         if bake:
             wk.TEX = TEX
@@ -64,6 +81,30 @@ class Base(kit.Ship):
         tris = sum(len(p.vertices) - 2 for o in objs for p in o.data.polygons)
         print(f"wrote {path}: {os.path.getsize(path) // 1024} KB, {tris} tris, {len(objs)} meshes, {len(self.nodes)} nodes")
         return path
+
+
+def spinner(base, n, pivot, axis, rpm, parts):
+    """A moving part: `parts` become one mesh that the game turns about `pivot` (Blender frame) on
+    Blender `axis` ("x", "y" or "z"; "z" is up) at `rpm` (a whole number, negative for the other
+    way). Its node is named `spin.<game axis>.<rpm>.<n>`; `n` keeps the names unique."""
+    game = {"x": ("x", 1), "y": ("z", -1), "z": ("y", 1)}[axis]
+    name = f"spin.{game[0]}.{int(rpm) * game[1]}.{n}"
+    if base.pivots is None:
+        base.pivots = {}
+    base.pivots[name] = tuple(pivot)
+    for p in parts:
+        base.add(p, group=name)
+    return name
+
+
+def life_node(base, kind, n, at, sound=None):
+    """A life-layer empty: `kind` is blink, strobe, fire, weld or smoke, or "sound" with `sound`
+    one of SOUNDS."""
+    if kind == "sound":
+        assert sound in SOUNDS, sound
+        return base.node(f"sound.{sound}.{n}", at)
+    assert kind in ("blink", "strobe", "fire", "weld", "smoke"), kind
+    return base.node(f"{kind}.{n}", at)
 
 
 # ---------------------------------------------------------------------------------- structures
@@ -388,7 +429,45 @@ def check(path, spec):
     """The ship checker with the base budget: triangles, size, nodes, meshes, and the lowest
     vertex at `depth` below ground level."""
     kit.TRIS_MAX = TRIS_MAX
+    kit.MESHES_MAX = MESHES_MAX
     return kit.check(path, {"size": spec["size"], "rest": spec["depth"], "nodes": spec["nodes"]})
+
+
+def check_spec(spec):
+    """The SPEC's own sense, without the game: the doorway and a metre inside it are clear with a
+    floor under them, every station has a floor within reach, and every crew spot and path point
+    (feet) has a floor under it and room for a body. Tilted boxes count only as floors' absence;
+    `cargo test` checks the rest."""
+    flat = [b for b in spec["boxes"] if not any(b[3])]
+
+    def touches(p, margin):
+        return next((n for n, c, sz, _ in flat if all(abs(p[k] - c[k]) <= sz[k] / 2 + margin for k in range(3))), None)
+
+    def floor(p, reach):
+        fx, fy = spec.get("footprint_at", (0.0, 0.0))
+        tops = [0.0] if abs(p[0] - fx) <= spec["footprint"][0] / 2 and abs(p[1] - fy) <= spec["footprint"][1] / 2 else []
+        tops += [c[2] + sz[2] / 2 for n, c, sz, _ in flat if abs(p[0] - c[0]) <= sz[0] / 2 and abs(p[1] - c[1]) <= sz[1] / 2]
+        return any(t <= p[2] + 1e-4 and p[2] - t <= reach for t in tops)
+
+    problems = []
+    door = spec["door"]
+    for p in (door, (door[0], door[1] + 1.0, door[2])):
+        hit = touches(p, 0.35)
+        if hit:
+            problems.append(f"doorway {p} blocked by {hit}")
+        if not floor(p, 2.0):
+            problems.append(f"no floor under doorway {p}")
+    for kind, c, label in spec.get("stations", []):
+        if not floor(c, 1.6):
+            problems.append(f"no floor under station {label}")
+    for who, c, facing, path in spec.get("crew", []):
+        for p in [c, *path]:
+            if not floor(p, 0.6):
+                problems.append(f"{who}: no floor under {p}")
+            hit = touches((p[0], p[1], p[2] + 1.0), 0.3)
+            if hit:
+                problems.append(f"{who}: {p} is inside {hit}")
+    return problems
 
 
 preview = kit.preview
@@ -405,9 +484,10 @@ def _fmt(v):
     return ", ".join(f"{x:g}" for x in v)
 
 
-def write_toml(path, specs):
-    """`assets/bases.toml` from the SPECs: everything the game needs, in its own frame."""
-    lines = [
+def write_toml(path, specs, table="base", header=None):
+    """`assets/bases.toml` from the SPECs: everything the game needs, in its own frame. The posts
+    write `assets/posts.toml` the same way, as `[[post]]` with no site of their own."""
+    lines = header or [
         "# The faction bases: where each stands, its landing pad, its doorway and its collision boxes,",
         "# for `models/bases/<id>.glb` (built by tools/bases). GENERATED by `tools/bases/build.sh --toml`",
         "# from the SPEC in `tools/bases/bases/<id>.py`: edit that, not this. Frame: +X right, +Y up,",
@@ -421,10 +501,10 @@ def write_toml(path, specs):
         "",
     ]
     for bid, s in specs:
-        lines += [f"[[base]]", f'id = "{bid}"', f'name = "{s["name"]}"', f'faction = "{s["faction"]}"', f'body = "{s["body"]}"', f"color = [{_fmt(s['color'])}]"]
+        lines += [f"[[{table}]]", f'id = "{bid}"', f'name = "{s["name"]}"', f'faction = "{s["faction"]}"', f'body = "{s["body"]}"', f"color = [{_fmt(s['color'])}]"]
         if "near_pad" in s:
             lines.append(f"near_pad = [{_fmt(s['near_pad'])}]")
-        else:
+        elif "lat" in s:
             lines += [f"lat = {s['lat']:g}", f"lon = {s['lon']:g}"]
         if s.get("yaw"):
             lines.append(f"yaw = {s['yaw']:g}")
@@ -444,8 +524,15 @@ def write_toml(path, specs):
                 entry += f", rot = [{_fmt((rot[0], rot[2], -rot[1]))}]"
             lines.append(entry + f" }},  # {name}")
         lines += ["]"]
+        if "traffic" in s:
+            lines.append(f'traffic = "{s["traffic"]}"')
         for kind, c, label in s.get("stations", []):
-            lines.append(f'[[base.stations]]\nkind = "{kind}"\nat = [{_fmt(_game(c))}]\nlabel = "{label}"')
+            lines.append(f'[[{table}.stations]]\nkind = "{kind}"\nat = [{_fmt(_game(c))}]\nlabel = "{label}"')
+        for who, c, facing, walk in s.get("crew", []):
+            entry = f'[[{table}.crew]]\ncharacter = "{who}"\nat = [{_fmt(_game(c))}]\nfacing = {facing:g}'
+            if walk:
+                entry += "\npath = [" + ", ".join(f"[{_fmt(_game(p))}]" for p in walk) + "]"
+            lines.append(entry)
         lines.append("")
     with open(path, "w") as f:
         f.write("\n".join(lines))
