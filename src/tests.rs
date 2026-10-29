@@ -2521,8 +2521,13 @@ fn the_shrine_sells_a_blessing_that_lengthens_the_health_bar_for_a_while() {
 
 // ------------------------------------------------------------------- raiders, patrols and the AI
 
-use solar::ai::{Enemy, Role};
-use solar::enemy::spawn_enemy;
+use solar::ai::{Enemy, Mode, Role};
+use solar::enemy::{spawn_enemy, Raids};
+
+/// Every enemy ship: its entity, why it is there and what it is doing.
+fn enemies(app: &mut App) -> Vec<(Entity, Role, Mode)> {
+    app.world_mut().query::<(Entity, &Enemy)>().iter(app.world()).map(|(e, en)| (e, en.role, en.mode)).collect()
+}
 
 /// The Kestrel boarded and hanging `height` metres straight over the pad, at rest.
 fn aloft(height: f32) -> App {
@@ -2560,6 +2565,34 @@ fn enemy_near(app: &mut App, id: &str, offset: Vec3, role: Role) -> Entity {
 }
 
 #[test]
+fn a_raid_comes_in_off_to_one_side_inside_the_band_and_never_over_the_cap() {
+    let mut app = aloft(3400.0);
+    let t = Tuning::default().ship_combat;
+    let ship = ship_entity(&mut app);
+    let mut packs = Vec::new();
+    for _ in 0..5 {
+        let (from, nose, _) = pose(&app, ship);
+        let before: HashSet<Entity> = enemies(&mut app).iter().map(|e| e.0).collect();
+        app.world_mut().resource_mut::<Raids>().force = true;
+        run(&mut app, 2.0 / 66.0);
+        let new: Vec<Entity> = enemies(&mut app).iter().map(|e| e.0).filter(|e| !before.contains(e)).collect();
+        for &e in &new {
+            let (p, _, _) = pose(&app, e);
+            let d = p.distance(from);
+            assert!((t.spawn_near..=t.spawn_far).contains(&d), "came in {d:.0} m off");
+            assert!((p - from).normalize().dot(nose) <= 0.0, "never ahead of the nose: {:.0} degrees off it", (p - from).angle_between(nose).to_degrees());
+            assert_eq!(app.world().get::<Ship>(e).map(|s| s.spec), Some(spec_of(&app, "jackal")), "raiders fly Jackals");
+        }
+        packs.push(new.len());
+    }
+    let alive = enemies(&mut app).len();
+    assert!(packs[0] >= 2 && packs[0] <= 4, "a pack of two to four: {packs:?}");
+    assert_eq!(alive, t.enemy_cap, "packs fill up to the cap and no further: {packs:?}");
+    assert_eq!(*packs.last().unwrap(), 0, "a full sky takes no more: {packs:?}");
+    assert!(enemies(&mut app).iter().all(|e| e.1 == Role::Raider));
+}
+
+#[test]
 fn a_raider_past_six_km_is_gone() {
     let mut app = aloft(3400.0);
     let ship = ship_entity(&mut app);
@@ -2569,6 +2602,49 @@ fn a_raider_past_six_km_is_gone() {
     run(&mut app, 0.1);
     assert!(app.world().get_entity(far).is_err(), "6.3 km off: gone");
     assert!(app.world().get_entity(near).is_ok(), "5.5 km off: still coming");
+}
+
+#[test]
+fn no_raiders_on_foot_near_a_base_or_in_the_first_minute_after_boarding() {
+    let t = Tuning::default().ship_combat;
+    let due = |app: &mut App, aboard: f32| {
+        let mut r = app.world_mut().resource_mut::<Raids>();
+        r.clock = t.raid_delay + 1.0;
+        r.aboard = aboard;
+    };
+    // On foot, beside the ship: whatever the clock says.
+    let mut app = system_app();
+    run(&mut app, 0.5);
+    due(&mut app, 1000.0);
+    run(&mut app, 1.0);
+    assert!(enemies(&mut app).is_empty(), "nothing hunts you on foot");
+    // On the pad, a hundred metres from the Roost: none, however long you have been aboard.
+    board(&mut app);
+    due(&mut app, 1000.0);
+    run(&mut app, 1.0);
+    assert!(enemies(&mut app).is_empty(), "none within 3 km of a base");
+    // Away from it, but only just aboard: none until the minute is up.
+    let (p, _) = ship_state(&mut app);
+    put_ship(&mut app, p + p.normalize() * 3400.0, Vec3::ZERO);
+    due(&mut app, 0.0);
+    run(&mut app, 2.0);
+    assert!(enemies(&mut app).is_empty(), "none in the first minute");
+    due(&mut app, t.raid_grace + 0.5);
+    run(&mut app, 0.1);
+    assert!(enemies(&mut app).len() >= 2, "then the pack comes");
+    assert_eq!(app.world().resource::<Raids>().clock, 0.0, "and the clock starts again");
+}
+
+#[test]
+fn the_raid_clock_runs_faster_the_longer_the_flight_goes_without_a_fight() {
+    let mut app = aloft(3400.0);
+    run(&mut app, 2.0);
+    let early = app.world().resource::<Raids>().clock;
+    app.world_mut().resource_mut::<Raids>().quiet = 240.0;
+    let before = app.world().resource::<Raids>().clock;
+    run(&mut app, 2.0);
+    let late = app.world().resource::<Raids>().clock - before;
+    assert!(late > early * 2.5, "four quiet minutes in, it runs about three times as fast: {early:.2} then {late:.2}");
 }
 
 #[test]
