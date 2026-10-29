@@ -108,8 +108,7 @@ class Ship:
         self.objects = objs
         if bake:
             wk.TEX = 1024
-            wk.DEVICE, used = _bake_device()
-            print(f"baking {self.id} on {used}")
+            print(f"baking {self.id}")
             wk.bake_wear(self, objs, scale=40.0)
         for m in {m for o in objs for m in o.data.materials if m is not None and m.get("kind") == "canopy"}:
             _see_through(m)
@@ -125,30 +124,6 @@ class Ship:
         tris = sum(len(p.vertices) - 2 for o in objs for p in o.data.polygons)
         print(f"wrote {path}: {os.path.getsize(path) // 1024} KB, {tris} tris, {len(objs)} meshes, {len(self.nodes)} nodes")
         return path
-
-
-def _bake_device():
-    """("GPU", names) when Cycles finds a GPU (ONEAPI for Q's Arc first, then OPTIX, CUDA, HIP,
-    METAL), else ("CPU", "CPU"). Never fails: a missing runtime just means the CPU."""
-    try:
-        prefs = bpy.context.preferences.addons["cycles"].preferences
-    except (KeyError, AttributeError):
-        return "CPU", "CPU"
-    for kind in ("ONEAPI", "OPTIX", "CUDA", "HIP", "METAL"):
-        try:
-            prefs.compute_device_type = kind
-            gpus = [d for d in prefs.get_devices_for_type(kind) if d.type != "CPU"]
-        except (TypeError, AttributeError, RuntimeError):
-            continue
-        if gpus:
-            for d in prefs.devices:
-                d.use = d.type != "CPU"
-            return "GPU", f"GPU ({kind}: {', '.join(d.name for d in gpus)})"
-    try:
-        prefs.compute_device_type = "NONE"
-    except TypeError:
-        pass
-    return "CPU", "CPU"
 
 
 def _see_through(m):

@@ -15,7 +15,7 @@ from mathutils import Matrix, Vector
 
 FPS = 60
 TEX = 2048
-DEVICE = "CPU"  # Cycles device for bake_wear; the ship kit switches it to "GPU" when one is found
+DEVICE = None  # Cycles device for bake_wear: None takes the GPU when Cycles finds one (bake_device), "CPU" forces it
 
 # name: (base color, worn color, metallic, roughness, how much the edges wear 0..1, emission strength)
 PALETTE = {
@@ -460,12 +460,40 @@ def hole_through(name, c, r, axis="x", length=0.06, segs=16):
 
 # ---------------------------------------------------------------------------------- wear bake
 
+def bake_device():
+    """("GPU", names) when Cycles finds a GPU (ONEAPI for Q's Arc first, then OPTIX, CUDA, HIP,
+    METAL), else ("CPU", "CPU"). Never fails: a missing runtime just means the CPU. Only official
+    Blender builds see the Arc; the pip bpy wheel lacks oneAPI's Level Zero adapter (tools/blender.sh).
+    Probes on every call, since read_factory_settings resets the device preferences."""
+    try:
+        prefs = bpy.context.preferences.addons["cycles"].preferences
+    except (KeyError, AttributeError):
+        return "CPU", "CPU"
+    for kind in ("ONEAPI", "OPTIX", "CUDA", "HIP", "METAL"):
+        try:
+            prefs.compute_device_type = kind
+            gpus = [d for d in prefs.get_devices_for_type(kind) if d.type != "CPU"]
+        except (TypeError, AttributeError, RuntimeError):
+            continue
+        if gpus:
+            for d in prefs.devices:
+                d.use = d.type != "CPU"
+            return "GPU", f"GPU ({kind}: {', '.join(d.name for d in gpus)})"
+    try:
+        prefs.compute_device_type = "NONE"
+    except TypeError:
+        pass
+    return "CPU", "CPU"
+
+
 def bake_wear(gun, objs, scale=1.0):
     """Unwrap every part into one atlas and bake colour, edge wear and cavity dirt into it. `scale`
     grows the wear, dirt and occlusion sizes for bigger models (characters use 8)."""
     scene = gun.scene
     scene.render.engine = "CYCLES"
-    scene.cycles.device = DEVICE
+    device, used = (DEVICE, DEVICE) if DEVICE else bake_device()
+    print(f"  wear bake on {used}")
+    scene.cycles.device = device
     scene.cycles.samples = 12
     scene.cycles.use_denoising = False
     bpy.ops.object.select_all(action="DESELECT")

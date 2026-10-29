@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
-# Build the first-person weapon glbs with headless Blender. Needs Python 3.11 for the bpy wheel.
+# Build the first-person weapon glbs with headless Blender (which one: ../blender.sh).
 set -e
 cd "$(dirname "$0")"
-PY=${PYTHON311:-python3.11}
-[ -d .venv ] || { "$PY" -m venv .venv && .venv/bin/pip install --quiet bpy; }
-.venv/bin/python build.py "$@"
+VENV=.venv
+. ../blender.sh
+run build.py "$@"

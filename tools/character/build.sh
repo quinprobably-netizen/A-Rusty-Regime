@@ -1,12 +1,12 @@
 #!/usr/bin/env sh
-# Build the character glbs (and preview renders) with headless Blender. Needs Python 3.11 for the bpy wheel.
+# Build the character glbs (and preview renders) with headless Blender (which one: ../blender.sh).
 #
 # The realistic layer (real.py) builds bodies from Blender Studio's Human Base Meshes (CC0); the bundle
 # is fetched once into vendor/ (gitignored) when missing.
 set -e
 cd "$(dirname "$0")"
-PY=${PYTHON311:-python3.11}
-[ -d .venv ] || { "$PY" -m venv .venv && .venv/bin/pip install --quiet bpy; }
+VENV=.venv
+. ../blender.sh
 HBM=vendor/human-base-meshes-bundle-v1.4.1
 if [ ! -f "$HBM/human_base_meshes_bundle.blend" ]; then
     mkdir -p vendor
@@ -15,4 +15,4 @@ if [ ! -f "$HBM/human_base_meshes_bundle.blend" ]; then
     (cd vendor && unzip -q -o hbm.zip && rm hbm.zip)
     [ -f "$HBM/human_base_meshes_bundle.blend" ] || { echo "unexpected layout in the Human Base Meshes zip" >&2; exit 1; }
 fi
-.venv/bin/python -u build.py "$@"
+run build.py "$@"
