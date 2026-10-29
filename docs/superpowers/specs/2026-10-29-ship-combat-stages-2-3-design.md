@@ -14,13 +14,10 @@ gives you better prices. Shoot its patrols and you are hunted.
 **Stage 3, salvage:** wrecks drop scrap you fly into. Scrap is a second currency, spent at the
 Yard's rig on four permanent ship upgrades: hull, shield, gun cooling and missile rack.
 
-**Two decisions for Q** (my recommended defaults are written below; say "yes" or change them):
-
-1. Do you start as a **stranger** (patrols hostile until you earn standing) or **neutral**
-   (patrols ignore you until you shoot one)? Recommended: **stranger**, because it matches how
-   the game plays today and gives deliveries a purpose.
-2. Is salvage **one currency, scrap, spent on four upgrades** (recommended), or **loose parts**
-   you pick up and fit one at a time? Loose parts need an inventory screen, so I left them out.
+**Settled with Q on 2026-10-29:** you start as a **stranger** (patrols hostile until you earn
+standing), and salvage is a **mix**: scrap bought into permanent upgrades, plus rare **modules**
+that drop from wrecks and are fitted into two slots. The module list below is my proposal for Q
+to confirm; stage 2 does not depend on it.
 
 ## Stage 2: faction standing
 
@@ -104,10 +101,28 @@ They apply to the Kestrel only, on top of the Deserter hull's base numbers and t
 and the Ship screen shows them. The price in scrap is separate from money, so bounty buys guns
 and engine tunes at the Roost and the Yard, and scrap buys durability.
 
+### Modules: the rare drops
+
+Besides scrap, a destroyed ship has a 25% chance to drop one **module** unique to its hull
+(one per enemy type, so a Welder module is only ever a Welder's). It is picked up like scrap and
+kept for good; a duplicate turns into scrap. You own any you find and **fit up to two** from the
+Ship screen, free to swap anywhere. They give a trade-off, not a bigger number:
+
+| Module (from) | Effect | Cost |
+|---|---|---|
+| Afterburner (Jackal) | The boost tank refills 40% faster | 10% less shield |
+| Targeting array (Sentry) | Locks in 0.8 s instead of 1.2 s | The lock cone is 6 degrees, 4 degrees tighter |
+| Spire coil (Censer) | Gun shots fly 25% faster and do 15% more damage | Guns heat 20% faster |
+| Ram plate (Welder) | A ramming hit on an enemy hurts it for 30 | 10% less thrust |
+
+Four modules in all, in `[ship_combat]`. `Save` gains `modules: Vec<String>` (owned) and
+`fitted: Vec<String>` (at most two), serde-defaulted. They apply to the Kestrel only, on top of
+the part levels.
+
 ### UI
 
 - A scrap count beside the bank on the HUD and the pause menu.
-- The Ship screen lists the four parts and their levels.
+- The Ship screen lists the four parts and their levels, your modules and the two fitted slots.
 - At the Yard, E opens the rig prompt for the engine tune as now, and a second prompt for parts
   (up and down to pick, the same widgets as the quartermaster's counter).
 
@@ -132,6 +147,7 @@ Headless, in the existing `tests.rs` style:
 - A patrol attacks at -20 and ignores you at 0, and goes back to attacking after you shoot one.
 - At -60 hunters spawn from that faction; at 40 prices drop; at -60 the base refuses.
 - Scrap drops where a ship dies, is picked up within 40 m only by your ship, and times out.
+- Module drops follow their rate, a duplicate becomes scrap, at most two fit, the effect and its cost both apply and are kept after death.
 - Upgrade purchase: price, level cap, effect on a freshly spawned Kestrel's hull, shield, heat
   and missiles; kept after death.
 
@@ -150,4 +166,5 @@ Headless, in the existing `tests.rs` style:
 2. Standing: prices, refusal, hunters, the screen and the HUD lines.
 3. Salvage: the drop, the pickup and the save fields.
 4. Salvage: the upgrade menu at the Yard and the effects on the Kestrel.
-5. Salvage: the HUD and the Ship screen.
+5. Salvage: modules, their drops and fitting.
+6. Salvage: the HUD and the Ship screen.
