@@ -13,6 +13,11 @@
 # `kind = "fighter"` is a small solid hull with no inside (the default, `"cabin"`, is all of the
 # above): no seat, exit, cabin or ramp, one box round the whole hull, and the player cannot board
 # it. Its `exhaust.<n>` and `heat` nodes glow like any ship's.
+#
+# Combat (`src/solar/combat.rs`, numbers in tuning.toml `[ship_combat]`): `shield` and `hull` are
+# points (default 60 and 100; the shield takes damage first and comes back), `faction` is whose
+# ship it is (default "deserters", the player's side: shots never hurt their own side) and `guns`
+# are the nose guns' muzzles in the ship's frame, fired in turn (none, no guns).
 
 [[ship]]
 id = "kestrel"
@@ -30,6 +35,9 @@ seat = [0.0, 0.37, -2.6]
 exit = [0.0, 0.07, 0.0]
 cam = [22, 6]
 engine_r = 0.6
+shield = 60
+hull = 100
+guns = [[-1.6, 0.3, -0.8], [1.6, 0.3, -0.8]]    # the wing roots
 cabin = [-0.88, 1.58]
 ramp = [0.0, -0.88, 5.3]
 ramp_len = 2.6
@@ -187,6 +195,10 @@ collider = [
 id = "jackal"
 name = "Jackal"
 kind = "fighter"
+faction = "raiders"
+shield = 30
+hull = 40
+guns = [[-0.75, -0.05, -0.4], [0.75, -0.05, -0.4]]
 mass = 2500          # the raiders' scrapper: light and quick, comes in packs
 thrust = 40
 lift = 24
@@ -204,6 +216,10 @@ collider = [{ center = [0.0, 0.08, 0.275], size = [5.9, 2.26, 6.95] }]
 id = "sentry"
 name = "Sentry"
 kind = "fighter"
+faction = "pmc"
+shield = 50
+hull = 70
+guns = [[-1.6, -0.05, -1.0], [1.6, -0.05, -1.0]]
 mass = 3500          # the PMC's patrol: light and quick, keeps its distance
 thrust = 38
 lift = 22
@@ -221,6 +237,10 @@ collider = [{ center = [0.0, 0.1, 0.075], size = [8.9, 2.8, 9.35] }]
 id = "censer"
 name = "Censer"
 kind = "fighter"
+faction = "regime"
+shield = 50
+hull = 90
+guns = [[-1.0, -0.05, -1.5], [1.0, -0.05, -1.5]]
 mass = 5000          # the Regime's patrol: fast in a straight line, slow to turn
 thrust = 48
 lift = 18
@@ -238,6 +258,10 @@ collider = [{ center = [0.0, 0.85, -0.13], size = [7.1, 4.2, 10.8] }]
 id = "welder"
 name = "Welder"
 kind = "fighter"
+faction = "scrappers"
+shield = 60
+hull = 200
+guns = [[-2.0, -0.35, -1.5], [1.6, 0.0, -1.5]]
 mass = 9000          # the Scrappers' patrol: heavy and slow
 thrust = 24
 lift = 22

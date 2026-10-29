@@ -94,6 +94,7 @@ pub struct Tuning {
     pub graphics: Graphics,
     pub sound: Sound,
     pub terrain: TerrainTuning,
+    pub ship_combat: ShipCombat,
 
     // Look
     pub mouse_sensitivity: f32,
@@ -303,6 +304,7 @@ impl Default for Tuning {
 
 
             terrain: TerrainTuning::default(),
+            ship_combat: ShipCombat::default(),
             player: PlayerTuning::default(),
             grapple: GrappleTuning::default(),
             graphics: Graphics::default(),
@@ -472,6 +474,38 @@ impl TerrainTuning {
     /// A split chunk merges back only past this many chunk sizes, half a chunk beyond `split`.
     pub fn merge(&self) -> f32 {
         self.split + 0.5
+    }
+}
+
+/// Ship guns and shields (table `[ship_combat]`); each ship's shield, hull and gun muzzles are
+/// in `assets/ships.toml`.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct ShipCombat {
+    /// Shots a second from each barrel; the two barrels fire in turn.
+    pub gun_rate: f32,
+    /// Muzzle speed (m/s), on top of the ship's own velocity.
+    pub gun_speed: f32,
+    /// Per shot, shield and hull alike.
+    pub gun_damage: f32,
+    /// How far a shot flies before it is gone (m).
+    pub gun_range: f32,
+    /// How far ahead of the nose the barrels' shots cross (m).
+    pub converge: f32,
+    /// Gun heat: added per shot (1 overheats), lost a second, and where an overheated gun fires again.
+    pub heat_per_shot: f32,
+    pub cool: f32,
+    pub resume: f32,
+    /// A shot's drag in sea-level air (1/s), thinning with the air; none in vacuum.
+    pub air_drag: f32,
+    /// Seconds with no hit before a shield comes back, and how fast it comes back (points a second).
+    pub shield_delay: f32,
+    pub shield_regen: f32,
+}
+
+impl Default for ShipCombat {
+    fn default() -> Self {
+        Self { gun_rate: 2.0, gun_speed: 1200.0, gun_damage: 12.0, gun_range: 2000.0, converge: 400.0, heat_per_shot: 0.08, cool: 0.15, resume: 0.4, air_drag: 0.1, shield_delay: 5.0, shield_regen: 10.0 }
     }
 }
 

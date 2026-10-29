@@ -9,6 +9,7 @@
 //! the new one, so the handoff is continuous in position and velocity.
 
 pub mod base;
+pub mod combat;
 pub mod orbit;
 pub mod ship;
 pub mod station;
@@ -122,6 +123,7 @@ impl Plugin for SolarPlugin {
             .insert_resource(Solar { bodies, spheres, anchor: "home".into(), epoch, revealed: true, pad, star_color: system.star.color });
         add_streaming(app);
         ship::build(app);
+        combat::build(app);
         base::build(app);
         station::build(app);
         app.add_systems(Startup, crate::quartermaster::start_kit.after(crate::gunsmith::restore));
@@ -735,6 +737,13 @@ fn flight_text(
             f(Action::ToggleView),
             f(Action::Use),
         ));
+        // The nose guns, on a ship that has them (the pad's button is still to be decided).
+        if let Some((_, _, ship)) = flying
+            && !specs.ship[ship.spec].guns.is_empty()
+            && !pad
+        {
+            line.push_str(&format!("  [{}] guns", f(Action::Fire)));
+        }
         if hud.as_ref().is_some_and(|h| h.too_fast > 0.0) {
             line.push_str(&format!("\nTOO FAST TO LEAVE: slow under {:.0} m/s, [{}] stops", ship::LEAVE_SPEED, f(Action::Stop)));
         }

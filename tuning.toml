@@ -260,3 +260,16 @@ split = 2.5         # a chunk splits when you will be nearer than this many chun
 bubble = 400        # m, solid ground and awake physics around you
 origin_step = 2000  # m, the world re-centres on you after this far
 workers = 4         # chunk builds in flight
+
+[ship_combat]       # ship guns and shields; each ship's shield, hull and muzzles are in assets/ships.toml
+gun_rate = 2        # shots a second per barrel; the two barrels fire in turn
+gun_speed = 1200    # m/s, on top of the ship's own velocity
+gun_damage = 12     # per shot, shield and hull alike
+gun_range = 2000    # m, then the shot is gone
+converge = 400      # m ahead of the nose where the two barrels' shots cross
+heat_per_shot = 0.08  # 1 overheats: about six seconds of fire
+cool = 0.15         # heat lost a second
+resume = 0.4        # an overheated gun fires again once cooled to this
+air_drag = 0.1      # 1/s in sea-level air, thinning with height; none in vacuum
+shield_delay = 5    # s with no hit before a shield comes back
+shield_regen = 10   # shield points a second once it does

@@ -16,6 +16,7 @@ use bevy::prelude::*;
 use bevy::world_serialization::{WorldAssetRoot, WorldInstanceReady};
 use serde::Deserialize;
 
+use super::combat::Faction;
 use super::Solar;
 use crate::camera::ChaseCam;
 use crate::controller::{carry, ControllerSet, MoveState, Player, WorldBounds};
@@ -132,6 +133,17 @@ pub struct ShipSpec {
     #[serde(default)]
     pub ramp_slope: f32,
     pub collider: Vec<ShipBox>,
+    /// Whose ship it is (`combat`): its shots never hurt its own side.
+    #[serde(default)]
+    pub faction: Faction,
+    /// Shield and hull points (`combat`): the shield takes damage first and comes back.
+    #[serde(default = "default_shield")]
+    pub shield: f32,
+    #[serde(default = "default_hull")]
+    pub hull: f32,
+    /// The nose guns' muzzles, in the ship's frame; a ship with none has no guns.
+    #[serde(default)]
+    pub guns: Vec<[f32; 3]>,
 }
 
 /// Every ship in the game, in the order they stand on the apron. The first is the player's.
@@ -156,6 +168,12 @@ fn default_response() -> f32 {
 }
 fn default_drag() -> f32 {
     1.0
+}
+fn default_shield() -> f32 {
+    60.0
+}
+fn default_hull() -> f32 {
+    100.0
 }
 
 /// How much flight assist holds the ship at `clearance` metres over the ground: fully below
@@ -248,6 +266,8 @@ pub struct ShipControls {
     pub stick: Vec2,
     /// How far the pilot is looking round, yaw and pitch, radians (held Alt / B).
     pub look: Vec2,
+    /// The nose guns' trigger (`combat`).
+    pub fire: bool,
     /// The mouse as a stick, smoothed over a few ticks so uneven frames do not jolt the ship.
     mouse_stick: Vec2,
 }
@@ -295,6 +315,7 @@ pub fn build(app: &mut App) {
     app.init_resource::<crate::hud::FlightHud>()
         .insert_resource(Ships::load())
         .add_systems(Startup, spawn_fleet.after(crate::planet::seed_ground))
+        .add_systems(PreUpdate, trigger.after(crate::input::gather))
         .add_systems(Update, (controls, glow, stream, swing))
         .add_systems(PostUpdate, ease.before(TransformSystems::Propagate))
         .add_systems(FixedUpdate, (board.before(VehicleSet), fly.after(board).before(ControllerSet)))
@@ -498,6 +519,16 @@ fn controls(
     controls.stick = input.ship_stick;
 }
 
+/// Flying, the fire button pulls the ship's trigger instead of the gun in the pilot's hands: it is
+/// taken off the input as soon as it is read, before any fixed tick could fire the hand gun with it.
+/// Dev aid: `RUST_REGIME_SCREENSHOT_FIRE` holds the trigger, for screenshots of the guns.
+fn trigger(mut input: ResMut<PlayerInput>, flying: Query<Entity, (With<Player>, With<Driving>)>, mut ships: Query<(&Ship, &mut ShipControls)>) {
+    let Ok(player) = flying.single() else { return };
+    let Some((_, mut controls)) = ships.iter_mut().find(|(s, _)| s.pilot == Some(player)) else { return };
+    controls.fire = std::mem::take(&mut input.fire_held) || std::env::var_os("RUST_REGIME_SCREENSHOT_FIRE").is_some();
+    input.fire_pressed = false;
+}
+
 /// E boards the nearest ship in reach, or leaves the one being flown: out at its exit point,
 /// moving with it, standing up straight in the ground's frame and looking where the nose pointed.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -511,14 +542,14 @@ pub fn board(
     surface: Res<Surface>,
     origin: Res<Origin>,
     mut players: Query<(Entity, &mut Player, &mut Transform, Option<&Driving>)>,
-    mut ships: Query<(Entity, &mut Ship, &Transform, &LinearVelocity), Without<Player>>,
+    mut ships: Query<(Entity, &mut Ship, &mut ShipControls, &Transform, &LinearVelocity), Without<Player>>,
 ) {
     if !input.interact_pressed {
         return;
     }
     for (pe, mut p, mut ptf, driving) in &mut players {
         if let Some(d) = driving {
-            let Ok((se, mut ship, stf, vel)) = ships.get_mut(d.0) else { continue };
+            let Ok((se, mut ship, mut controls, stf, vel)) = ships.get_mut(d.0) else { continue };
             input.interact_pressed = false;
             // No stepping out of a ship at flying speed: a held X or E must not drop the pilot.
             // Speed is measured in the frame of the world below (it turns with the ground), so a
@@ -529,6 +560,8 @@ pub fn board(
             }
             ship.pilot = None;
             ship.landed_at = time.elapsed_secs_f64();
+            // The pilot lets go of the stick, trigger and all.
+            *controls = ShipControls::default();
             ptf.translation = stf.translation + stf.rotation * Vec3::from(specs.ship[ship.spec].exit);
             let up = surface.up(origin.body(ptf.translation));
             p.frame = carry(stf.rotation, up);
@@ -543,8 +576,8 @@ pub fn board(
             // Fighters have no cabin to board.
             let near = ships
                 .iter()
-                .filter(|(_, s, _, _)| s.pilot.is_none() && specs.ship[s.spec].boardable())
-                .map(|(e, _, tf, _)| (e, tf.translation.distance(ptf.translation)))
+                .filter(|(_, s, _, _, _)| s.pilot.is_none() && specs.ship[s.spec].boardable())
+                .map(|(e, _, _, tf, _)| (e, tf.translation.distance(ptf.translation)))
                 .filter(|(_, d)| *d < BOARD_RADIUS)
                 .min_by(|a, b| a.1.total_cmp(&b.1));
             if let Some((se, _)) = near {
