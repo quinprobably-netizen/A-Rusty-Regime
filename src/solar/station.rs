@@ -6,8 +6,8 @@
 //! - the Yard's tuning rig upgrades the Kestrel's engines, three levels, and its parts rack opens
 //!   the parts menu (`Panel::Parts`), where scrap buys hull plating, a shield cell, a gun
 //!   capacitor and a missile rack (`salvage`);
-//! - Site Vantage's courier desk hands out contracts: carry the parcel to another base's door and
-//!   it pays out;
+//! - every base has a job board just inside its door (`board`), and Site Vantage's courier desk
+//!   is one too: E opens it (`Panel::Board`) to take courier, cull and supply jobs;
 //! - the Reliquary's shrine sells a blessing: more health for a while.
 //!
 //! Your standing with a base's faction (`standing`) sets its prices, in money or scrap: 15% off to a friend, 15% on
@@ -53,6 +53,8 @@ pub enum StationKind {
     Parts,
     Contracts,
     Shrine,
+    /// A job board: every base has one inside its door (spawned in `base`, not in `bases.toml`).
+    Board,
 }
 
 /// One station's place in the base frame, from `assets/bases.toml`.
@@ -71,12 +73,7 @@ pub struct Station {
     pub label: String,
 }
 
-/// The courier job you carry, saved: the destination's base id and what it pays.
-#[derive(serde::Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct Contract {
-    pub to: String,
-    pub pay: u32,
-}
+pub use super::board::Contract;
 
 /// Seconds of blessing left.
 #[derive(Resource, Default)]
@@ -114,14 +111,6 @@ pub fn tune(level: u8) -> (f32, f32) {
     (1.0 + 0.12 * level as f32, 1.0 + 0.05 * level as f32)
 }
 
-/// The contract the courier desk at base `from` offers after `done` deliveries: another base, a
-/// different one each time round, paying more the longer the trip.
-pub fn offer(bases: &Bases, from: usize, done: u32, e: &crate::tuning::Economy) -> Option<Contract> {
-    let others: Vec<&str> = bases.base.iter().enumerate().filter(|(i, _)| *i != from).map(|(_, b)| b.id.as_str()).collect();
-    let to = others.get(done as usize % others.len().max(1))?;
-    Some(Contract { to: to.to_string(), pay: e.courier_base + e.courier_step * (done % 3) })
-}
-
 pub fn build(app: &mut App) {
     app.init_resource::<Blessing>()
         .init_resource::<Prompt>()
@@ -152,6 +141,7 @@ fn use_station(
     wardrobe: Option<ResMut<Wardrobe>>,
     mut prompt: ResMut<Prompt>,
     counter: Option<(ResMut<Counter>, ResMut<Rack>, ResMut<NextState<Screen>>)>,
+    board: Option<ResMut<crate::menu::Board>>,
     player: Single<(&Transform, Has<Driving>), With<Player>>,
     stations: Query<(&Station, &GlobalTransform)>,
 ) {
@@ -166,7 +156,8 @@ fn use_station(
     input.interact_pressed = false;
     let t = &tuning.ship_combat;
     let faction = faction_of(&bases, station.base);
-    if standing::hunted(&save, faction, t) && station.kind != StationKind::Contracts {
+    let at_board = matches!(station.kind, StationKind::Contracts | StationKind::Board);
+    if standing::hunted(&save, faction, t) && !at_board {
         prompt.say(standing::refusal(faction));
         return;
     }
@@ -207,17 +198,13 @@ fn use_station(
             }
             None => prompt.say("The parts rack is locked"),
         },
-        StationKind::Contracts => {
-            if let Some(c) = &save.contract {
-                let to = bases.base.iter().find(|b| b.id == c.to).map_or("its destination", |b| b.name.as_str());
-                prompt.say(format!("You are already carrying a parcel for {to}"));
-            } else if let Some(c) = offer(&bases, station.base, save.contracts_done, &tuning.economy) {
-                let to = bases.base.iter().find(|b| b.id == c.to).map_or("?", |b| b.name.as_str()).to_string();
-                prompt.say(format!("Parcel for {to}: it pays ${} on delivery", c.pay));
-                save.contract = Some(c);
-                file.write(&save);
+        StationKind::Contracts | StationKind::Board => match (board, counter) {
+            (Some(mut board), Some((_, _, mut next))) => {
+                board.0 = Some((bases.base[station.base].id.clone(), faction));
+                next.set(Screen::Paused);
             }
-        }
+            _ => prompt.say("The board is bare"),
+        },
         StationKind::Shrine => {
             let tithe = standing::price(tuning.economy.tithe, faction, &save, t);
             if save.banked < tithe {
@@ -249,20 +236,29 @@ pub(super) fn deliver(
 ) {
     prompt.note_left -= time.delta_secs();
     let (tf, driving) = *player;
-    let Some(c) = save.contract.clone().filter(|_| !driving) else { return };
-    let Some((at, base)) = placed.iter().find(|(_, b)| bases.base[b.spec].id == c.to) else { return };
-    let door = at.translation() + at.rotation() * Vec3::from(bases.base[base.spec].door);
-    if door.distance(tf.translation) < DELIVER_RADIUS {
-        let faction = faction_of(&bases, base.spec);
+    if driving {
+        return;
+    }
+    // At a door with a parcel for it: every parcel for this base is delivered.
+    let Some((_, base)) = placed.iter().find(|(at, b)| {
+        let door = at.translation() + at.rotation() * Vec3::from(bases.base[b.spec].door);
+        door.distance(tf.translation) < DELIVER_RADIUS && save.contracts.iter().any(|c| c.parcel_for() == Some(bases.base[b.spec].id.as_str()))
+    }) else {
+        return;
+    };
+    let id = bases.base[base.spec].id.clone();
+    let faction = faction_of(&bases, base.spec);
+    let (here, kept): (Vec<Contract>, Vec<Contract>) = std::mem::take(&mut save.contracts).into_iter().partition(|c| c.parcel_for() == Some(id.as_str()));
+    save.contracts = kept;
+    let name = &bases.base[base.spec].name;
+    for c in here {
         let extra = standing::bonus(c.pay, faction, &save, &tuning.ship_combat);
         save.banked += c.pay + extra;
         save.contracts_done += 1;
-        save.contract = None;
-        file.write(&save);
-        let name = &bases.base[base.spec].name;
         prompt.say(if extra > 0 { format!("Delivered to {name}: +${} and ${extra} for your standing", c.pay) } else { format!("Delivered to {name}: +${}", c.pay) });
         delivered.write(Delivered { faction });
     }
+    file.write(&save);
 }
 
 /// Runs the blessing down; while it lasts the health bar is that much longer.
@@ -296,7 +292,7 @@ fn nearby(
             let faction = faction_of(&bases, s.base);
             let note = standing::price_note(faction, &save, t);
             let what = match s.kind {
-                kind if kind != StationKind::Contracts && standing::hunted(&save, faction, t) => format!("the {} will not serve you (Hostile)", faction.name()),
+                kind if !matches!(kind, StationKind::Contracts | StationKind::Board) && standing::hunted(&save, faction, t) => format!("the {} will not serve you (Hostile)", faction.name()),
                 StationKind::Resupply => "resupply free, buy guns and attachments".to_string(),
                 StationKind::Locker => "change clothes".to_string(),
                 StationKind::Workshop => match tuning.economy.tune.get(save.ship_level as usize) {
@@ -304,10 +300,10 @@ fn nearby(
                     None => "the Kestrel is fully tuned".to_string(),
                 },
                 StationKind::Parts => format!("fit parts to the Kestrel for scrap ({} scrap){note}", save.scrap),
-                StationKind::Contracts => match &save.contract {
-                    Some(c) => format!("carrying a parcel for {}", bases.base.iter().find(|b| b.id == c.to).map_or("?", |b| b.name.as_str())),
-                    None => "take a courier contract".to_string(),
-                },
+                StationKind::Contracts | StationKind::Board => {
+                    let offers = save.boards.get(&bases.base[s.base].id).map_or(0, |b| b.len());
+                    format!("job board, {offers} offers, {} of {} jobs carried", save.contracts.len(), tuning.economy.jobs)
+                }
                 StationKind::Shrine if blessing.0 > 0.0 => format!("blessed, {:.0} s left", blessing.0),
                 StationKind::Shrine => format!("tithe ${}{note} for a blessing", standing::price(tuning.economy.tithe, faction, &save, t)),
             };
@@ -322,19 +318,6 @@ fn nearby(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn contracts_visit_every_other_base_in_turn_and_pay_more_for_the_far_ones() {
-        let bases = Bases::load();
-        let e = crate::tuning::Economy::default();
-        let vantage = bases.base.iter().position(|b| b.id == "outpost").unwrap();
-        let trips: Vec<Contract> = (0..3).map(|n| offer(&bases, vantage, n, &e).unwrap()).collect();
-        let mut to: Vec<&str> = trips.iter().map(|c| c.to.as_str()).collect();
-        to.sort();
-        assert_eq!(to, ["reliquary", "roost", "yard"]);
-        assert!(trips.windows(2).all(|w| w[1].pay > w[0].pay));
-        assert_eq!(offer(&bases, vantage, 3, &e).unwrap().to, trips[0].to, "round again");
-    }
 
     #[test]
     fn each_tuning_level_is_a_little_faster() {

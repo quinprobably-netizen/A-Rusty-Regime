@@ -32,10 +32,14 @@ impl SaveFile {
     pub fn load(&self) -> Save {
         let Some(path) = &self.0 else { return Save::default() };
         match std::fs::read_to_string(path) {
-            Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
-                warn!("{} is invalid, starting fresh: {e}", path.display());
-                Save::default()
-            }),
+            Ok(text) => {
+                let mut save: Save = toml::from_str(&text).unwrap_or_else(|e| {
+                    warn!("{} is invalid, starting fresh: {e}", path.display());
+                    Save::default()
+                });
+                save.migrate();
+                save
+            }
             Err(_) => Save::default(),
         }
     }
@@ -49,6 +53,23 @@ impl SaveFile {
                 }
             }
             Err(e) => warn!("could not serialize the save: {e}"),
+        }
+    }
+}
+
+/// The one courier parcel a save from before the job boards carried.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct OldContract {
+    pub to: String,
+    pub pay: u32,
+}
+
+impl Save {
+    /// Brings an older save up to date: its one parcel becomes a courier job from Site Vantage
+    /// (the only desk there was) that is never due.
+    pub fn migrate(&mut self) {
+        if let Some(c) = self.contract.take() {
+            self.contracts.push(crate::solar::board::Contract { job: crate::solar::board::Job::Courier { to: c.to }, from: "outpost".into(), pay: c.pay, due: None });
         }
     }
 }
@@ -76,9 +97,19 @@ pub struct Save {
     pub parts: [u8; 4],
     /// How far the Yard has tuned the Kestrel's engines.
     pub ship_level: u8,
-    /// The courier parcel being carried, and how many have been delivered.
-    pub contract: Option<crate::solar::station::Contract>,
+    /// The jobs you carry (`solar::board`), and how many parcels have been delivered.
+    pub contracts: Vec<crate::solar::board::Contract>,
     pub contracts_done: u32,
+    /// A save from before the job boards carried one parcel here; `migrate` makes it a job.
+    #[serde(skip_serializing)]
+    pub contract: Option<OldContract>,
+    /// The job boards: each base's offers by base id, put up on game day `board_day`; the game
+    /// day and the seconds into it; the seed every board is drawn from (0 until the first).
+    pub boards: BTreeMap<String, Vec<crate::solar::board::Contract>>,
+    pub board_day: Option<u32>,
+    pub day: u32,
+    pub day_clock: f32,
+    pub seed: u64,
     /// Enemy ships you have shot down, in all and by faction id (`combat::Faction::id`), and how
     /// often your own ship has been shot down.
     pub kills: u32,

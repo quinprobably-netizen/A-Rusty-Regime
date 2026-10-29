@@ -56,6 +56,8 @@ pub enum Panel {
     Ship,
     Contracts,
     Standing,
+    /// A base's job board (`solar::board`): its offers, your jobs, and scrap sold where it buys.
+    Board,
 }
 
 /// What the camera presents while a panel is open.
@@ -80,7 +82,19 @@ pub struct Menu {
     pub note: String,
     /// Whose base the parts rack is at: its standing with you sets the prices.
     pub rack: crate::solar::combat::Faction,
+    /// The base whose job board is open, by id, and its faction.
+    pub board: String,
+    pub board_faction: crate::solar::combat::Faction,
 }
+
+/// Set by a job board's station to its base (id and faction): open the board when the pause
+/// screen comes up.
+#[derive(Resource, Default)]
+pub struct Board(pub Option<(String, crate::solar::combat::Faction)>);
+
+/// The rows a job board always has: three offers and two jobs (empty ones say so).
+pub const BOARD_OFFERS: usize = 3;
+pub const BOARD_JOBS: usize = 2;
 
 /// Set by the quartermaster's station: open the counter when the pause screen comes up.
 #[derive(Resource, Default)]
@@ -356,8 +370,12 @@ enum Row {
     Tune(usize),
     /// A ship part on the parts rack (an entry of `salvage::Part::ALL`).
     Part(usize),
-    /// Sell the hold's scrap, on the parts rack.
+    /// Sell the hold's scrap, on the parts rack and on a board that buys it.
     Sell,
+    /// An offer on the open job board.
+    Offer(usize),
+    /// One of the jobs you carry, on the job board.
+    Job(usize),
     /// One of the Kestrel's two module slots, on the Ship screen.
     Fit(usize),
     /// The wardrobe's preset picker.
@@ -445,6 +463,14 @@ fn rows(panel: Panel, screen: Screen, tuned: [bool; 4], fits: bool) -> Vec<Row> 
             rows.push(Row::Action("BACK", Action::Back));
         }
         Panel::Controls | Panel::Starmap | Panel::Contracts | Panel::Standing => rows.push(Row::Action("BACK", Action::Back)),
+        Panel::Board => {
+            rows.push(Row::Section("OFFERS"));
+            rows.extend((0..BOARD_OFFERS).map(Row::Offer));
+            rows.push(Row::Section("YOUR JOBS"));
+            rows.extend((0..BOARD_JOBS).map(Row::Job));
+            rows.push(Row::Sell);
+            rows.push(Row::Action("BACK", Action::Back));
+        }
         Panel::Ship => {
             rows.extend((0..crate::solar::salvage::SLOTS).map(Row::Fit));
             rows.push(Row::Action("BACK", Action::Back));
@@ -493,7 +519,7 @@ fn main_cursor(panel: Panel) -> usize {
         Panel::Ship => 6,
         Panel::Contracts => 7,
         Panel::Standing => 8,
-        Panel::Main | Panel::Quartermaster | Panel::Parts => 0,
+        Panel::Main | Panel::Quartermaster | Panel::Parts | Panel::Board => 0,
     }
 }
 
@@ -527,6 +553,7 @@ impl Plugin for MenuPlugin {
             .init_resource::<Menu>()
             .init_resource::<Counter>()
             .init_resource::<Rack>()
+            .init_resource::<Board>()
             .init_resource::<Nav>()
             .add_systems(OnEnter(Screen::Playing), enter_play)
             .add_systems(OnEnter(Screen::Paused), enter_menu)
@@ -539,7 +566,7 @@ impl Plugin for MenuPlugin {
 /// Boot to the title, unless a screenshot run asks for the game or a particular screen.
 fn initial() -> Screen {
     match std::env::var("RUST_REGIME_MENU").as_deref() {
-        Ok("pause" | "settings" | "controls" | "maps" | "quartermaster" | "wardrobe" | "starmap" | "ship" | "contracts" | "standing" | "parts") => Screen::Paused,
+        Ok("pause" | "settings" | "controls" | "maps" | "quartermaster" | "wardrobe" | "starmap" | "ship" | "contracts" | "standing" | "parts" | "board") => Screen::Paused,
         Ok("play") => Screen::Playing,
         Ok(_) => Screen::Title,
         Err(_) if std::env::var_os("RUST_REGIME_SCREENSHOT").is_some() => Screen::Playing,
@@ -558,7 +585,7 @@ fn enter_play(mut menu: ResMut<Menu>, cursor: Option<Single<&mut CursorOptions>>
     }
 }
 
-fn enter_menu(mut menu: ResMut<Menu>, mut counter: ResMut<Counter>, mut rack: ResMut<Rack>, cursor: Option<Single<&mut CursorOptions>>, mut first: Local<bool>) {
+fn enter_menu(mut menu: ResMut<Menu>, mut counter: ResMut<Counter>, mut rack: ResMut<Rack>, mut board: ResMut<Board>, cursor: Option<Single<&mut CursorOptions>>, mut first: Local<bool>) {
     menu.playing = false;
     menu.panel = Panel::Main;
     menu.cursor = 0;
@@ -575,9 +602,16 @@ fn enter_menu(mut menu: ResMut<Menu>, mut counter: ResMut<Counter>, mut rack: Re
         menu.from_station = true;
         menu.rack = faction;
     }
+    let board = board.0.take();
+    if let Some((id, faction)) = &board {
+        menu.panel = Panel::Board;
+        menu.from_station = true;
+        menu.board.clone_from(id);
+        menu.board_faction = *faction;
+    }
     if !*first {
         *first = true;
-        menu.panel = if counter { Panel::Quartermaster } else if rack.is_some() { Panel::Parts } else { match std::env::var("RUST_REGIME_MENU").as_deref() {
+        menu.panel = if counter { Panel::Quartermaster } else if rack.is_some() { Panel::Parts } else if board.is_some() { Panel::Board } else { match std::env::var("RUST_REGIME_MENU").as_deref() {
             Ok("settings") => Panel::Settings,
             Ok("controls") => Panel::Controls,
             Ok("maps") => Panel::Maps,
@@ -590,6 +624,17 @@ fn enter_menu(mut menu: ResMut<Menu>, mut counter: ResMut<Counter>, mut rack: Re
             Ok("parts") => {
                 menu.rack = crate::solar::combat::Faction::Scrappers;
                 Panel::Parts
+            }
+            Ok("board") => {
+                menu.board = std::env::var("RUST_REGIME_BOARD").unwrap_or_else(|_| "outpost".into());
+                menu.board_faction = crate::solar::combat::Faction::from_id(match menu.board.as_str() {
+                    "roost" => "deserters",
+                    "reliquary" => "regime",
+                    "yard" => "scrappers",
+                    _ => "pmc",
+                })
+                .unwrap_or_default();
+                Panel::Board
             }
             _ => Panel::Main,
         } };
@@ -896,9 +941,36 @@ fn act(
         Row::Sell => {
             if select && let (Some(mut save), Some(file)) = (save, file) {
                 let scrap = save.scrap;
-                menu.note = match crate::solar::economy::sell_scrap(&mut save, menu.rack, &tuning.economy, &tuning.ship_combat) {
-                    0 => "The hold is empty".to_string(),
-                    money => format!("Sold {scrap} scrap: +${money}"),
+                let (faction, share) = if menu.panel == Panel::Board { (menu.board_faction, tuning.economy.scrap_buyers.get(&menu.board).copied()) } else { (menu.rack, Some(1.0)) };
+                menu.note = match share {
+                    None => "This board buys no scrap".to_string(),
+                    Some(share) => match crate::solar::economy::sell_scrap(&mut save, faction, share, &tuning.economy, &tuning.ship_combat) {
+                        0 => "The hold is empty".to_string(),
+                        money => format!("Sold {scrap} scrap: +${money}"),
+                    },
+                };
+                file.write(&save);
+            }
+        }
+        Row::Offer(i) => {
+            if select && let (Some(mut save), Some(file)) = (save, file) {
+                use crate::solar::board::{take, Refusal};
+                menu.note = match take(&mut save, &menu.board, i, &tuning.economy) {
+                    Ok(_) => "Taken. It is due by the end of tomorrow".to_string(),
+                    Err(Refusal::Full) => format!("You carry {} jobs already: finish one first", tuning.economy.jobs),
+                    Err(Refusal::Gone) => "Nothing there today".to_string(),
+                };
+                file.write(&save);
+            }
+        }
+        Row::Job(_) => {
+            if select && let (Some(mut save), Some(file)) = (save, file) {
+                menu.note = match crate::solar::board::hand_in(&mut save, &menu.board) {
+                    Some((scrap, pay)) => {
+                        crate::solar::standing::delivered(&mut save, menu.board_faction, &tuning.ship_combat);
+                        format!("Handed in {scrap} scrap: +${pay}")
+                    }
+                    None => "Parcels are delivered at their base's door, culls by shooting raiders down, supply runs here with the scrap aboard".to_string(),
                 };
                 file.write(&save);
             }
@@ -947,7 +1019,7 @@ fn leave(menu: &mut Menu, next: &mut NextState<Screen>, panel: Panel, save: Opti
         let start = quartermaster::starter(closet.characters.as_deref(), closet.class.as_deref());
         quartermaster::sanitize(save, loadout, arsenal, start);
     }
-    if matches!(panel, Panel::Quartermaster | Panel::Parts) && menu.from_station {
+    if matches!(panel, Panel::Quartermaster | Panel::Parts | Panel::Board) && menu.from_station {
         menu.from_station = false;
         next.set(Screen::Playing);
         return;
@@ -1107,13 +1179,13 @@ mod tests {
 
     #[test]
     fn every_panel_has_rows_and_back_lands_on_its_opener() {
-        for panel in [Panel::Main, Panel::Maps, Panel::Settings, Panel::Controls, Panel::Quartermaster, Panel::Parts, Panel::Wardrobe, Panel::Starmap, Panel::Ship, Panel::Contracts, Panel::Standing] {
+        for panel in [Panel::Main, Panel::Maps, Panel::Settings, Panel::Controls, Panel::Quartermaster, Panel::Parts, Panel::Wardrobe, Panel::Starmap, Panel::Ship, Panel::Contracts, Panel::Standing, Panel::Board] {
             if matches!(panel, Panel::Starmap | Panel::Ship | Panel::Contracts | Panel::Standing) && !space_level() {
                 continue;
             }
             let panel_rows = rows(panel, Screen::Paused, [true; 4], true);
             assert!(selectable(&panel_rows).count() > 0, "{panel:?}");
-            if !matches!(panel, Panel::Main | Panel::Quartermaster | Panel::Parts) {
+            if !matches!(panel, Panel::Main | Panel::Quartermaster | Panel::Parts | Panel::Board) {
                 let main = rows(Panel::Main, Screen::Paused, [false; 4], false);
                 let opener = selectable(&main).nth(main_cursor(panel)).unwrap();
                 assert!(matches!(opener, Row::Action(name, _) if name == format!("{panel:?}").to_uppercase()), "{panel:?} -> {opener:?}");

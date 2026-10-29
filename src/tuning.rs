@@ -762,10 +762,25 @@ pub struct Economy {
     /// The Yard's engine tune, a level each, and the Reliquary's tithe.
     pub tune: [u32; 3],
     pub tithe: u32,
-    /// The courier desk: a parcel pays `courier_base`, `courier_step` more for each of the next
-    /// two, then round again.
+    /// Job boards (`solar::board`): a courier parcel pays `courier_base` and `courier_per_km` a km
+    /// between the two worlds, `danger_pay` times that to a faction hostile to you; a cull pays
+    /// `cull_per_kill` for each of `cull_kills` (fewest, most) raiders; a supply run, on
+    /// `supply_chance` of days, asks `supply_scrap` (fewest, most) and pays `supply_markup` over
+    /// what that scrap sells for at 70%. You carry `jobs` at once; a parcel lost or let lapse
+    /// costs `drop_standing` with its issuer. A day is `day` seconds of game time.
     pub courier_base: u32,
-    pub courier_step: u32,
+    pub courier_per_km: f32,
+    pub danger_pay: f32,
+    pub cull_per_kill: u32,
+    pub cull_kills: [u32; 2],
+    pub supply_scrap: [u32; 2],
+    pub supply_markup: f32,
+    pub supply_chance: f32,
+    pub jobs: usize,
+    pub drop_standing: i32,
+    pub day: f32,
+    /// Who buys scrap from their board, by base id, at this share of `scrap_value`.
+    pub scrap_buyers: std::collections::BTreeMap<String, f32>,
     /// What a scrap is worth in money: what the Yard pays for it, and what a part's scrap counts
     /// for in the ship's value.
     pub scrap_value: u32,
@@ -794,7 +809,17 @@ impl Default for Economy {
             tune: [300, 700, 1400],
             tithe: 150,
             courier_base: 250,
-            courier_step: 150,
+            courier_per_km: 3.0,
+            danger_pay: 1.5,
+            cull_per_kill: 50,
+            cull_kills: [4, 8],
+            supply_scrap: [20, 40],
+            supply_markup: 1.3,
+            supply_chance: 0.5,
+            jobs: 2,
+            drop_standing: -5,
+            day: 2880.0,
+            scrap_buyers: [("yard", 1.0), ("outpost", 0.7)].into_iter().map(|(id, k)| (id.to_string(), k)).collect(),
             scrap_value: 6,
             hold_base: 60,
             hold_per_plating: 20,

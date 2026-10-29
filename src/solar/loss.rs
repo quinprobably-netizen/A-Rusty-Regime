@@ -8,7 +8,8 @@
 //!
 //! **The loss rule:** when the ship the player flies is shot down, it blows apart and the camera
 //! hangs where it was for `downed` seconds while a SHOT DOWN card says what it cost: what was
-//! aboard (the unbanked pocket, the hold's scrap and the courier parcel) and the rebuy fee for a
+//! aboard (the unbanked pocket, the hold's scrap and any courier parcels, each costing standing
+//! with whoever gave it) and the rebuy fee for a
 //! fresh Kestrel, from the bank (`economy::rebuy_fee`, never more than is there). Then the
 //! wreck is gone and the player is back on the Roost's apron at Haven, from anywhere in the
 //! system, on the cabin floor of a fresh Kestrel on the pad (and a fresh copy of the ship lost, on
@@ -43,8 +44,8 @@ pub struct Loss {
     pub pocket: u32,
     /// Scrap lost from the hold.
     pub scrap: u32,
-    /// The parcel lost, if one was aboard.
-    pub parcel: Option<super::station::Contract>,
+    /// The parcels lost (courier jobs; culls and supply runs are not cargo and stay).
+    pub parcels: Vec<super::board::Contract>,
     /// The rebuy fee taken from the bank for a fresh Kestrel.
     pub fee: u32,
 }
@@ -111,7 +112,9 @@ pub fn lose(save: &mut Save, e: &Economy, t: &ShipCombat) -> Loss {
     let fee = super::economy::rebuy_fee(save, e, t).min(save.banked);
     save.banked -= fee;
     save.deaths += 1;
-    Loss { pocket: std::mem::take(&mut save.pocket), scrap: std::mem::take(&mut save.scrap), parcel: save.contract.take(), fee }
+    let (parcels, kept) = std::mem::take(&mut save.contracts).into_iter().partition(|c| c.parcel_for().is_some());
+    save.contracts = kept;
+    Loss { pocket: std::mem::take(&mut save.pocket), scrap: std::mem::take(&mut save.scrap), parcels, fee }
 }
 
 /// Pays the bounty on ship `id` of `faction` into the pocket in `save`, counting the kill; returns
@@ -161,6 +164,7 @@ fn shot_down(
     file: Res<SaveFile>,
     mut save: Option<ResMut<Save>>,
     mut downed: ResMut<Downed>,
+    bases: Res<Bases>,
     mut ships: Query<(&Ship, &mut ChaseCam, &mut LinearVelocity, &mut AngularVelocity)>,
 ) {
     let t = &tuning.ship_combat;
@@ -169,7 +173,14 @@ fn shot_down(
         if ship.pilot.is_none() || downed.wreck.is_some() {
             continue;
         }
-        let lost = save.as_mut().map_or_else(Loss::default, |s| lose(s, &tuning.economy, t));
+        let lost = save.as_mut().map_or_else(Loss::default, |s| {
+            let lost = lose(s, &tuning.economy, t);
+            // A parcel lost costs standing with whoever gave it.
+            for c in &lost.parcels {
+                super::board::dropped(s, c, &bases, &tuning.economy, t);
+            }
+            lost
+        });
         if let Some(s) = &save {
             file.write(s);
         }
@@ -283,8 +294,10 @@ pub fn card_text(lost: &Loss, bases: &Bases) -> String {
     if lost.scrap > 0 {
         aboard.push(format!("{} scrap", lost.scrap));
     }
-    if let Some(c) = &lost.parcel {
-        aboard.push(format!("the parcel for {}", bases.base.iter().find(|b| b.id == c.to).map_or(c.to.as_str(), |b| b.name.as_str())));
+    match lost.parcels.as_slice() {
+        [] => {}
+        [c] => aboard.push(format!("the parcel for {}", super::board::name_of(bases, c.parcel_for().unwrap_or("?")))),
+        many => aboard.push(format!("{} parcels", many.len())),
     }
     let aboard = match aboard.len() {
         0 => "Nothing aboard lost".to_string(),
