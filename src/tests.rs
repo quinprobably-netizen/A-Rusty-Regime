@@ -3550,3 +3550,225 @@ fn a_sentrys_lock_and_its_missile_set_off_the_warning() {
     });
     assert!(of(&heard, Sfx::Warning).is_empty() && app.world().resource::<FlightHud>().fight.threat == Threat::None);
 }
+
+// ------------------------------------------------------------------------ faction standing
+
+use solar::standing::{self as standing, StandingLine};
+
+/// Your standing with `faction` in the running app's save.
+fn standing_of(app: &App, faction: Faction) -> i32 {
+    standing::get(app.world().resource::<Save>(), faction, &Tuning::default().ship_combat)
+}
+
+fn set_standing(app: &mut App, faction: Faction, v: i32) {
+    app.world_mut().resource_mut::<Save>().standing.insert(faction.id().to_string(), v);
+}
+
+#[test]
+fn a_new_save_starts_a_stranger_and_an_old_save_without_standing_still_loads() {
+    let t = Tuning::default().ship_combat;
+    let fresh = Save::default();
+    assert_eq!(standing::FACTIONS.map(|f| standing::get(&fresh, f, &t)), [-20, -20, -20], "a stranger to the Regime, the Scrappers and the PMC");
+    assert_eq!(standing::get(&fresh, Faction::Deserters, &t), 50);
+    let path = std::env::temp_dir().join(format!("rust-regime-old-standing-{}.toml", std::process::id()));
+    std::fs::write(&path, "banked = 500\nkills = 2\ndeaths = 1\n\n[faction_kills]\nraiders = 2\n").unwrap();
+    let file = SaveFile(Some(path.clone()));
+    let save = file.load();
+    assert_eq!((save.banked, save.kills), (500, 2), "the old fields are kept");
+    assert_eq!(standing::FACTIONS.map(|f| standing::get(&save, f, &t)), [-20, -20, -20], "and it starts a stranger");
+    let mut moved = save.clone();
+    standing::shift(&mut moved, Faction::Scrappers, 35, &t);
+    moved.standing_clock = 12.5;
+    file.write(&moved);
+    assert_eq!(file.load(), moved, "standing round-trips");
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn shooting_down_a_raider_pleases_all_three_and_the_line_says_so() {
+    let (mut app, jackal) = gunnery_range(300.0);
+    hold_fire(&mut app, 4.0);
+    run(&mut app, 0.2);
+    assert!(app.world().get_entity(jackal).is_err(), "the Jackal is destroyed");
+    assert_eq!(standing::FACTIONS.map(|f| standing_of(&app, f)), [-18, -18, -18]);
+    let line = app.world().resource::<StandingLine>();
+    assert_eq!(line.text(), "REGIME +2  SCRAPPERS +2  PMC +2");
+    assert!(line.left > 0.0, "the line is up");
+    run(&mut app, Tuning::default().ship_combat.standing_line);
+    assert_eq!(app.world().resource::<StandingLine>().left, 0.0, "and gone a few seconds later");
+}
+
+/// The Kestrel 600 m up with a Censer patrol (for the Roost, so it is not culled) parked 300 m
+/// off its nose, held still: the guns' target.
+fn patrol_on_the_range() -> (App, Entity) {
+    let (mut app, jackal) = gunnery_range(300.0);
+    let tf = *app.world().get::<Transform>(jackal).unwrap();
+    app.world_mut().despawn(jackal);
+    let censer = spec_of(&app, "censer");
+    let patrol = spawn_enemy(app.world_mut(), censer, tf.translation, tf.rotation, Vec3::ZERO, Role::Patrol { base: 0, slot: 9 });
+    app.world_mut().entity_mut(patrol).insert((RigidBody::Static, Hull::new(10_000.0, 0.0)));
+    run(&mut app, 0.1);
+    (app, patrol)
+}
+
+#[test]
+fn a_hit_on_a_patrol_costs_3_once_a_fight_and_its_kill_25_in_all_with_5_from_its_rival() {
+    let (mut app, patrol) = patrol_on_the_range();
+    let ship = ship_entity(&mut app);
+    hold_fire(&mut app, 1.5);
+    run(&mut app, 0.5);
+    let hull = *app.world().get::<Hull>(patrol).unwrap();
+    assert!(hull.hp < 10_000.0 - 3.0 * Tuning::default().ship_combat.gun_damage, "several hits landed: {}", hull.hp);
+    assert_eq!(standing_of(&app, Faction::Regime), -23, "-3 for the first hit, and no more for the rest");
+    assert!(app.world().get::<Enemy>(patrol).unwrap().provoked);
+    assert_eq!(app.world().resource::<StandingLine>().text(), "REGIME -3");
+    // Shot down by you: 25 in all, and the Scrappers, who hold a grudge against the Regime, like it.
+    let mut hull = app.world_mut().get_mut::<Hull>(patrol).unwrap();
+    (hull.hp, hull.last_hit_by) = (0.0, Some(ship));
+    run(&mut app, 0.2);
+    assert!(app.world().get_entity(patrol).is_err(), "shot down");
+    assert_eq!((standing_of(&app, Faction::Regime), standing_of(&app, Faction::Scrappers), standing_of(&app, Faction::Pmc)), (-45, -15, -20));
+    assert_eq!(app.world().resource::<StandingLine>().text(), "REGIME -25  SCRAPPERS +5", "the hit and the kill add up on the line");
+    // A kill with no hit first costs the 25 on its own, and it clamps at -100.
+    let (mut app, patrol) = patrol_on_the_range();
+    set_standing(&mut app, Faction::Regime, -90);
+    let ship = ship_entity(&mut app);
+    let mut hull = app.world_mut().get_mut::<Hull>(patrol).unwrap();
+    (hull.hp, hull.last_hit_by) = (0.0, Some(ship));
+    run(&mut app, 0.2);
+    assert_eq!(standing_of(&app, Faction::Regime), -100);
+    assert_eq!(app.world().resource::<Save>().standing["regime"], -100);
+}
+
+#[test]
+fn a_patrol_attacks_at_minus_20_leaves_you_be_at_0_and_comes_for_you_once_shot() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    board(&mut app);
+    let (base, up) = reliquary(&app);
+    fly_to(&mut app, "bastion", base + up * 7500.0);
+    run(&mut app, 0.5);
+    put_ship(&mut app, base + up * 2000.0, Vec3::ZERO);
+    run(&mut app, 0.3);
+    assert!(patrol_modes(&mut app).iter().all(|m| *m != Mode::Patrol), "at -20 they come for you, {:?}", patrol_modes(&mut app));
+    put_ship(&mut app, base + up * 4500.0, Vec3::ZERO);
+    run(&mut app, 0.3);
+    assert!(patrol_modes(&mut app).iter().all(|m| *m == Mode::Patrol), "and let you go");
+    // At 10 they fly past.
+    set_standing(&mut app, Faction::Regime, 10);
+    put_ship(&mut app, base + up * 2000.0, Vec3::ZERO);
+    run(&mut app, 1.0);
+    assert_eq!(patrol_modes(&mut app), [Mode::Patrol, Mode::Patrol], "at 10 they leave you be");
+    // Shoot one: it comes for you, and only it, since 7 is still friendly enough for the other.
+    let ship = ship_entity(&mut app);
+    let patrols: Vec<Entity> = enemies(&mut app).into_iter().filter(|e| matches!(e.1, Role::Patrol { .. })).map(|e| e.0).collect();
+    app.world_mut().write_message(solar::combat::ShotLanded { by: ship, on: patrols[0] });
+    run(&mut app, 0.3);
+    assert_eq!(standing_of(&app, Faction::Regime), 7);
+    let mode = |app: &App, e: Entity| app.world().get::<Enemy>(e).unwrap().mode;
+    assert_ne!(mode(&app, patrols[0]), Mode::Patrol, "the one you shot comes for you");
+    assert_eq!(mode(&app, patrols[1]), Mode::Patrol, "the other does not");
+    // Once you are well away it lets you go and forgets; at 0 they both leave you be again.
+    put_ship(&mut app, base + up * 4500.0, Vec3::ZERO);
+    run(&mut app, 0.3);
+    assert!(!app.world().get::<Enemy>(patrols[0]).unwrap().provoked, "the fight is over");
+    set_standing(&mut app, Faction::Regime, 0);
+    put_ship(&mut app, base + up * 2000.0, Vec3::ZERO);
+    run(&mut app, 1.0);
+    assert_eq!(patrol_modes(&mut app), [Mode::Patrol, Mode::Patrol], "at 0 they leave you be");
+    // At 0 one hit makes the Regime hostile: both come for you.
+    app.world_mut().write_message(solar::combat::ShotLanded { by: ship, on: patrols[1] });
+    run(&mut app, 0.3);
+    assert_eq!(standing_of(&app, Faction::Regime), -3);
+    assert!(patrol_modes(&mut app).iter().all(|m| *m != Mode::Patrol), "below 0 they all come for you, {:?}", patrol_modes(&mut app));
+}
+
+#[test]
+fn at_minus_60_a_faction_sends_hunters_flying_its_patrol_hull() {
+    let t = Tuning::default().ship_combat;
+    let hunters = |app: &mut App| -> Vec<Entity> { enemies(app).into_iter().filter(|e| e.1 == Role::Hunter).map(|e| e.0).collect() };
+    let mut app = aloft(3400.0);
+    app.world_mut().resource_mut::<Raids>().aboard = t.raid_grace + 1.0;
+    set_standing(&mut app, Faction::Pmc, -59);
+    run(&mut app, 0.2);
+    assert!(app.world().resource::<Raids>().hunts.is_empty(), "at -59 nobody hunts you");
+    set_standing(&mut app, Faction::Pmc, -60);
+    run(&mut app, 0.2);
+    assert!(hunters(&mut app).is_empty(), "the hunters' clock has only just started");
+    app.world_mut().resource_mut::<Raids>().hunts.insert("pmc".into(), t.raid_delay - 0.01);
+    run(&mut app, 0.2);
+    let pack = hunters(&mut app);
+    assert!((t.hunt_pack[0]..=t.hunt_pack[1]).contains(&pack.len()), "a pack of two or three: {}", pack.len());
+    let (sentry, ship) = (spec_of(&app, "sentry"), ship_entity(&mut app));
+    let (from, _, _) = pose(&app, ship);
+    for &e in &pack {
+        assert_eq!(app.world().get::<Ship>(e).unwrap().spec, sentry, "the PMC hunts in Sentries");
+        assert_eq!(*app.world().get::<Faction>(e).unwrap(), Faction::Pmc);
+        let d = pose(&app, e).0.distance(from);
+        assert!((t.spawn_near..=t.spawn_far).contains(&d), "came in {d:.0} m off, as raiders do");
+    }
+    assert!(enemies(&mut app).iter().all(|e| e.1 != Role::Raider), "the raiders keep their own clock");
+    assert_eq!(app.world().resource::<Raids>().hunts["pmc"], 0.0, "and its clock starts again");
+    // Back above -60, the hunt is off.
+    set_standing(&mut app, Faction::Pmc, -50);
+    run(&mut app, 0.1);
+    assert!(app.world().resource::<Raids>().hunts.is_empty());
+}
+
+#[test]
+fn a_friendly_base_sells_for_less_a_wary_one_for_more_and_a_hostile_one_not_at_all() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    let yard = 2;
+    stand_at_station(&mut app, StationKind::Workshop, yard);
+    let prompt = |app: &App| app.world().resource::<solar::station::Prompt>().text();
+    // Friendly at 40: Mk1 for 15% off.
+    set_standing(&mut app, Faction::Scrappers, 40);
+    run(&mut app, 0.1);
+    assert!(prompt(&app).contains("$255 (15% off)"), "{}", prompt(&app));
+    app.world_mut().resource_mut::<Save>().banked = 255;
+    press_use(&mut app);
+    assert_eq!((app.world().resource::<Save>().ship_level, app.world().resource::<Save>().banked), (1, 0), "Mk1 for $255");
+    // Below -40: Mk2 for 15% more.
+    set_standing(&mut app, Faction::Scrappers, -41);
+    app.world_mut().resource_mut::<Save>().banked = UPGRADE_COST[1];
+    press_use(&mut app);
+    assert_eq!(app.world().resource::<Save>().ship_level, 1, "too poor at the marked-up price");
+    assert!(prompt(&app).contains(&format!("${}", (UPGRADE_COST[1] as f32 * 1.15).round() as u32)), "{}", prompt(&app));
+    // At -60 it will not deal with you at all.
+    set_standing(&mut app, Faction::Scrappers, -60);
+    app.world_mut().resource_mut::<Save>().banked = 10_000;
+    press_use(&mut app);
+    assert_eq!((app.world().resource::<Save>().ship_level, app.world().resource::<Save>().banked), (1, 10_000), "refused");
+    assert!(prompt(&app).contains("The Scrappers will not serve you"), "{}", prompt(&app));
+    // The shrine at the Reliquary, to a friend of the Regime: the tithe for 15% off.
+    set_standing(&mut app, Faction::Regime, 40);
+    stand_at_station(&mut app, StationKind::Shrine, 1);
+    app.world_mut().resource_mut::<Save>().banked = TITHE;
+    press_use(&mut app);
+    assert_eq!(app.world().resource::<Save>().banked, TITHE - (TITHE as f32 * 0.85).round() as u32, "blessed for less");
+}
+
+#[test]
+fn a_parcel_to_a_friends_base_pays_a_fifth_more_and_raises_your_standing_there() {
+    let deliver = |standing: i32| -> (u32, i32, String) {
+        let mut app = system_app();
+        run(&mut app, 1.0);
+        set_standing(&mut app, Faction::Scrappers, standing);
+        app.world_mut().resource_mut::<Save>().contract = Some(Contract { to: "yard".into(), pay: 250 });
+        // A stand-in for the Yard (on Cinder) with its doorway where the player stands.
+        let bases = app.world().resource::<solar::base::Bases>().clone();
+        let yard = bases.base.iter().position(|b| b.id == "yard").unwrap();
+        let at = player(&mut app).0 - Vec3::from(bases.base[yard].door);
+        app.world_mut().spawn((solar::base::Base { spec: yard }, GlobalTransform::from_translation(at)));
+        run(&mut app, 0.2);
+        let save = app.world().resource::<Save>();
+        assert!(save.contract.is_none(), "delivered");
+        (save.banked, standing_of(&app, Faction::Scrappers), app.world().resource::<solar::station::Prompt>().text())
+    };
+    let (paid, after, _) = deliver(-20);
+    assert_eq!((paid, after), (250, -10), "a stranger is paid the usual, and stands 10 better for it");
+    let (paid, after, said) = deliver(40);
+    assert_eq!((paid, after), (300, 50), "a friend is paid 20% more");
+    assert!(said.contains("$50 for your standing"), "{said}");
+}

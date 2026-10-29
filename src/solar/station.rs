@@ -7,17 +7,25 @@
 //! - Site Vantage's courier desk hands out contracts: carry the parcel to another base's door and
 //!   it pays out (the only income in the system, so everything else is paid for with it);
 //! - the Reliquary's shrine sells a blessing: more health for a while.
+//!
+//! Your standing with a base's faction (`standing`) sets its prices: 15% off to a friend, 15% on
+//! below -40, and at -60 or below it will not serve you at all. A parcel delivered to a friend's
+//! base pays 20% more, and every delivery raises your standing there. The Roost is your own
+//! side's and is never affected.
 
 use bevy::prelude::*;
 use serde::Deserialize;
 
 use super::base::{Base, Bases};
+use super::combat::Faction;
 use super::ship;
+use super::standing::{self, Delivered};
 use crate::controller::Player;
 use crate::health::PlayerHealth;
 use crate::input::PlayerInput;
 use crate::save::{Save, SaveFile};
 use crate::menu::{Counter, Screen};
+use crate::tuning::Tuning;
 use crate::vehicle::{Driving, VehicleSet};
 use crate::wardrobe::Wardrobe;
 use crate::weapon::Arsenal;
@@ -119,6 +127,11 @@ pub fn build(app: &mut App) {
         .add_systems(Update, nearby);
 }
 
+/// The faction whose base `base` (an index into `Bases`) is.
+fn faction_of(bases: &Bases, base: usize) -> Faction {
+    bases.base.get(base).and_then(|b| Faction::from_id(&b.faction)).unwrap_or_default()
+}
+
 fn nearest<'a>(at: Vec3, stations: &'a Query<(&Station, &GlobalTransform)>) -> Option<&'a Station> {
     stations.iter().map(|(s, tf)| (s, tf.translation().distance(at))).filter(|(_, d)| *d < REACH).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(s, _)| s)
 }
@@ -128,6 +141,7 @@ fn nearest<'a>(at: Vec3, stations: &'a Query<(&Station, &GlobalTransform)>) -> O
 fn use_station(
     mut input: ResMut<PlayerInput>,
     bases: Res<Bases>,
+    tuning: Res<Tuning>,
     file: Res<SaveFile>,
     mut save: ResMut<Save>,
     mut health: ResMut<PlayerHealth>,
@@ -148,6 +162,12 @@ fn use_station(
     }
     let Some(station) = nearest(tf.translation, &stations) else { return };
     input.interact_pressed = false;
+    let t = &tuning.ship_combat;
+    let faction = faction_of(&bases, station.base);
+    if standing::hunted(&save, faction, t) {
+        prompt.say(standing::refusal(faction));
+        return;
+    }
     match station.kind {
         StationKind::Resupply => {
             let topped = health.hp >= health.max && health.bleeding <= 0.0 && arsenal.spent.iter().all(|s| *s == 0);
@@ -166,10 +186,10 @@ fn use_station(
         },
         StationKind::Workshop => {
             let level = save.ship_level as usize;
-            match UPGRADE_COST.get(level) {
+            match UPGRADE_COST.get(level).map(|c| standing::price(*c, faction, &save, t)) {
                 None => prompt.say("The Kestrel is tuned as far as it goes"),
-                Some(&cost) if save.banked < cost => prompt.say(format!("Engine tune Mk{} costs ${cost}: you have ${}", level + 1, save.banked)),
-                Some(&cost) => {
+                Some(cost) if save.banked < cost => prompt.say(format!("Engine tune Mk{} costs ${cost}: you have ${}", level + 1, save.banked)),
+                Some(cost) => {
                     save.banked -= cost;
                     save.ship_level += 1;
                     file.write(&save);
@@ -189,10 +209,11 @@ fn use_station(
             }
         }
         StationKind::Shrine => {
-            if save.banked < TITHE {
-                prompt.say(format!("The tithe is ${TITHE}: you have ${}", save.banked));
+            let tithe = standing::price(TITHE, faction, &save, t);
+            if save.banked < tithe {
+                prompt.say(format!("The tithe is ${tithe}: you have ${}", save.banked));
             } else {
-                save.banked -= TITHE;
+                save.banked -= tithe;
                 file.write(&save);
                 blessing.0 = BLESSING_SECS;
                 health.bleeding = 0.0;
@@ -203,13 +224,16 @@ fn use_station(
     }
 }
 
-/// Walk up to the destination's doorway with the parcel and it pays out.
+/// Walk up to the destination's doorway with the parcel and it pays out, more to a friend.
+#[allow(clippy::too_many_arguments)]
 fn deliver(
     time: Res<Time>,
     bases: Res<Bases>,
+    tuning: Res<Tuning>,
     file: Res<SaveFile>,
     mut save: ResMut<Save>,
     mut prompt: ResMut<Prompt>,
+    mut delivered: MessageWriter<Delivered>,
     player: Single<(&Transform, Has<Driving>), With<Player>>,
     placed: Query<(&GlobalTransform, &Base)>,
 ) {
@@ -219,11 +243,15 @@ fn deliver(
     let Some((at, base)) = placed.iter().find(|(_, b)| bases.base[b.spec].id == c.to) else { return };
     let door = at.translation() + at.rotation() * Vec3::from(bases.base[base.spec].door);
     if door.distance(tf.translation) < DELIVER_RADIUS {
-        save.banked += c.pay;
+        let faction = faction_of(&bases, base.spec);
+        let extra = standing::bonus(c.pay, faction, &save, &tuning.ship_combat);
+        save.banked += c.pay + extra;
         save.contracts_done += 1;
         save.contract = None;
         file.write(&save);
-        prompt.say(format!("Delivered to {}: +${}", bases.base[base.spec].name, c.pay));
+        let name = &bases.base[base.spec].name;
+        prompt.say(if extra > 0 { format!("Delivered to {name}: +${} and ${extra} for your standing", c.pay) } else { format!("Delivered to {name}: +${}", c.pay) });
+        delivered.write(Delivered { faction });
     }
 }
 
@@ -238,8 +266,10 @@ fn bless(time: Res<Time>, mut blessing: ResMut<Blessing>, mut health: ResMut<Pla
 }
 
 /// The prompt for the station in reach.
+#[allow(clippy::too_many_arguments)]
 fn nearby(
     bases: Res<Bases>,
+    tuning: Res<Tuning>,
     save: Res<Save>,
     blessing: Res<Blessing>,
     mut prompt: ResMut<Prompt>,
@@ -252,11 +282,15 @@ fn nearby(
     let line = match nearest(tf.translation, &stations).filter(|_| !driving) {
         None => String::new(),
         Some(s) => {
+            let t = &tuning.ship_combat;
+            let faction = faction_of(&bases, s.base);
+            let note = standing::price_note(faction, &save, t);
             let what = match s.kind {
+                _ if standing::hunted(&save, faction, t) => format!("the {} will not serve you (Hostile)", faction.name()),
                 StationKind::Resupply => "resupply free, buy guns and attachments".to_string(),
                 StationKind::Locker => "change clothes".to_string(),
                 StationKind::Workshop => match UPGRADE_COST.get(save.ship_level as usize) {
-                    Some(cost) => format!("tune the Kestrel to Mk{}, ${cost}", save.ship_level + 1),
+                    Some(cost) => format!("tune the Kestrel to Mk{}, ${}{note}", save.ship_level + 1, standing::price(*cost, faction, &save, t)),
                     None => "the Kestrel is fully tuned".to_string(),
                 },
                 StationKind::Contracts => match &save.contract {
@@ -264,7 +298,7 @@ fn nearby(
                     None => "take a courier contract".to_string(),
                 },
                 StationKind::Shrine if blessing.0 > 0.0 => format!("blessed, {:.0} s left", blessing.0),
-                StationKind::Shrine => format!("tithe ${TITHE} for a blessing"),
+                StationKind::Shrine => format!("tithe ${}{note} for a blessing", standing::price(TITHE, faction, &save, t)),
             };
             format!("[{}] {}: {what}", crate::controls::hint(crate::controls::Ctx::Foot, crate::controls::Action::Use, pad), s.label)
         }
