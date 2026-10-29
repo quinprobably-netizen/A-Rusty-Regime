@@ -57,6 +57,7 @@ First build takes a while. Linux needs `libasound2-dev libudev-dev libwayland-de
 | Pitch (pull back: nose up) |  | Left stick up / down |
 | Yaw |  | LB, RB |
 | Boost | Shift | A |
+| Fire | Left mouse |  |
 | Stop (match ground speed) | X | Y |
 | Look around (hold) | Alt | B |
 | Enter / leave a vehicle or ship | E | X (hold) |
@@ -188,7 +189,20 @@ Blender like the weapons: `tools/ships/build.sh [ids] [--no-bake] [--preview] [-
 writes `assets/models/ships/<id>.glb` (under 30 k triangles and one 1024² baked texture
 each) from `tools/ships/ships/<id>.py`; the game finds each engine's `exhaust.<n>` node,
 the `heat` node and the `ramp` hinge by name, and the collision boxes in `ships.toml` are
-the floor, walls, ceiling and open ramp you walk between.
+the floor, walls, ceiling and open ramp you walk between. The four enemy fighters (the
+raiders' **Jackal**, the PMC's **Sentry**, the Regime's **Censer** and the Scrappers'
+**Welder**) are `kind = "fighter"` entries: solid hulls with one collision box and no cabin,
+which you cannot board. A Jackal stands on a slab of its own 60 m south of the pad, toward
+the Roost; `RUST_REGIME_FIGHTER=<id>[,<metres>]` parks that fighter (`jackal`, `sentry`,
+`censer`, `welder`) in front of you instead, 80 m off unless told otherwise.
+**Ship combat** (stage 1 of `docs/superpowers/specs/2026-10-29-ship-combat-stage-1-design.md`):
+every ship has a shield over its hull and a faction, from `ships.toml`. The Kestrel's two nose
+guns fire in turn on the left mouse button (1.2 km/s tracers converging 400 m ahead, 12 damage,
+2 km range); a heat meter stops them for a few seconds if you hold on too long, and shots never
+hurt your own side. Damage takes the shield first, which comes back after 5 s without a hit; a
+hull at zero blows the ship apart, so the parked Jackal can be shot down. The numbers are in
+`[ship_combat]` in `tuning.toml`. `RUST_REGIME_SCREENSHOT_FIRE=1` holds the trigger for
+screenshots, e.g. with `RUST_REGIME_AT=home,600 RUST_REGIME_FIGHTER=jackal,150`.
 
 Each faction has a base on its world, from `assets/bases.toml` and
 `assets/models/bases/<id>.glb` (built like the ships: `tools/bases/build.sh [ids]

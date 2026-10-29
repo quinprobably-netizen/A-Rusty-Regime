@@ -263,6 +263,7 @@ pub const BINDINGS: &[Bind] = &[
     pad(Fly, Yaw, P::LeftTrigger),
     scaled(pad(Fly, Yaw, P::RightTrigger), -1.0),
     key(Fly, Boost, K::ShiftLeft),
+    bind(Fly, Fire, Source::Mouse(MouseButton::Left)),
     pad(Fly, Boost, P::South),
     key(Fly, Stop, K::KeyX),
     pad(Fly, Stop, P::North),
