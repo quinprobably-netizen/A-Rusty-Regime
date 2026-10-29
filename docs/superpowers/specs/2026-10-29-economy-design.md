@@ -91,7 +91,7 @@ gun counter prices, `UPGRADE_COST`, `TITHE` and the courier formula, which are h
 ## The boards
 
 Every base has a `kind = "board"` station (Vantage's desk becomes one). Each board holds three
-offers, regenerated at the start of each game day from `seed = hash(save_seed, day, base_name)`;
+offers, regenerated at the start of each game day from `seed = hash(save.seed, day, base_name)`;
 the same save on the same day shows the same offers, which the tests rely on. Taking an offer
 removes it from the board; the slot stays empty until the next day. Up to two contracts active.
 An offer not completed by the end of the *next* game day expires silently, except a parcel, which
