@@ -23,7 +23,7 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-use super::combat::{Faction, Hull};
+use super::combat::{Faction, Hull, ShotLanded};
 use super::ship::{clearance, Autopilot, Ship, ShipControls, Ships};
 use super::Solar;
 use crate::surface::{Origin, Surface};
@@ -256,6 +256,7 @@ fn fly_missiles(
     targets: Query<(&Ship, &Position, &LinearVelocity)>,
     bodies: Query<&ColliderOf>,
     mut hulls: Query<(&mut Hull, &Faction)>,
+    mut landed: MessageWriter<ShotLanded>,
 ) {
     let t = &tuning.ship_combat;
     let dt = time.delta_secs();
@@ -302,6 +303,7 @@ fn fly_missiles(
                 && *faction != m.faction
             {
                 strike(&mut hull, m.owner, t);
+                landed.write(ShotLanded { by: m.owner, on: body });
                 if let Ok((ship, ..)) = targets.get(body) {
                     info!("missile hit the {}", specs.ship[ship.spec].name);
                 }
@@ -318,6 +320,7 @@ fn fly_missiles(
                     && *faction != m.faction
                 {
                     strike(&mut hull, m.owner, t);
+                    landed.write(ShotLanded { by: m.owner, on: target });
                     if let Ok((ship, ..)) = targets.get(target) {
                         info!("missile hit the {}", specs.ship[ship.spec].name);
                     }

@@ -569,6 +569,40 @@ pub struct ShipCombat {
     pub loss_card: f32,
     /// Seconds the `+$120 BOUNTY` line stays over the HUD after a kill.
     pub bounty_line: f32,
+    /// Faction standing (`solar::standing`), -100 to 100, with the Regime, the Scrappers and the
+    /// PMC: you start at `standing_start` with each; the Deserters are your own side and stay at
+    /// `standing_deserters`.
+    pub standing_start: i32,
+    pub standing_deserters: i32,
+    /// What moves it: a parcel delivered to a faction's base, a raider shot down (with each of
+    /// the three), one of a faction's ships shot down (with it, and with each faction that holds
+    /// a grudge against it), and a hit on one of its ships, once a ship a fight.
+    pub standing_delivery: i32,
+    pub standing_raider_kill: i32,
+    pub standing_kill: i32,
+    pub standing_rival_kill: i32,
+    pub standing_hit: i32,
+    /// Below `standing_start` it creeps back by `standing_recovery` every `standing_day` seconds
+    /// of game time (a Haven day), no further than `standing_start`.
+    pub standing_recovery: i32,
+    pub standing_day: f32,
+    /// At `standing_friendly` or above a base sells for `standing_discount` less and a parcel to
+    /// it pays `standing_bonus` more; below `standing_wary` it sells for `standing_markup` more;
+    /// at `standing_hunted` or below it will not serve you and that faction hunts you.
+    pub standing_friendly: i32,
+    pub standing_wary: i32,
+    pub standing_hunted: i32,
+    pub standing_discount: f32,
+    pub standing_markup: f32,
+    pub standing_bonus: f32,
+    /// Hunters: packs of `hunt_pack` (fewest, most) of the faction's patrol hull, on their own
+    /// clock at the raiders' rate.
+    pub hunt_pack: [usize; 2],
+    /// Who holds a grudge against whom, by faction id: shooting down one of their enemies'
+    /// ships pleases them by `standing_rival_kill`.
+    pub grudges: std::collections::BTreeMap<String, Vec<String>>,
+    /// Seconds the `REGIME -25` line stays over the HUD after standing changes.
+    pub standing_line: f32,
 }
 
 impl Default for ShipCombat {
@@ -625,6 +659,27 @@ impl Default for ShipCombat {
             downed: 3.0,
             loss_card: 4.0,
             bounty_line: 3.0,
+            standing_start: -20,
+            standing_deserters: 50,
+            standing_delivery: 10,
+            standing_raider_kill: 2,
+            standing_kill: -25,
+            standing_rival_kill: 5,
+            standing_hit: -3,
+            standing_recovery: 1,
+            standing_day: 2880.0,
+            standing_friendly: 40,
+            standing_wary: -40,
+            standing_hunted: -60,
+            standing_discount: 0.15,
+            standing_markup: 0.15,
+            standing_bonus: 0.2,
+            hunt_pack: [2, 3],
+            grudges: [("regime", &["deserters", "scrappers"][..]), ("scrappers", &["regime", "pmc"][..]), ("pmc", &[][..])]
+                .into_iter()
+                .map(|(id, foes)| (id.to_string(), foes.iter().map(|f| f.to_string()).collect()))
+                .collect(),
+            standing_line: 3.0,
         }
     }
 }

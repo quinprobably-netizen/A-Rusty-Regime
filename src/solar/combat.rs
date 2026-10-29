@@ -41,6 +41,22 @@ impl Faction {
             Faction::Raiders => "raiders",
         }
     }
+
+    /// The faction named `id` in the data files.
+    pub fn from_id(id: &str) -> Option<Faction> {
+        [Faction::Deserters, Faction::Regime, Faction::Scrappers, Faction::Pmc, Faction::Raiders].into_iter().find(|f| f.id() == id)
+    }
+
+    /// Its name on screen.
+    pub fn name(self) -> &'static str {
+        match self {
+            Faction::Deserters => "Deserters",
+            Faction::Regime => "Regime",
+            Faction::Scrappers => "Scrappers",
+            Faction::Pmc => "PMC",
+            Faction::Raiders => "Raiders",
+        }
+    }
 }
 
 /// A ship's hull points behind its shield.
@@ -118,10 +134,12 @@ pub struct ShipDestroyed {
     pub killer: Option<Entity>,
 }
 
-/// A shot from ship `by` took shield or hull off another ship: the cockpit's hit marker.
+/// A shot or a missile from ship `by` took shield or hull off ship `on`: the cockpit's hit
+/// marker, and a hit that costs standing with `on`'s faction.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ShotLanded {
     pub by: Entity,
+    pub on: Entity,
 }
 
 /// What every shot looks like: a glowing streak.
@@ -265,7 +283,7 @@ fn fly_projectiles(
             && *faction != shot.faction
         {
             hull.hit_by(t.gun_damage, shot.owner, t);
-            landed.write(ShotLanded { by: shot.owner });
+            landed.write(ShotLanded { by: shot.owner, on: body });
         }
         if let (Some(fx), Some(materials)) = (&fx, materials.as_mut()) {
             spawn_blast(&mut commands, fx, materials, point - dir * 0.2, 0.8);

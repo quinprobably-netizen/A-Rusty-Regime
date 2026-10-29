@@ -316,3 +316,25 @@ bank_loss = 0.25    # share of the bank lost when your ship is shot down, rounde
 downed = 3          # s watching the wreck before you are back at the Roost in a fresh Kestrel
 loss_card = 4       # s the SHOT DOWN card stays up after that
 bounty_line = 3     # s the +$ BOUNTY line stays over the HUD
+# faction standing, -100 to 100, with the Regime, the Scrappers and the PMC (Pause > Standing)
+standing_start = -20      # a stranger: their patrols shoot on sight (below 0)
+standing_deserters = 50   # your own side, fixed
+standing_delivery = 10    # a parcel delivered to the faction's base
+standing_raider_kill = 2  # a raider shot down, with each of the three
+standing_kill = -25       # one of the faction's ships shot down
+standing_rival_kill = 5   # and with each faction holding a grudge against it (grudges)
+standing_hit = -3         # a hit on one of its ships, once a ship a fight
+standing_recovery = 1     # creeps back this much a day while below standing_start, to it
+standing_day = 2880       # s of game time to a day (Haven's 48 minutes)
+standing_friendly = 40    # at or above: 15% off at its base, +20% for a parcel to it
+standing_wary = -40       # below: 15% on at its base
+standing_hunted = -60     # at or below: its base will not serve you and it sends hunters
+standing_discount = 0.15
+standing_markup = 0.15
+standing_bonus = 0.2
+hunt_pack = [2, 3]        # hunters a pack, of the faction's patrol hull, at the raiders' rate
+standing_line = 3         # s the REGIME -25 line stays over the HUD
+[ship_combat.grudges]     # who each faction holds a grudge against: shooting their ships down pleases it
+regime = ["deserters", "scrappers"]
+scrappers = ["regime", "pmc"]
+pmc = []                  # the PMC sells to everyone and holds no grudge

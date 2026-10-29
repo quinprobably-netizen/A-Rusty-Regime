@@ -18,6 +18,7 @@ pub mod missile;
 pub mod loss;
 pub mod orbit;
 pub mod ship;
+pub mod standing;
 pub mod station;
 pub mod waypoint;
 
@@ -136,6 +137,7 @@ impl Plugin for SolarPlugin {
         loss::build(app);
         cockpit::build(app);
         base::build(app);
+        standing::build(app);
         station::build(app);
         app.add_systems(Startup, crate::quartermaster::start_kit.after(crate::gunsmith::restore));
         waypoint::build(app);
