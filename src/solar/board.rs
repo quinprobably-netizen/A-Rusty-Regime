@@ -72,7 +72,9 @@ pub enum Refusal {
 }
 
 pub fn build(app: &mut App) {
-    app.add_systems(FixedUpdate, (tick_day, restock, cull.after(super::combat::wreck)).chain());
+    // The boards go up even while paused (a board opened straight from the title, or a day that
+    // turned under the menu); the clock and the culls run with the game.
+    app.add_systems(FixedUpdate, (tick_day, cull.after(super::combat::wreck)).chain()).add_systems(Update, restock);
 }
 
 /// The faction of base `id`.

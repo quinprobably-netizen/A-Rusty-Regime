@@ -220,7 +220,7 @@ pub(super) fn board_title(base: &str, space: &Space) -> String {
 fn job_text(c: &crate::solar::board::Contract, space: &Space, save: &Save) -> (String, String, String) {
     use crate::solar::board::{name_of, Job};
     let name = |id: &str| space.bases.as_ref().map_or(id.to_string(), |b| name_of(b, id).to_string());
-    let pay = crate::comic::widgets::money(c.pay);
+    let pay = format!("${}", c.pay);
     match &c.job {
         Job::Courier { to } => {
             let body = space.bases.as_ref().and_then(|b| b.base.iter().find(|x| x.id == *to)).map(|b| b.body.clone()).unwrap_or_default();

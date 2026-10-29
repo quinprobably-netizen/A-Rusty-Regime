@@ -128,7 +128,7 @@ fn nearest<'a>(at: Vec3, stations: &'a Query<(&Station, &GlobalTransform)>) -> O
 }
 
 /// E at a station does its job and uses the press up, so the ship and the wardrobe do not also see it.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn use_station(
     mut input: ResMut<PlayerInput>,
     bases: Res<Bases>,
