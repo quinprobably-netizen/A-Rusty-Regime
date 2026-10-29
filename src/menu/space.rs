@@ -1,7 +1,8 @@
 // The pause menu's space screens (comic redesign piece 4): STARMAP (the worlds around the star,
 // their bases, where you are), SHIP (each ship's state and engine tune), CONTRACTS (the courier
 // job you carry) and STANDING (where you stand with each faction, and what each level gives).
-// They read live state and draw nothing when the level has none.
+// They read live state and draw nothing when the level has none. The Yard's PARTS rack draws its
+// rows and the Kestrel's refit card from here too.
 
 use bevy::ecs::system::SystemParam;
 use bevy::math::DVec3;
@@ -12,6 +13,7 @@ use crate::comic::{body_text, caption, display_text, panel, segment_bar, stat_ba
 use crate::solar::base::Bases;
 use crate::solar::combat::Faction;
 use crate::solar::orbit::STAR;
+use crate::solar::salvage::{self, Part, Refit, KESTREL};
 use crate::solar::standing::{self, Level};
 use crate::solar::ship::{Ship, Ships};
 use crate::solar::Solar;
@@ -154,6 +156,58 @@ fn contracts(p: &mut ChildSpawnerCommands, t: &ComicTheme, space: &Space, save: 
             c.spawn(display_text("COURIER LOG", 26.0, t2.ink, &t2));
             c.spawn(body_text(format!("Contracts done  {done}"), 17.0, t2.ink, true, &t2));
             c.spawn(body_text(format!("Banked  {}", money(banked)), 17.0, t2.ink, true, &t2));
+        });
+    });
+}
+
+/// A parts rack row for part `i` at a base of `faction`: its label and level, how far up its three
+/// levels it is, and what a level gives with the next one's price.
+pub(super) fn part_row(i: usize, faction: Faction, space: &Space, save: Option<&Save>) -> ((String, String), f32, String) {
+    let part = Part::ALL[i];
+    let blank = Save::default();
+    let save = save.unwrap_or(&blank);
+    let level = save.ship_parts[i].min(3);
+    let Some(tuning) = &space.tuning else { return ((part.name().to_uppercase(), format!("MK{level}")), level as f32 / 3.0, String::new()) };
+    let t = &tuning.ship_combat;
+    let next = match salvage::price(save, part, faction, t) {
+        Some(cost) => format!("Mk{} for {cost} scrap{}", level + 1, standing::price_note(faction, save, t)),
+        None => "fully fitted".to_string(),
+    };
+    ((part.name().to_uppercase(), format!("MK{level}")), level as f32 / 3.0, format!("{} a level  ·  {next}", part.gives(t)))
+}
+
+/// What the Kestrel flies with, its parts and modules counted: a card at `left` px from the
+/// screen's left edge, beside the parts rack's rows.
+pub(super) fn refit_card(p: &mut ChildSpawnerCommands, t: &ComicTheme, space: &Space, save: Option<&Save>, left: f32) {
+    let (Some(tuning), Some(ships)) = (&space.tuning, &space.ships) else { return };
+    let Some(spec) = ships.ship.iter().find(|s| s.id == KESTREL) else { return };
+    let sc = tuning.ship_combat.clone();
+    let blank = Save::default();
+    let r = Refit::of(save.unwrap_or(&blank), &sc);
+    let pct = |k: f32| format!("{:+}%", ((k - 1.0) * 100.0).round() as i32);
+    let lines = [
+        ("HULL", format!("{:.0}", r.max_hull(spec.hull)), format!("{:.0}", spec.hull)),
+        ("SHIELD", format!("{:.0}", r.max_shield(spec.shield)), format!("{:.0}", spec.shield)),
+        ("SHIELD REGEN", pct(r.regen), "+0%".to_string()),
+        ("GUN HEAT A SHOT", pct(r.heat), "+0%".to_string()),
+        ("GUN COOLING", pct(r.cool), "+0%".to_string()),
+        ("MISSILES", format!("{}", r.missiles(&sc)), format!("{}", sc.missiles)),
+        ("MISSILE RELOAD", format!("{:.1} S", r.reload(&sc)), format!("{:.1} S", sc.missile_reload)),
+    ];
+    let t2 = t.clone();
+    p.spawn(Node { position_type: PositionType::Absolute, left: Val::Px(left), top: Val::Px(150.0), width: Val::Px(360.0), ..default() }).with_children(|col| {
+        panel(col, t, t.paper, 1.0, move |c| {
+            c.spawn(display_text("THE KESTREL", 28.0, t2.ink, &t2));
+            c.spawn(body_text("With its parts and modules; stock in grey", 14.0, t2.muted, false, &t2));
+            for (label, now, stock) in lines {
+                c.spawn(Node { justify_content: JustifyContent::SpaceBetween, column_gap: Val::Px(16.0), ..default() }).with_children(|row| {
+                    row.spawn(body_text(label, 16.0, t2.ink, true, &t2));
+                    row.spawn(Node { column_gap: Val::Px(10.0), ..default() }).with_children(|v| {
+                        v.spawn(body_text(stock.clone(), 16.0, t2.muted, false, &t2));
+                        v.spawn(body_text(now.clone(), 16.0, if now != stock { t2.red } else { t2.ink }, true, &t2));
+                    });
+                });
+            }
         });
     });
 }

@@ -246,7 +246,8 @@ GARAGE_DOORS = [("-y", 0.0, 2.6, 2.8)]
 
 def garage(b):
     """The tuning garage outside the east wall: a ship engine on a stand under a hoist rail, a
-    console with its screens, a bench and tyres. Pay here to tune the Kestrel's engines."""
+    console with its screens, a bench and tyres. Pay here to tune the Kestrel's engines, and at
+    the parts crate by the door spend scrap on its hull, shield, guns and missiles."""
     (x, y), s = GARAGE
     z0 = 0.25
     room(b, "garage", (x, y), s, rust, GARAGE_DOORS, wall=0.25, trim="black")
@@ -345,7 +346,7 @@ SPEC = {
         box("engine stand", (GARAGE[0][0] - 1.6, GARAGE[0][1] - 1.2, 0.5), (1.5, 2.6, 0.5)),
         box("garage bench", (GARAGE[0][0] + 3.3, GARAGE[0][1] - 0.6, 0.7), (0.9, 2.4, 0.9)),
     ],
-    "stations": [("workshop", (GARAGE[0][0] + 1.8, GARAGE[0][1] + 1.2, 1.3), "Tuning rig")],
+    "stations": [("workshop", (GARAGE[0][0] + 1.8, GARAGE[0][1] + 1.2, 1.3), "Tuning rig"), ("parts", (GARAGE[0][0] + 3.0, GARAGE[0][1] + 1.6, 1.3), "Parts rack")],
     "view": {"cam": (-30.0, -40.0, 18.0), "look": (0, 0, 3.0), "lens": 35},
     "annex": {"cam": (25.4, -4.5, 1.9), "look": (21.0, -0.6, 1.2), "lens": 22},
     "annex_out": {"cam": (36.0, -16.0, 6.0), "look": (22.0, -2.0, 2.0), "lens": 30},

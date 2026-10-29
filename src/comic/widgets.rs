@@ -177,8 +177,8 @@ pub fn pip_row(p: &mut ChildSpawnerCommands, theme: &ComicTheme, loaded: u32, ma
 }
 
 /// The black strip along the bottom: pad glyphs in coloured circles (A green, B red, others
-/// paper) with their labels, and banked money at the right.
-pub fn hint_strip(p: &mut ChildSpawnerCommands, theme: &ComicTheme, hints: &[(&str, &str)], money_c: Option<u32>) -> Entity {
+/// paper) with their labels, and banked money and scrap at the right.
+pub fn hint_strip(p: &mut ChildSpawnerCommands, theme: &ComicTheme, hints: &[(&str, &str)], money_c: Option<u32>, scrap: Option<u32>) -> Entity {
     p.spawn((
         Node { width: Val::Percent(100.0), height: Val::Px(56.0), padding: UiRect::horizontal(Val::Px(56.0)), column_gap: Val::Px(32.0), align_items: AlignItems::Center, ..default() },
         BackgroundColor(theme.ink),
@@ -203,9 +203,14 @@ pub fn hint_strip(p: &mut ChildSpawnerCommands, theme: &ComicTheme, hints: &[(&s
                 h.spawn(body_text(*label, 18.0, theme.paper, true, theme));
             });
         }
-        if let Some(c) = money_c {
-            s.spawn((Node { margin: UiRect::left(Val::Auto), ..default() },)).with_children(|m| {
-                m.spawn(display_text(money(c), 24.0, theme.yellow, theme));
+        if money_c.is_some() || scrap.is_some() {
+            s.spawn((Node { margin: UiRect::left(Val::Auto), column_gap: Val::Px(28.0), align_items: AlignItems::Center, ..default() },)).with_children(|m| {
+                if let Some(c) = money_c {
+                    m.spawn(display_text(money(c), 24.0, theme.yellow, theme));
+                }
+                if let Some(n) = scrap {
+                    m.spawn(display_text(format!("SCRAP {n}"), 24.0, theme.paper, theme));
+                }
             });
         }
     })
@@ -285,7 +290,7 @@ mod tests {
             stat_bar(p, &theme, "CONTROL", 0.52, 0.70);
             segment_bar(p, &theme, 62.0, 100.0, 10);
             pip_row(p, &theme, 4, 6);
-            hint_strip(p, &theme, &[("A", "SELECT"), ("B", "BACK")], Some(2450));
+            hint_strip(p, &theme, &[("A", "SELECT"), ("B", "BACK")], Some(2450), Some(12));
         });
         app.world_mut().flush();
         assert_eq!(app.world().get::<Children>(root).map(|c| c.len()), Some(7));

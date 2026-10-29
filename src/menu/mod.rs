@@ -2,8 +2,8 @@
 //! Bevy UI over the live world. Titanfall-style: a tall uppercase list on the left, the island
 //! behind it, button hints along the bottom. Time stands still while a menu is up.
 //!
-//! `RUST_REGIME_MENU=title|pause|settings|controls|maps|quartermaster|wardrobe|starmap|ship|contracts|standing` opens straight into a
-//! screen (handy with `RUST_REGIME_SCREENSHOT`).
+//! `RUST_REGIME_MENU=title|pause|settings|controls|maps|quartermaster|wardrobe|starmap|ship|contracts|standing|parts` opens straight into a
+//! screen (handy with `RUST_REGIME_SCREENSHOT`; `parts` is the Yard's, priced by the Scrappers).
 
 use bevy::app::AppExit;
 use bevy::audio::{GlobalVolume, Volume};
@@ -46,6 +46,9 @@ pub enum Panel {
     Controls,
     /// The Roost's counter: guns and attachments, bought with banked money.
     Quartermaster,
+    /// The Yard's parts rack: the Kestrel's hull plating, shield cell, gun capacitor and missile
+    /// rack, bought with scrap.
+    Parts,
     Wardrobe,
     /// The pause menu's space screens: the worlds and bases, your ships, your courier job, where
     /// you stand with each faction.
@@ -75,11 +78,18 @@ pub struct Menu {
     pub from_station: bool,
     /// The last thing the counter said: a sale, or why there was none.
     pub note: String,
+    /// Whose base the parts rack is at: its standing with you sets the prices.
+    pub rack: crate::solar::combat::Faction,
 }
 
 /// Set by the quartermaster's station: open the counter when the pause screen comes up.
 #[derive(Resource, Default)]
 pub struct Counter(pub bool);
+
+/// Set by a parts rack's station to the base's faction: open the parts menu when the pause
+/// screen comes up.
+#[derive(Resource, Default)]
+pub struct Rack(pub Option<crate::solar::combat::Faction>);
 
 impl Menu {
     pub fn showcase(&self) -> Showcase {
@@ -344,6 +354,8 @@ enum Row {
     Slot(usize),
     /// The tuning slider under a fitted part.
     Tune(usize),
+    /// A ship part on the parts rack (an entry of `salvage::Part::ALL`).
+    Part(usize),
     /// The wardrobe's preset picker.
     Preset,
     /// A wardrobe slot (an entry of `wardrobe::SLOTS`).
@@ -443,6 +455,10 @@ fn rows(panel: Panel, screen: Screen, tuned: [bool; 4], fits: bool) -> Vec<Row> 
             }
             rows.push(Row::Action("BACK", Action::Back));
         }
+        Panel::Parts => {
+            rows.extend((0..crate::solar::salvage::Part::ALL.len()).map(Row::Part));
+            rows.push(Row::Action("BACK", Action::Back));
+        }
         Panel::Wardrobe => {
             rows.push(Row::Preset);
             rows.extend((0..wardrobe::SLOTS.len()).map(Row::Look));
@@ -468,7 +484,7 @@ fn main_cursor(panel: Panel) -> usize {
         Panel::Ship => 6,
         Panel::Contracts => 7,
         Panel::Standing => 8,
-        Panel::Main | Panel::Quartermaster => 0,
+        Panel::Main | Panel::Quartermaster | Panel::Parts => 0,
     }
 }
 
@@ -501,6 +517,7 @@ impl Plugin for MenuPlugin {
             .insert_resource(settings)
             .init_resource::<Menu>()
             .init_resource::<Counter>()
+            .init_resource::<Rack>()
             .init_resource::<Nav>()
             .add_systems(OnEnter(Screen::Playing), enter_play)
             .add_systems(OnEnter(Screen::Paused), enter_menu)
@@ -513,7 +530,7 @@ impl Plugin for MenuPlugin {
 /// Boot to the title, unless a screenshot run asks for the game or a particular screen.
 fn initial() -> Screen {
     match std::env::var("RUST_REGIME_MENU").as_deref() {
-        Ok("pause" | "settings" | "controls" | "maps" | "quartermaster" | "wardrobe" | "starmap" | "ship" | "contracts" | "standing") => Screen::Paused,
+        Ok("pause" | "settings" | "controls" | "maps" | "quartermaster" | "wardrobe" | "starmap" | "ship" | "contracts" | "standing" | "parts") => Screen::Paused,
         Ok("play") => Screen::Playing,
         Ok(_) => Screen::Title,
         Err(_) if std::env::var_os("RUST_REGIME_SCREENSHOT").is_some() => Screen::Playing,
@@ -532,7 +549,7 @@ fn enter_play(mut menu: ResMut<Menu>, cursor: Option<Single<&mut CursorOptions>>
     }
 }
 
-fn enter_menu(mut menu: ResMut<Menu>, mut counter: ResMut<Counter>, cursor: Option<Single<&mut CursorOptions>>, mut first: Local<bool>) {
+fn enter_menu(mut menu: ResMut<Menu>, mut counter: ResMut<Counter>, mut rack: ResMut<Rack>, cursor: Option<Single<&mut CursorOptions>>, mut first: Local<bool>) {
     menu.playing = false;
     menu.panel = Panel::Main;
     menu.cursor = 0;
@@ -543,9 +560,15 @@ fn enter_menu(mut menu: ResMut<Menu>, mut counter: ResMut<Counter>, cursor: Opti
         menu.panel = Panel::Quartermaster;
         menu.from_station = true;
     }
+    let rack = rack.0.take();
+    if let Some(faction) = rack {
+        menu.panel = Panel::Parts;
+        menu.from_station = true;
+        menu.rack = faction;
+    }
     if !*first {
         *first = true;
-        menu.panel = if counter { Panel::Quartermaster } else { match std::env::var("RUST_REGIME_MENU").as_deref() {
+        menu.panel = if counter { Panel::Quartermaster } else if rack.is_some() { Panel::Parts } else { match std::env::var("RUST_REGIME_MENU").as_deref() {
             Ok("settings") => Panel::Settings,
             Ok("controls") => Panel::Controls,
             Ok("maps") => Panel::Maps,
@@ -555,6 +578,10 @@ fn enter_menu(mut menu: ResMut<Menu>, mut counter: ResMut<Counter>, cursor: Opti
             Ok("ship") => Panel::Ship,
             Ok("contracts") => Panel::Contracts,
             Ok("standing") => Panel::Standing,
+            Ok("parts") => {
+                menu.rack = crate::solar::combat::Faction::Scrappers;
+                Panel::Parts
+            }
             _ => Panel::Main,
         } };
     }
@@ -843,6 +870,20 @@ fn act(
                 }
             }
         }
+        Row::Part(i) => {
+            if select && let (Some(mut save), Some(file)) = (save, file) {
+                use crate::solar::salvage::{self, Part, Sale};
+                let part = Part::ALL[i];
+                let level = save.ship_parts[i];
+                menu.note = match salvage::buy(&mut save, part, menu.rack, &tuning.ship_combat) {
+                    Sale::Bought(cost) => format!("{} Mk{}: -{cost} scrap", part.name(), level + 1),
+                    Sale::Short(short) => format!("{} Mk{}: {short} scrap short", part.name(), level + 1),
+                    Sale::Top => format!("{} is at Mk3, as far as it goes", part.name()),
+                    Sale::Refused => crate::solar::standing::refusal(menu.rack),
+                };
+                file.write(&save);
+            }
+        }
         Row::Preset | Row::Look(_) => {
             if step != 0
                 && let Some(mut outfit) = closet.outfit()
@@ -873,16 +914,16 @@ fn act(
 #[allow(clippy::too_many_arguments)]
 fn leave(menu: &mut Menu, next: &mut NextState<Screen>, panel: Panel, save: Option<&Save>, loadout: &mut Loadout, arsenal: &mut Arsenal, closet: &Closet) {
     menu.note.clear();
-    if panel == Panel::Quartermaster {
-        if let Some(save) = save {
-            let start = quartermaster::starter(closet.characters.as_deref(), closet.class.as_deref());
-            quartermaster::sanitize(save, loadout, arsenal, start);
-        }
-        if menu.from_station {
-            menu.from_station = false;
-            next.set(Screen::Playing);
-            return;
-        }
+    if panel == Panel::Quartermaster
+        && let Some(save) = save
+    {
+        let start = quartermaster::starter(closet.characters.as_deref(), closet.class.as_deref());
+        quartermaster::sanitize(save, loadout, arsenal, start);
+    }
+    if matches!(panel, Panel::Quartermaster | Panel::Parts) && menu.from_station {
+        menu.from_station = false;
+        next.set(Screen::Playing);
+        return;
     }
     menu.cursor = main_cursor(panel);
     menu.panel = Panel::Main;
@@ -1039,13 +1080,13 @@ mod tests {
 
     #[test]
     fn every_panel_has_rows_and_back_lands_on_its_opener() {
-        for panel in [Panel::Main, Panel::Maps, Panel::Settings, Panel::Controls, Panel::Quartermaster, Panel::Wardrobe, Panel::Starmap, Panel::Ship, Panel::Contracts, Panel::Standing] {
+        for panel in [Panel::Main, Panel::Maps, Panel::Settings, Panel::Controls, Panel::Quartermaster, Panel::Parts, Panel::Wardrobe, Panel::Starmap, Panel::Ship, Panel::Contracts, Panel::Standing] {
             if matches!(panel, Panel::Starmap | Panel::Ship | Panel::Contracts | Panel::Standing) && !space_level() {
                 continue;
             }
             let panel_rows = rows(panel, Screen::Paused, [true; 4], true);
             assert!(selectable(&panel_rows).count() > 0, "{panel:?}");
-            if !matches!(panel, Panel::Main | Panel::Quartermaster) {
+            if !matches!(panel, Panel::Main | Panel::Quartermaster | Panel::Parts) {
                 let main = rows(Panel::Main, Screen::Paused, [false; 4], false);
                 let opener = selectable(&main).nth(main_cursor(panel)).unwrap();
                 assert!(matches!(opener, Row::Action(name, _) if name == format!("{panel:?}").to_uppercase()), "{panel:?} -> {opener:?}");

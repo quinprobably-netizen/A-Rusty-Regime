@@ -40,6 +40,7 @@ pub(super) fn hints(panel: Panel, screen: Screen) -> &'static [(&'static str, &'
         Panel::Main => &[("A", "ENTER", "SELECT"), ("UP DN", "W S", "MOVE")],
         Panel::Settings => &[("L R", "A D", "ADJUST"), ("A", "ENTER", "TOGGLE"), ("B", "ESC", "BACK")],
         Panel::Quartermaster => &[("LB RB", "Q E", "WEAPON"), ("L R", "A D", "PART / TUNE"), ("A", "ENTER", "BUY"), ("B", "ESC", "BACK")],
+        Panel::Parts => &[("UP DN", "W S", "PART"), ("A", "ENTER", "BUY"), ("B", "ESC", "BACK")],
         Panel::Wardrobe => &[("UP DN", "W S", "SLOT"), ("L R", "A D", "CHANGE"), ("B", "ESC", "BACK")],
         Panel::Controls | Panel::Starmap | Panel::Ship | Panel::Contracts | Panel::Standing => &[("B", "ESC", "BACK")],
         Panel::Maps => &[("A", "ENTER", "PLAY"), ("B", "ESC", "BACK")],
@@ -113,7 +114,8 @@ pub(super) fn rebuild(
     *was_pad = Some(pad);
     let wardrobe_changed = closet.wardrobe.as_ref().is_some_and(|w| w.is_changed());
     let gun_changed = menu.panel == Panel::Quartermaster && (arsenal.is_changed() || save.as_ref().is_some_and(|s| s.is_changed()));
-    if !(device_changed || menu.is_changed() || screen.is_changed() || settings.is_changed() || loadout.is_changed() || gun_changed || wardrobe_changed) {
+    let salvage_changed = menu.panel == Panel::Parts && save.as_ref().is_some_and(|s| s.is_changed());
+    if !(device_changed || menu.is_changed() || screen.is_changed() || settings.is_changed() || loadout.is_changed() || gun_changed || salvage_changed || wardrobe_changed) {
         return;
     }
     for e in &roots {
@@ -130,6 +132,7 @@ pub(super) fn rebuild(
     let base = tuning.gun(kind).cloned();
     let fitted = base.as_ref().map(|g| loadout.gun(kind, g));
     let banked = save.as_ref().map_or(0, |s| s.banked);
+    let scrap = save.as_ref().map_or(0, |s| s.scrap);
     let width = match menu.panel {
         Panel::Main => 360.0,
         Panel::Wardrobe => 620.0,
@@ -179,6 +182,7 @@ pub(super) fn rebuild(
                 Panel::Controls => ("RUST REGIME".to_string(), "CONTROLS"),
                 Panel::Maps => ("RUST REGIME".to_string(), "MAPS"),
                 Panel::Quartermaster => (format!("BANKED  {}", crate::comic::widgets::money(banked)), "THE ROOST · QUARTERMASTER"),
+                Panel::Parts => (format!("SCRAP  {scrap}"), "THE YARD · PARTS RACK"),
                 Panel::Wardrobe => ("RUST REGIME".to_string(), "WARDROBE"),
                 Panel::Starmap => ("THE HAVEN SYSTEM".to_string(), "STARMAP"),
                 Panel::Ship => ("THE HANGAR".to_string(), "SHIPS"),
@@ -223,6 +227,11 @@ pub(super) fn rebuild(
                         value_row(list, &t, m.name, if i == current_map() { "LOADED" } else { "" }, None, Some(m.desc), index, index == menu.cursor, false);
                         index += 1;
                     }
+                    Row::Part(i) => {
+                        let (value, fill, note) = super::space::part_row(i, menu.rack, &space, save.as_deref());
+                        value_row(list, &t, &value.0, &value.1, Some(fill), Some(&note), index, index == menu.cursor, false);
+                        index += 1;
+                    }
                     Row::Weapon | Row::Slot(_) | Row::Tune(_) | Row::Preset | Row::Look(_) => {}
                 }
             }
@@ -231,6 +240,9 @@ pub(super) fn rebuild(
             }
             if menu.panel == Panel::Controls {
                 list.spawn((body_text(controls_sheet(), 16.0, t.ink, false, &t), Node { margin: UiRect::vertical(Val::Px(8.0)), ..default() }));
+            }
+            if menu.panel == Panel::Parts && !menu.note.is_empty() {
+                list.spawn((body_text(menu.note.clone(), 18.0, t.red, true, &t), Node { margin: UiRect::top(Val::Px(10.0)), ..default() }));
             }
         });
 
@@ -245,6 +257,9 @@ pub(super) fn rebuild(
 
         if menu.panel == Panel::Quartermaster {
             bench(p, &t, &rows, menu.cursor, kind, &loadout, save.as_deref(), &menu.note, screen_px);
+        }
+        if menu.panel == Panel::Parts {
+            super::space::refit_card(p, &t, &space, save.as_deref(), LEFT + 600.0);
         }
         if matches!(menu.panel, Panel::Starmap | Panel::Ship | Panel::Contracts | Panel::Standing) {
             super::space::draw(p, &t, menu.panel, &space, save.as_deref());
@@ -271,12 +286,14 @@ pub(super) fn rebuild(
             });
         }
 
-        // The hint strip along the bottom, with the bank on the main menu and at the counter.
+        // The hint strip along the bottom, with the bank on the main menu and at the counter, and
+        // your scrap on the main menu, at the parts rack and on the Ship screen.
         let money = matches!(menu.panel, Panel::Main | Panel::Quartermaster).then_some(banked);
+        let scrap = matches!(menu.panel, Panel::Main | Panel::Parts | Panel::Ship).then_some(scrap);
         let labels = hint_labels(menu.panel, screen, pad);
         let pairs: Vec<(&str, &str)> = labels.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
         p.spawn(Node { position_type: PositionType::Absolute, left: Val::Px(0.0), right: Val::Px(0.0), bottom: Val::Px(0.0), ..default() }).with_children(|b| {
-            hint_strip(b, &t, &pairs, money);
+            hint_strip(b, &t, &pairs, money, scrap);
         });
     });
 }

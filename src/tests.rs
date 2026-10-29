@@ -2322,7 +2322,7 @@ fn every_base_has_its_station_on_a_floor_clear_of_the_furniture() {
     let roles: Vec<(&str, Vec<StationKind>)> = vec![
         ("roost", vec![StationKind::Resupply, StationKind::Locker]),
         ("reliquary", vec![StationKind::Shrine]),
-        ("yard", vec![StationKind::Workshop]),
+        ("yard", vec![StationKind::Workshop, StationKind::Parts]),
         ("outpost", vec![StationKind::Contracts]),
     ];
     for (id, kinds) in roles {
@@ -3236,7 +3236,8 @@ fn back_at_the_roost(app: &mut App, wreck: Entity) {
     assert!(origin.body(at).distance(berth) < 0.5, "on the pad, {} m off its berth", origin.body(at).distance(berth));
     let spec = app.world().resource::<solar::ship::Ships>().ship[0].clone();
     let hull = *app.world().get::<Hull>(kestrel).unwrap();
-    assert_eq!((hull.hp, hull.shield), (spec.hull, spec.shield), "a fresh hull");
+    let refit = solar::salvage::Refit::of(app.world().resource::<Save>(), &t);
+    assert_eq!((hull.hp, hull.shield), (refit.max_hull(spec.hull), refit.max_shield(spec.shield)), "a fresh hull, with whatever parts are bought");
     let player = app.world_mut().query_filtered::<Entity, With<Player>>().single(app.world()).unwrap();
     assert!(app.world().get::<Driving>(player).is_none(), "on foot");
     let (pos, _, _) = self::player(app);
@@ -3933,4 +3934,84 @@ fn an_old_save_without_salvage_still_loads() {
     file.write(&salvaged);
     assert_eq!(file.load(), salvaged, "salvage round-trips");
     std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn the_yards_parts_rack_opens_its_menu_and_sells_for_scrap_at_the_scrappers_prices() {
+    use crate::menu::{Menu, Panel, Screen};
+    let mut app = counter_app();
+    let yard = 2;
+    stand_at_station(&mut app, StationKind::Parts, yard);
+    app.world_mut().resource_mut::<Save>().scrap = 30;
+    run(&mut app, 0.1);
+    let prompt = |app: &App| app.world().resource::<solar::station::Prompt>().text();
+    assert!(prompt(&app).contains("fit parts to the Kestrel for scrap (30 scrap)"), "{}", prompt(&app));
+    press_use(&mut app);
+    run(&mut app, 0.2);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Paused);
+    let menu = app.world().resource::<Menu>();
+    assert_eq!((menu.panel, menu.from_station, menu.rack), (Panel::Parts, true, Faction::Scrappers));
+    // Enter buys hull plating Mk1 (12); down a row, the shield cell Mk1 (12); then Mk2 is short.
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!((app.world().resource::<Save>().scrap, app.world().resource::<Save>().ship_parts), (18, [1, 0, 0, 0]));
+    assert!(app.world().resource::<Menu>().note.contains("-12 scrap"), "{}", app.world().resource::<Menu>().note);
+    tap(&mut app, KeyCode::KeyS);
+    tap(&mut app, KeyCode::Enter);
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!((app.world().resource::<Save>().scrap, app.world().resource::<Save>().ship_parts), (6, [1, 1, 0, 0]));
+    assert!(app.world().resource::<Menu>().note.contains("18 scrap short"), "{}", app.world().resource::<Menu>().note);
+    tap(&mut app, KeyCode::Escape);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Playing, "back to the game");
+    // A friend of the Scrappers pays 15% less: the missile rack's 15 for 13.
+    set_standing(&mut app, Faction::Scrappers, 40);
+    app.world_mut().resource_mut::<Save>().scrap = 100;
+    press_use(&mut app);
+    run(&mut app, 0.2);
+    for _ in 0..3 {
+        tap(&mut app, KeyCode::KeyS);
+    }
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!((app.world().resource::<Save>().scrap, app.world().resource::<Save>().ship_parts[3]), (87, 1), "Mk1 rack for 13");
+    tap(&mut app, KeyCode::Escape);
+    // At -60 the Yard will not sell to you: the menu does not open.
+    set_standing(&mut app, Faction::Scrappers, -60);
+    press_use(&mut app);
+    run(&mut app, 0.2);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Playing);
+    assert!(prompt(&app).contains("The Scrappers will not serve you"), "{}", prompt(&app));
+    assert_eq!(app.world().resource::<Save>().scrap, 87);
+}
+
+#[test]
+fn parts_land_on_a_fresh_kestrel_and_are_kept_after_being_shot_down() {
+    let t = Tuning::default().ship_combat;
+    let mut app = aloft(600.0);
+    let ship = ship_entity(&mut app);
+    app.world_mut().resource_mut::<Save>().ship_parts = [3, 2, 0, 1];
+    run(&mut app, 0.1);
+    let h = *app.world().get::<Hull>(ship).unwrap();
+    assert_eq!((h.hp, h.max_hp, h.shield, h.max_shield), (175.0, 175.0, 90.0, 90.0), "+75 hull and +30 shield");
+    assert!((h.regen - 1.4).abs() < 1e-5, "the shield comes back 40% faster: {}", h.regen);
+    assert_eq!(missiles(&app, ship).count, t.missiles + 1, "one more missile on the rack");
+    assert_eq!(app.world().resource::<crate::hud::FlightHud>().fight.max_hull, 175.0, "the HUD's hull bar runs to the new top");
+    // The gun capacitor: three levels heat the guns well under half as fast.
+    let heat = |level: u8| -> f32 {
+        let mut app = aloft(600.0);
+        app.world_mut().resource_mut::<Save>().ship_parts[2] = level;
+        run(&mut app, 0.1);
+        hold_fire(&mut app, 2.0);
+        let ship = ship_entity(&mut app);
+        app.world().get::<Gun>(ship).unwrap().heat
+    };
+    let (stock, cooled) = (heat(0), heat(3));
+    assert!(stock > 0.2 && cooled < stock * 0.5, "two seconds of fire: stock {stock}, capacitor Mk3 {cooled}");
+    // Shot down, the fresh Kestrel on the pad has them all.
+    let wreck = shoot_down(&mut app);
+    run(&mut app, 0.2);
+    back_at_the_roost(&mut app, wreck);
+    assert_eq!(app.world().resource::<Save>().ship_parts, [3, 2, 0, 1], "kept");
+    let kestrel = ship_entity(&mut app);
+    let h = *app.world().get::<Hull>(kestrel).unwrap();
+    assert_eq!((h.hp, h.shield), (175.0, 90.0));
+    assert_eq!(missiles(&app, kestrel).count, t.missiles + 1);
 }
