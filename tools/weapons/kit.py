@@ -6,6 +6,7 @@ Blender is Z-up; every weapon points down +Y with the trigger near the origin an
 viewmodel points.
 """
 
+import ctypes
 import math
 import os
 
@@ -460,6 +461,14 @@ def hole_through(name, c, r, axis="x", length=0.06, segs=16):
 
 # ---------------------------------------------------------------------------------- wear bake
 
+def _loads(lib):
+    try:
+        ctypes.CDLL(lib)
+        return True
+    except OSError:
+        return False
+
+
 def bake_device():
     """("GPU", names) when Cycles finds a GPU (ONEAPI for Q's Arc first, then OPTIX, CUDA, HIP,
     METAL), else ("CPU", "CPU"). Never fails: a missing runtime just means the CPU. Only official
@@ -478,7 +487,13 @@ def bake_device():
         if gpus:
             for d in prefs.devices:
                 d.use = d.type != "CPU"
-            return "GPU", f"GPU ({kind}: {', '.join(d.name for d in gpus)})"
+            rt = ""
+            if kind == "ONEAPI" and hasattr(prefs, "use_oneapirt"):
+                # Embree on the GPU needs Intel's level-zero-raytracing-support library; without it
+                # every bake fails, so trace in software instead.
+                prefs.use_oneapirt = _loads("libze_intel_gpu_raytracing.so")
+                rt = ", hardware ray tracing" if prefs.use_oneapirt else ", software ray tracing"
+            return "GPU", f"GPU ({kind}: {', '.join(d.name for d in gpus)}{rt})"
     try:
         prefs.compute_device_type = "NONE"
     except TypeError:
