@@ -262,7 +262,7 @@ fn spawn_hud(mut commands: Commands, theme: Res<ComicTheme>, halftones: Option<R
             c.spawn((Node { position_type: PositionType::Absolute, left: Val::Px(tape_w / 2.0 - t.ink_px - 1.5), top: Val::Px(0.0), width: Val::Px(3.0), height: Val::Px(26.0), ..default() }, BackgroundColor(t.ink)));
         });
 
-        // Top right: the haul and the menu hint.
+        // Top right: the haul (the bank and your scrap) and the menu hint.
         let shadow = TextShadow { offset: Vec2::splat(2.0), color: t.ink };
         p.spawn((HaulText, body_text("", 16.0, t.paper, true, &t), shadow, Node { position_type: PositionType::Absolute, top: Val::Px(34.0), right: Val::Px(24.0), ..default() }));
         p.spawn((HintText, body_text("ESC  MENU", 14.0, t.paper, true, &t), shadow, Node { position_type: PositionType::Absolute, top: Val::Px(54.0), right: Val::Px(24.0), ..default() }));
@@ -552,7 +552,15 @@ fn update_crosshair(
 }
 
 fn update_haul(save: Option<Res<Save>>, mut haul_text: Single<&mut Text, With<HaulText>>) {
-    haul_text.0 = save.map_or(String::new(), |save| format!("BANK {}", save.banked));
+    let s = save.map_or(String::new(), |save| haul(&save));
+    if haul_text.0 != s {
+        haul_text.0 = s;
+    }
+}
+
+/// The top right's haul: the bank, and the scrap beside it.
+pub fn haul(save: &Save) -> String {
+    format!("BANK {}   SCRAP {}", save.banked, save.scrap)
 }
 
 /// Slide the compass ticks past the notch; yaw 0 looks down -Z, which is north.

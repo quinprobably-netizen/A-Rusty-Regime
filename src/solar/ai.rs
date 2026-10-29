@@ -8,7 +8,9 @@
 //! hurt. How each hull fights is its `ai` entry in `ships.toml`.
 //!
 //! Enemies hunt ships only: the target is the ship the player flies, never the player on foot,
-//! and never a ship of their own side. Nothing here holds a position from one tick to the next,
+//! and never a ship of their own side. Raiders and hunters always attack it; a patrol only while
+//! its faction's standing with you is below 0, or once you have shot it (`standing::attacks`),
+//! and it forgets that once it lets you go. Nothing here holds a position from one tick to the next,
 //! so the origin rebase and a handoff to another world's frame have nothing to convert.
 
 use avian3d::prelude::*;
@@ -19,7 +21,8 @@ use super::base::Base;
 use super::combat::{Faction, Hull};
 use super::missile::Missiles;
 use super::ship::{clearance, Ship, ShipControls, Ships};
-use super::Solar;
+use super::{standing, Solar};
+use crate::save::Save;
 use crate::surface::{Origin, Surface};
 use crate::tuning::{ShipCombat, Tuning};
 
@@ -66,12 +69,14 @@ pub enum Mode {
     Break,
 }
 
-/// Why an enemy ship is there: a raider hunting whoever flies by, or one of a base's patrols
-/// (`base` indexes `Bases`, `slot` counts its patrols from 0).
+/// Why an enemy ship is there: a raider hunting whoever flies by, one of a base's patrols
+/// (`base` indexes `Bases`, `slot` counts its patrols from 0), or one of a pack a faction that
+/// hunts you sent (`standing`), which flies like a raider.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
     Raider,
     Patrol { base: usize, slot: usize },
+    Hunter,
 }
 
 /// An enemy ship's pilot.
@@ -85,6 +90,9 @@ pub struct Enemy {
     side: f32,
     /// Hurt past its `flee_hull`: it has broken off for good.
     pub fleeing: bool,
+    /// You have shot it in this fight: a patrol comes for you whatever your standing, until it
+    /// lets you go.
+    pub provoked: bool,
     /// The steady pull `steer` holds near the mark, rad/s in pitch and yaw.
     trim: Vec2,
     /// 0 to 1, its own: which way it swings in from and breaks, how long, and where its aim
@@ -94,7 +102,7 @@ pub struct Enemy {
 
 impl Enemy {
     pub fn new(role: Role, quirk: f32) -> Self {
-        Self { role, mode: Mode::Patrol, timer: 0.0, side: if quirk < 0.5 { 1.0 } else { -1.0 }, fleeing: false, trim: Vec2::ZERO, quirk }
+        Self { role, mode: Mode::Patrol, timer: 0.0, side: if quirk < 0.5 { 1.0 } else { -1.0 }, fleeing: false, provoked: false, trim: Vec2::ZERO, quirk }
     }
 }
 
@@ -223,6 +231,7 @@ pub(super) fn think(
     solar: Res<Solar>,
     surface: Res<Surface>,
     origin: Res<Origin>,
+    save: Option<Res<Save>>,
     bases: Query<(&Transform, &Base)>,
     targets: Query<(Entity, &Ship, &Position, &LinearVelocity, &Faction), Without<Enemy>>,
     mut enemies: Query<(&mut Enemy, &Ship, &Hull, &Faction, &Position, &Rotation, &LinearVelocity, &mut ShipControls, Option<&Missiles>)>,
@@ -240,11 +249,12 @@ pub(super) fn think(
         let up = surface.up(body);
         let home = match enemy.role {
             Role::Patrol { base, .. } => bases.iter().find(|(_, b)| b.spec == base).map(|(tf, _)| *tf),
-            Role::Raider => None,
+            Role::Raider | Role::Hunter => None,
         };
         // A patrol takes on a ship that comes near its base and lets it go once it is well away.
         let engaged = enemy.mode != Mode::Patrol;
-        let foe = quarry.filter(|q| q.faction != *faction).filter(|q| match home {
+        let attacks = standing::attacks(&enemy, *faction, save.as_deref(), t);
+        let foe = quarry.filter(|q| q.faction != *faction && attacks).filter(|q| match home {
             Some(base) => q.at.distance(base.translation) < if engaged { t.patrol_give_up } else { t.patrol_engage },
             None => true,
         });
@@ -273,6 +283,10 @@ pub(super) fn think(
             (Mode::Attack, _) if dist > ai.attack_range * 1.3 => Mode::Pursue,
             (mode, _) => mode,
         };
+        // Let go, the fight is over: a shot next time is a new one.
+        if engaged && enemy.mode == Mode::Patrol {
+            enemy.provoked = false;
+        }
 
         let mut fire = false;
         let mut missile = false;

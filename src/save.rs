@@ -1,6 +1,6 @@
 //! What persists between sessions, in `save.toml` next to `tuning.toml`: banked money, the outfit, the
-//! loadout, the weapons and parts you own, the ship's tune, the courier parcel, and the ships you
-//! have shot down and lost.
+//! loadout, the weapons and parts you own, the ship's tune, the courier parcel, the ships you
+//! have shot down and lost, where you stand with each faction, and your salvage.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -54,7 +54,7 @@ impl SaveFile {
 }
 
 /// What persists between sessions.
-#[derive(Resource, Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Resource, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 #[serde(default)]
 pub struct Save {
     pub banked: u32,
@@ -76,9 +76,21 @@ pub struct Save {
     /// The courier parcel being carried, and how many have been delivered.
     pub contract: Option<crate::solar::station::Contract>,
     pub contracts_done: u32,
-    /// Enemy ships you have shot down, in all and by faction id (`combat::Faction::id`), for
-    /// faction standing later; and how often your own ship has been shot down.
+    /// Enemy ships you have shot down, in all and by faction id (`combat::Faction::id`), and how
+    /// often your own ship has been shot down.
     pub kills: u32,
     pub faction_kills: BTreeMap<String, u32>,
     pub deaths: u32,
+    /// Your standing with each faction that has moved from where a stranger starts, by faction id
+    /// (`solar::standing::get` reads it, falling back to `[ship_combat] standing_start`), and the
+    /// game time toward the next day's slow recovery, s.
+    pub standing: BTreeMap<String, i32>,
+    pub standing_clock: f32,
+    /// Salvage (`solar::salvage`): scrap picked up from wrecks and not yet spent, the level of
+    /// each ship part bought with it (hull plating, shield cell, gun capacitor, missile rack), the
+    /// modules found, by id, and the ones fitted (at most two).
+    pub scrap: u32,
+    pub ship_parts: [u8; 4],
+    pub modules: Vec<String>,
+    pub fitted: Vec<String>,
 }

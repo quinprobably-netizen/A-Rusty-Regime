@@ -209,6 +209,10 @@ collider = [
 kind = "workshop"
 at = [23.8, 1.3, 0.8]
 label = "Tuning rig"
+[[base.stations]]
+kind = "parts"
+at = [25, 1.3, 0.4]
+label = "Parts rack"
 
 [[base]]
 id = "outpost"

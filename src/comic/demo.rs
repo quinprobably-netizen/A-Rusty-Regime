@@ -36,7 +36,7 @@ pub(super) fn spawn(mut commands: Commands, theme: Res<ComicTheme>, mut halftone
                     pip_row(p, &t3, 45, 60);
                 });
             });
-            hint_strip(root, &t, &[("A", "SELECT"), ("B", "BACK"), ("LB", "SLOT")], Some(2450));
+            hint_strip(root, &t, &[("A", "SELECT"), ("B", "BACK"), ("LB", "SLOT")], Some(2450), None);
         });
 }
 

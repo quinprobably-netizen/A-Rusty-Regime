@@ -23,7 +23,8 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-use super::combat::{Faction, Hull};
+use super::combat::{Faction, Hull, ShotLanded};
+use super::salvage::Refit;
 use super::ship::{clearance, Autopilot, Ship, ShipControls, Ships};
 use super::Solar;
 use crate::surface::{Origin, Surface};
@@ -135,27 +136,32 @@ fn arm(add: On<Add, Ship>, mut commands: Commands, ships: Query<&Ship>, specs: R
 
 /// Reloads each ship's missiles and keeps its lock: the ship of another side nearest its nose
 /// within the cone and range starts a lock, which grows while it stays there and is gone once it
-/// leaves. An enemy pilot locks only on a ship someone flies, the one it hunts.
+/// leaves. An enemy pilot locks only on a ship someone flies, the one it hunts. The Kestrel's
+/// missile rack and targeting array (`salvage::Refit`) change how many it carries, how fast they
+/// come back, and the lock's cone and time.
 #[allow(clippy::type_complexity)]
 fn lock(
     time: Res<Time>,
     tuning: Res<Tuning>,
-    mut ships: Query<(Entity, &mut Missiles, &Faction, &Position, &Rotation, Has<Autopilot>)>,
+    mut ships: Query<(Entity, &mut Missiles, &Faction, &Position, &Rotation, Has<Autopilot>, Option<&Refit>)>,
     targets: Query<(Entity, &Ship, &Faction, &Position), With<Hull>>,
 ) {
     let t = &tuning.ship_combat;
     let dt = time.delta_secs();
-    for (me, mut m, faction, pos, rot, autopilot) in &mut ships {
-        if m.count < t.missiles {
+    for (me, mut m, faction, pos, rot, autopilot, refit) in &mut ships {
+        let r = refit.copied().unwrap_or_default();
+        let (carried, reload) = (r.missiles(t), r.reload(t));
+        if m.count < carried {
             m.reload += dt;
-            if m.reload >= t.missile_reload {
+            if m.reload >= reload {
                 m.reload = 0.0;
                 m.count += 1;
             }
         } else {
-            m.count = t.missiles;
+            m.count = carried;
             m.reload = 0.0;
         }
+        let (cone, lock_time) = (r.lock_cone(t), r.lock_time(t));
         m.since = (m.since + dt).min(1e6);
         let nose = rot.0 * Vec3::NEG_Z;
         // How far off the nose each ship it could lock is, radians.
@@ -164,10 +170,10 @@ fn lock(
             let rel = p.0 - pos.0;
             let ok = e != me && f != faction && (!autopilot || ship.pilot.is_some()) && rel.length() < t.lock_range;
             let angle = nose.angle_between(rel);
-            (ok && angle < t.lock_cone.to_radians()).then_some(angle)
+            (ok && angle < cone.to_radians()).then_some(angle)
         };
         if m.target.and_then(off).is_some() {
-            m.lock = (m.lock + dt / t.lock_time).min(1.0);
+            m.lock = (m.lock + dt / lock_time).min(1.0);
             continue;
         }
         m.target = targets.iter().filter_map(|(e, ..)| off(e).map(|a| (e, a))).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(e, _)| e);
@@ -256,6 +262,7 @@ fn fly_missiles(
     targets: Query<(&Ship, &Position, &LinearVelocity)>,
     bodies: Query<&ColliderOf>,
     mut hulls: Query<(&mut Hull, &Faction)>,
+    mut landed: MessageWriter<ShotLanded>,
 ) {
     let t = &tuning.ship_combat;
     let dt = time.delta_secs();
@@ -302,6 +309,7 @@ fn fly_missiles(
                 && *faction != m.faction
             {
                 strike(&mut hull, m.owner, t);
+                landed.write(ShotLanded { by: m.owner, on: body });
                 if let Ok((ship, ..)) = targets.get(body) {
                     info!("missile hit the {}", specs.ship[ship.spec].name);
                 }
@@ -318,6 +326,7 @@ fn fly_missiles(
                     && *faction != m.faction
                 {
                     strike(&mut hull, m.owner, t);
+                    landed.write(ShotLanded { by: m.owner, on: target });
                     if let Ok((ship, ..)) = targets.get(target) {
                         info!("missile hit the {}", specs.ship[ship.spec].name);
                     }

@@ -15,6 +15,7 @@ use bevy::prelude::*;
 
 use super::combat::{wreck, Faction, Gun, Hull, Projectile, ShipDestroyed, ShotLanded};
 use super::missile::{Missile, Missiles};
+use super::salvage::Refit;
 use super::ship::{Autopilot, Ship, Ships};
 use super::Solar;
 use crate::controller::Player;
@@ -62,6 +63,9 @@ pub enum Sfx {
     LockBeep,
     /// An enemy's lock or missile on your ship.
     Warning,
+    /// Salvage taken aboard (`salvage`): scrap, and a module new to you.
+    Scrap,
+    Module,
 }
 
 pub fn build(app: &mut App) {
@@ -91,26 +95,26 @@ fn gauges(
     mut hud: ResMut<FlightHud>,
     mut landed: MessageReader<ShotLanded>,
     mut destroyed: MessageReader<ShipDestroyed>,
-    ships: Query<(Entity, &Ship, &Hull, &Faction, Option<&Gun>, Option<&Missiles>)>,
+    ships: Query<(Entity, &Ship, &Hull, &Faction, Option<&Gun>, Option<&Missiles>, Option<&Refit>)>,
     hunters: Query<(&Ship, &Faction, &Missiles), With<Autopilot>>,
     in_flight: Query<&Missile>,
 ) {
     let fight = &mut hud.fight;
     fight.hit = (fight.hit - time.delta_secs()).max(0.0);
-    let Some((me, ship, hull, faction, gun, missiles)) = ships.iter().find(|(_, s, ..)| s.pilot.is_some()) else {
+    let Some((me, _, hull, faction, gun, missiles, refit)) = ships.iter().find(|(_, s, ..)| s.pilot.is_some()) else {
         landed.clear();
         destroyed.clear();
         *fight = Default::default();
         return;
     };
-    let spec = &specs.ship[ship.spec];
-    (fight.hull, fight.max_hull, fight.shield, fight.max_shield) = (hull.hp, spec.hull, hull.shield, hull.max_shield);
+    (fight.hull, fight.max_hull, fight.shield, fight.max_shield) = (hull.hp, hull.max_hp, hull.shield, hull.max_shield);
     (fight.heat, fight.overheated) = gun.map_or((0.0, false), |g| (g.heat.clamp(0.0, 1.0), g.overheated));
     let t = &tuning.ship_combat;
+    let r = refit.copied().unwrap_or_default();
     match missiles {
         Some(m) => {
-            (fight.missiles, fight.max_missiles) = (m.count, t.missiles);
-            fight.reload = if m.count < t.missiles { (m.reload / t.missile_reload.max(1e-3)).clamp(0.0, 1.0) } else { 0.0 };
+            (fight.missiles, fight.max_missiles) = (m.count, r.missiles(t));
+            fight.reload = if m.count < r.missiles(t) { (m.reload / r.reload(t).max(1e-3)).clamp(0.0, 1.0) } else { 0.0 };
             fight.lock = if m.target.is_some() { m.lock } else { 0.0 };
         }
         None => (fight.missiles, fight.max_missiles, fight.reload, fight.lock) = (0, 0, 0.0, 0.0),

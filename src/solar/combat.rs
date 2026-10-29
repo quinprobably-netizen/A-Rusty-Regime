@@ -12,6 +12,7 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 use serde::Deserialize;
 
+use super::salvage::Refit;
 use super::ship::{Ship, ShipControls, Ships};
 use super::Solar;
 use crate::surface::{Origin, Surface};
@@ -41,14 +42,34 @@ impl Faction {
             Faction::Raiders => "raiders",
         }
     }
+
+    /// The faction named `id` in the data files.
+    pub fn from_id(id: &str) -> Option<Faction> {
+        [Faction::Deserters, Faction::Regime, Faction::Scrappers, Faction::Pmc, Faction::Raiders].into_iter().find(|f| f.id() == id)
+    }
+
+    /// Its name on screen.
+    pub fn name(self) -> &'static str {
+        match self {
+            Faction::Deserters => "Deserters",
+            Faction::Regime => "Regime",
+            Faction::Scrappers => "Scrappers",
+            Faction::Pmc => "PMC",
+            Faction::Raiders => "Raiders",
+        }
+    }
 }
 
 /// A ship's hull points behind its shield.
 #[derive(Component, Clone, Copy, Debug)]
 pub struct Hull {
     pub hp: f32,
+    pub max_hp: f32,
     pub shield: f32,
     pub max_shield: f32,
+    /// How fast the shield comes back against `[ship_combat] shield_regen` (the Kestrel's shield
+    /// cell raises it, `salvage::Refit`).
+    pub regen: f32,
     /// Seconds until the shield starts to come back; every hit starts the wait again.
     pub shield_regen_after: f32,
     /// The ship whose fire landed the last hit, if anyone's did: at zero hp it is the killer.
@@ -57,7 +78,7 @@ pub struct Hull {
 
 impl Hull {
     pub fn new(hp: f32, shield: f32) -> Self {
-        Self { hp, shield, max_shield: shield, shield_regen_after: 0.0, last_hit_by: None }
+        Self { hp, max_hp: hp, shield, max_shield: shield, regen: 1.0, shield_regen_after: 0.0, last_hit_by: None }
     }
 
     /// Takes `damage` from nobody's fire: the shield holds what it can and the hull takes the rest.
@@ -81,7 +102,7 @@ impl Hull {
         if self.shield_regen_after > 0.0 {
             self.shield_regen_after -= dt;
         } else {
-            self.shield = (self.shield + t.shield_regen * dt).min(self.max_shield);
+            self.shield = (self.shield + t.shield_regen * self.regen * dt).min(self.max_shield);
         }
     }
 }
@@ -103,25 +124,32 @@ pub struct Projectile {
     pub velocity: Vec3,
     /// Seconds left before it is gone (its range at muzzle speed).
     life: f32,
-    /// The ship that fired it.
+    /// The ship that fired it, and what it does to a hull it reaches.
     pub owner: Entity,
     faction: Faction,
+    damage: f32,
 }
 
 /// A ship's hull reached zero this tick. Written for every ship, the flown one too; `killer` is
-/// the ship whose fire landed the last hit (`Hull::last_hit_by`), if anyone's.
+/// the ship whose fire landed the last hit (`Hull::last_hit_by`), if anyone's. `at` and
+/// `velocity` are where it blew apart and how it was moving, in the anchor's frame (the wreck
+/// is gone by the time most readers see this; `salvage` drops its scrap there).
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ShipDestroyed {
     pub ship: Entity,
     pub spec: usize,
     pub faction: Faction,
     pub killer: Option<Entity>,
+    pub at: Vec3,
+    pub velocity: Vec3,
 }
 
-/// A shot from ship `by` took shield or hull off another ship: the cockpit's hit marker.
+/// A shot or a missile from ship `by` took shield or hull off ship `on`: the cockpit's hit
+/// marker, and a hit that costs standing with `on`'s faction.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ShotLanded {
     pub by: Entity,
+    pub on: Entity,
 }
 
 /// What every shot looks like: a glowing streak.
@@ -174,12 +202,15 @@ fn fire(
     tuning: Res<Tuning>,
     specs: Res<Ships>,
     look: Option<Res<ShotLook>>,
-    mut ships: Query<(Entity, &Ship, &ShipControls, &mut Gun, &Faction, &Position, &Rotation, &LinearVelocity)>,
+    mut ships: Query<(Entity, &Ship, &ShipControls, &mut Gun, &Faction, &Position, &Rotation, &LinearVelocity, Option<&Refit>)>,
 ) {
     let t = &tuning.ship_combat;
     let dt = time.delta_secs();
-    for (entity, ship, controls, mut gun, faction, pos, rot, v) in &mut ships {
-        gun.heat = (gun.heat - t.cool * dt).max(0.0);
+    for (entity, ship, controls, mut gun, faction, pos, rot, v, refit) in &mut ships {
+        // The Kestrel's capacitor and spire coil change how its guns heat and what they fire.
+        let r = refit.copied().unwrap_or_default();
+        let speed = t.gun_speed * r.shot_speed;
+        gun.heat = (gun.heat - t.cool * r.cool * dt).max(0.0);
         if gun.overheated && gun.heat <= t.resume {
             gun.overheated = false;
         }
@@ -196,14 +227,14 @@ fn fire(
             let from = pos.0 + rot.0 * muzzle;
             let mut shot = commands.spawn((
                 Name::new("Shot"),
-                Projectile { velocity: v.0 + dir * t.gun_speed, life: t.gun_range / t.gun_speed, owner: entity, faction: *faction },
-                streak(from, dir, t.gun_speed * dt),
+                Projectile { velocity: v.0 + dir * speed, life: t.gun_range / speed, owner: entity, faction: *faction, damage: t.gun_damage * r.shot_damage },
+                streak(from, dir, speed * dt),
             ));
             if let Some(look) = &look {
                 shot.insert((Mesh3d(look.mesh.clone()), MeshMaterial3d(look.material.clone()), bevy::light::NotShadowCaster));
             }
             gun.fire_timer += 1.0 / (t.gun_rate * muzzles.len() as f32);
-            gun.heat += t.heat_per_shot;
+            gun.heat += t.heat_per_shot * r.heat;
             if gun.heat >= 1.0 {
                 gun.overheated = true;
             }
@@ -264,8 +295,8 @@ fn fly_projectiles(
             && let Ok((mut hull, faction)) = hulls.get_mut(body)
             && *faction != shot.faction
         {
-            hull.hit_by(t.gun_damage, shot.owner, t);
-            landed.write(ShotLanded { by: shot.owner });
+            hull.hit_by(shot.damage, shot.owner, t);
+            landed.write(ShotLanded { by: shot.owner, on: body });
         }
         if let (Some(fx), Some(materials)) = (&fx, materials.as_mut()) {
             spawn_blast(&mut commands, fx, materials, point - dir * 0.2, 0.8);
@@ -283,14 +314,14 @@ pub(super) fn wreck(
     fx: Option<Res<FxAssets>>,
     mut materials: Option<ResMut<Assets<StandardMaterial>>>,
     mut destroyed: MessageWriter<ShipDestroyed>,
-    ships: Query<(Entity, &Ship, &Hull, &Faction, &Transform)>,
+    ships: Query<(Entity, &Ship, &Hull, &Faction, &Transform, Option<&LinearVelocity>)>,
 ) {
-    for (entity, ship, hull, faction, tf) in &ships {
+    for (entity, ship, hull, faction, tf, v) in &ships {
         if hull.hp > 0.0 {
             continue;
         }
         info!("{} destroyed", specs.ship[ship.spec].name);
-        destroyed.write(ShipDestroyed { ship: entity, spec: ship.spec, faction: *faction, killer: hull.last_hit_by });
+        destroyed.write(ShipDestroyed { ship: entity, spec: ship.spec, faction: *faction, killer: hull.last_hit_by, at: tf.translation, velocity: v.map_or(Vec3::ZERO, |v| v.0) });
         if let (Some(fx), Some(materials)) = (&fx, materials.as_mut()) {
             let size = specs.ship[ship.spec].collider.first().map_or(Vec3::splat(4.0), |b| Vec3::from(b.size));
             spawn_blast(&mut commands, fx, materials, tf.translation, size.max_element() * 0.8);

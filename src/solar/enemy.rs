@@ -3,7 +3,9 @@
 //! most `enemy_cap` at once. **Raiders** come in packs of Jackals while the player flies a ship:
 //! a clock runs while no raiders are about, faster the longer the flight has gone without a fight,
 //! and a pack comes in 1.5 to 3 km off to one side, never ahead of the nose, but never in the
-//! first minute after boarding or within 3 km of a base. A raider past 6 km is gone. **Patrols**
+//! first minute after boarding or within 3 km of a base. A raider past 6 km is gone. **Hunters**
+//! come the same way, a pack of a faction's own patrol hull, while that faction hunts you
+//! (`standing::hunted`): each such faction has its own clock, run like the raiders'. **Patrols**
 //! circle every base whose faction flies a fighter, two each while the player is within 8 km; one
 //! shot down comes back after ten minutes of game time, and the rest go when the player leaves or
 //! the world changes, so nothing about them needs saving. The numbers are in `[ship_combat]`.
@@ -13,15 +15,17 @@
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use super::ai::{Enemy, Mode, Role};
 use super::base::{Base, Bases};
-use super::combat::Hull;
+use super::combat::{Faction, Hull};
 use super::ship::{clearance, Autopilot, Ship, ShipKind, Ships};
 use super::Solar;
+use super::standing;
 use crate::controller::Player;
 use crate::planet::bubble::KeepAwake;
+use crate::save::Save;
 use crate::surface::{Origin, Surface};
 use crate::tuning::{ShipCombat, Tuning};
 
@@ -40,12 +44,15 @@ pub struct Raids {
     pub aboard: f32,
     /// A pack comes now, whatever the clock says (`RUST_REGIME_RAIDERS=1`, and the tests).
     pub force: bool,
+    /// The hunters' clocks, by faction id: one for each faction that hunts you, counting up to
+    /// `raid_delay` while none of its hunters are about.
+    pub hunts: BTreeMap<String, f32>,
     rng: Rng,
 }
 
 impl Default for Raids {
     fn default() -> Self {
-        Self { clock: 0.0, quiet: 0.0, aboard: 0.0, force: std::env::var_os("RUST_REGIME_RAIDERS").is_some(), rng: Rng(0x2545_f491_4f6c_dd1d) }
+        Self { clock: 0.0, quiet: 0.0, aboard: 0.0, force: std::env::var_os("RUST_REGIME_RAIDERS").is_some(), hunts: BTreeMap::new(), rng: Rng(0x2545_f491_4f6c_dd1d) }
     }
 }
 
@@ -126,7 +133,7 @@ fn cull(mut commands: Commands, tuning: Res<Tuning>, players: Query<&Transform, 
     let Ok(player) = players.single() else { return };
     for (e, enemy, tf) in &enemies {
         let gone = match enemy.role {
-            Role::Raider => tf.translation.distance(player.translation) > t.despawn,
+            Role::Raider | Role::Hunter => tf.translation.distance(player.translation) > t.despawn,
             Role::Patrol { base, .. } => bases.iter().find(|(_, b)| b.spec == base).is_none_or(|(at, _)| at.translation.distance(player.translation) > t.patrol_range + LEAVE_MARGIN),
         };
         if gone {
@@ -135,7 +142,8 @@ fn cull(mut commands: Commands, tuning: Res<Tuning>, players: Query<&Transform, 
     }
 }
 
-/// Runs the raid clock while the player flies, and sends a pack in when it is due.
+/// Runs the raid clock, and the clock of each faction that hunts you, while the player flies,
+/// and sends a pack in when one is due: raiders, or hunters flying the faction's patrol hull.
 #[allow(clippy::too_many_arguments)]
 fn raid(
     mut commands: Commands,
@@ -145,10 +153,11 @@ fn raid(
     solar: Res<Solar>,
     surface: Res<Surface>,
     origin: Res<Origin>,
+    save: Option<Res<Save>>,
     mut raids: ResMut<Raids>,
     bases: Query<&Transform, With<Base>>,
     flown: Query<(&Ship, &Position, &Rotation, &LinearVelocity), Without<Enemy>>,
-    enemies: Query<&Enemy>,
+    enemies: Query<(&Enemy, &Faction)>,
 ) {
     let t = &tuning.ship_combat;
     let dt = time.delta_secs();
@@ -158,37 +167,71 @@ fn raid(
         return;
     };
     raids.aboard += dt;
-    if enemies.iter().any(|e| e.mode != Mode::Patrol && !e.fleeing) {
+    if enemies.iter().any(|(e, _)| e.mode != Mode::Patrol && !e.fleeing) {
         raids.quiet = 0.0;
     } else {
         raids.quiet += dt;
     }
-    if !enemies.iter().any(|e| e.role == Role::Raider) {
-        raids.clock += dt * (1.0 + raids.quiet / t.raid_hurry);
+    let step = dt * (1.0 + raids.quiet / t.raid_hurry);
+    if !enemies.iter().any(|(e, _)| e.role == Role::Raider) {
+        raids.clock += step;
+    }
+    // A faction that no longer hunts you forgets its clock.
+    let hunting: Vec<Faction> = save.as_deref().map_or(Vec::new(), |s| standing::FACTIONS.into_iter().filter(|f| standing::hunted(s, *f, t)).collect());
+    raids.hunts.retain(|id, _| hunting.iter().any(|f| f.id() == id));
+    for f in &hunting {
+        let clock = raids.hunts.entry(f.id().to_string()).or_default();
+        if !enemies.iter().any(|(e, g)| e.role == Role::Hunter && g == f) {
+            *clock += step;
+        }
     }
     let near_base = bases.iter().any(|b| b.translation.distance(pos.0) < t.raid_clear);
-    let due = raids.clock >= t.raid_delay && raids.aboard >= t.raid_grace && !near_base;
-    let Some(raider) = specs.ship.iter().position(|s| s.id == t.raider) else { return };
-    if !(due || raids.force) {
-        return;
+    let ready = raids.aboard >= t.raid_grace && !near_base;
+    // The packs due: the raiders, then each faction that hunts you, with what they fly and how many.
+    let mut due: Vec<(Option<Faction>, usize, [usize; 2])> = Vec::new();
+    if let Some(raider) = specs.ship.iter().position(|s| s.id == t.raider)
+        && ((ready && raids.clock >= t.raid_delay) || raids.force)
+    {
+        due.push((None, raider, t.raid_pack));
     }
-    let room = t.enemy_cap.saturating_sub(enemies.iter().count());
-    let n = raids.rng.range(t.raid_pack[0], t.raid_pack[1]).min(room);
-    let up = surface.up(origin.body(pos.0));
-    let spots = if n == 0 { Vec::new() } else { pack_spots(&mut raids.rng, pos.0, rot.0 * Vec3::NEG_Z, up, n, t, |p| clearance(&solar, &surface, origin.body(p))) };
-    if spots.is_empty() {
-        return;
-    }
-    raids.clock = 0.0;
-    raids.force = false;
-    info!("{} raiders inbound", spots.len());
-    let (from, velocity) = (pos.0, vel.0);
-    commands.queue(move |world: &mut World| {
-        for at in spots {
-            let facing = Transform::from_translation(at).looking_at(from, up).rotation;
-            spawn_enemy(world, raider, at, facing, velocity, Role::Raider);
+    for f in hunting {
+        if let Some(ship) = patrol_ship(&specs, f.id())
+            && ready
+            && raids.hunts[f.id()] >= t.raid_delay
+        {
+            due.push((Some(f), ship, t.hunt_pack));
         }
-    });
+    }
+    let mut room = t.enemy_cap.saturating_sub(enemies.iter().count());
+    let up = surface.up(origin.body(pos.0));
+    let (from, velocity) = (pos.0, vel.0);
+    for (hunter, ship, pack) in due {
+        let n = raids.rng.range(pack[0], pack[1]).min(room);
+        let spots = if n == 0 { Vec::new() } else { pack_spots(&mut raids.rng, pos.0, rot.0 * Vec3::NEG_Z, up, n, t, |p| clearance(&solar, &surface, origin.body(p))) };
+        if spots.is_empty() {
+            continue;
+        }
+        room -= spots.len();
+        let role = match hunter {
+            Some(f) => {
+                raids.hunts.insert(f.id().to_string(), 0.0);
+                info!("{} {} hunters inbound", spots.len(), f.name());
+                Role::Hunter
+            }
+            None => {
+                raids.clock = 0.0;
+                raids.force = false;
+                info!("{} raiders inbound", spots.len());
+                Role::Raider
+            }
+        };
+        commands.queue(move |world: &mut World| {
+            for at in spots {
+                let facing = Transform::from_translation(at).looking_at(from, up).rotation;
+                spawn_enemy(world, ship, at, facing, velocity, role);
+            }
+        });
+    }
 }
 
 /// Puts up each base's patrols while the player is within `patrol_range` of it: evenly round the

@@ -316,3 +316,50 @@ bank_loss = 0.25    # share of the bank lost when your ship is shot down, rounde
 downed = 3          # s watching the wreck before you are back at the Roost in a fresh Kestrel
 loss_card = 4       # s the SHOT DOWN card stays up after that
 bounty_line = 3     # s the +$ BOUNTY line stays over the HUD
+# faction standing, -100 to 100, with the Regime, the Scrappers and the PMC (Pause > Standing)
+standing_start = { regime = -20, scrappers = 0, pmc = -20 }  # a stranger to the Regime and the PMC (their patrols shoot on sight below 0); the Scrappers are old friends of the Deserters
+standing_deserters = 50   # your own side, fixed
+standing_delivery = 10    # a parcel delivered to the faction's base
+standing_raider_kill = 2  # a raider shot down, with each of the three
+standing_kill = -25       # one of the faction's ships shot down
+standing_rival_kill = 5   # and with each faction holding a grudge against it (grudges)
+standing_hit = -3         # a hit on one of its ships, once a ship a fight
+standing_recovery = 1     # creeps back this much a day while below where it started, to it
+standing_day = 2880       # s of game time to a day (Haven's 48 minutes)
+standing_friendly = 40    # at or above: 15% off at its base, +20% for a parcel to it
+standing_wary = -40       # below: 15% on at its base
+standing_hunted = -60     # at or below: its base will not serve you and it sends hunters
+standing_discount = 0.15
+standing_markup = 0.15
+standing_bonus = 0.2
+hunt_pack = [2, 3]        # hunters a pack, of the faction's patrol hull, at the raiders' rate
+standing_line = 3         # s the REGIME -25 line stays over the HUD
+# salvage: scrap from wrecks, spent at the Yard's parts rack (Pause > Ship shows what is fitted)
+scrap = { jackal = 2, sentry = 4, censer = 5, welder = 8 }  # dropped where each hull is shot down; your own side drops nothing
+scrap_life = 90           # s it drifts on with the wreck's velocity before it is gone
+scrap_pull = 40           # m, the ship you fly pulls it in from this close (never on foot)
+scrap_line = 3            # s the +4 SCRAP line stays over the HUD
+part_costs = [[12, 24, 40], [12, 24, 40], [10, 20, 32], [15, 30, 50]]  # scrap a level: hull plating, shield cell, gun capacitor, missile rack
+plating_hull = 25         # hull a level of plating
+cell_shield = 15          # shield a level of shield cell
+cell_regen = 0.2          # and 20% faster regeneration a level
+capacitor_heat = 0.2      # the guns heat 20% slower a level of capacitor
+capacitor_cool = 0.2      # and cool 20% faster
+rack_missiles = 1         # one more missile a level of rack
+rack_reload = 1.5         # s off the missile reload a level
+module_from = { jackal = "afterburner", sentry = "targeting", censer = "spire", welder = "ram" }  # each hull's own module
+module_chance = 0.25      # a wreck drops its module this often
+module_scrap = 10         # scrap a module you already own turns into
+afterburner_refill = 0.4  # afterburner: the boost tank refills 40% faster
+afterburner_shield = 0.1  # for 10% less shield
+targeting_lock = 0.8      # targeting array: s to lock
+targeting_cone = 4        # degrees tighter the lock cone is
+spire_speed = 0.25        # spire coil: shots 25% faster
+spire_damage = 0.15       # and 15% harder
+spire_heat = 0.2          # for guns heating 20% faster
+ram_damage = 30           # ram plate: a ramming hit on an enemy hurts it this much
+ram_thrust = 0.1          # for 10% less thrust
+[ship_combat.grudges]     # who each faction holds a grudge against: shooting their ships down pleases it
+regime = ["deserters", "scrappers"]
+scrappers = ["regime", "pmc"]
+pmc = []                  # the PMC sells to everyone and holds no grudge

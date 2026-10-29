@@ -2322,7 +2322,7 @@ fn every_base_has_its_station_on_a_floor_clear_of_the_furniture() {
     let roles: Vec<(&str, Vec<StationKind>)> = vec![
         ("roost", vec![StationKind::Resupply, StationKind::Locker]),
         ("reliquary", vec![StationKind::Shrine]),
-        ("yard", vec![StationKind::Workshop]),
+        ("yard", vec![StationKind::Workshop, StationKind::Parts]),
         ("outpost", vec![StationKind::Contracts]),
     ];
     for (id, kinds) in roles {
@@ -3236,7 +3236,8 @@ fn back_at_the_roost(app: &mut App, wreck: Entity) {
     assert!(origin.body(at).distance(berth) < 0.5, "on the pad, {} m off its berth", origin.body(at).distance(berth));
     let spec = app.world().resource::<solar::ship::Ships>().ship[0].clone();
     let hull = *app.world().get::<Hull>(kestrel).unwrap();
-    assert_eq!((hull.hp, hull.shield), (spec.hull, spec.shield), "a fresh hull");
+    let refit = solar::salvage::Refit::of(app.world().resource::<Save>(), &t);
+    assert_eq!((hull.hp, hull.shield), (refit.max_hull(spec.hull), refit.max_shield(spec.shield)), "a fresh hull, with whatever parts are bought");
     let player = app.world_mut().query_filtered::<Entity, With<Player>>().single(app.world()).unwrap();
     assert!(app.world().get::<Driving>(player).is_none(), "on foot");
     let (pos, _, _) = self::player(app);
@@ -3549,4 +3550,661 @@ fn a_sentrys_lock_and_its_missile_set_off_the_warning() {
         app.world_mut().entity_mut(jackal).insert(Hull::new(1000.0, 1000.0));
     });
     assert!(of(&heard, Sfx::Warning).is_empty() && app.world().resource::<FlightHud>().fight.threat == Threat::None);
+}
+
+// ------------------------------------------------------------------------ faction standing
+
+use solar::standing::{self as standing, StandingLine};
+
+/// Your standing with `faction` in the running app's save.
+fn standing_of(app: &App, faction: Faction) -> i32 {
+    standing::get(app.world().resource::<Save>(), faction, &Tuning::default().ship_combat)
+}
+
+fn set_standing(app: &mut App, faction: Faction, v: i32) {
+    app.world_mut().resource_mut::<Save>().standing.insert(faction.id().to_string(), v);
+}
+
+#[test]
+fn a_new_save_starts_a_stranger_and_an_old_save_without_standing_still_loads() {
+    let t = Tuning::default().ship_combat;
+    let fresh = Save::default();
+    assert_eq!(standing::FACTIONS.map(|f| standing::get(&fresh, f, &t)), [-20, 0, -20], "a stranger to the Regime and the PMC, neutral with the Scrappers");
+    assert_eq!(standing::get(&fresh, Faction::Deserters, &t), 50);
+    let path = std::env::temp_dir().join(format!("rust-regime-old-standing-{}.toml", std::process::id()));
+    std::fs::write(&path, "banked = 500\nkills = 2\ndeaths = 1\n\n[faction_kills]\nraiders = 2\n").unwrap();
+    let file = SaveFile(Some(path.clone()));
+    let save = file.load();
+    assert_eq!((save.banked, save.kills), (500, 2), "the old fields are kept");
+    assert_eq!(standing::FACTIONS.map(|f| standing::get(&save, f, &t)), [-20, 0, -20], "and it starts where a new one does");
+    let mut moved = save.clone();
+    standing::shift(&mut moved, Faction::Scrappers, 35, &t);
+    moved.standing_clock = 12.5;
+    file.write(&moved);
+    assert_eq!(file.load(), moved, "standing round-trips");
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn shooting_down_a_raider_pleases_all_three_and_the_line_says_so() {
+    let (mut app, jackal) = gunnery_range(300.0);
+    hold_fire(&mut app, 4.0);
+    run(&mut app, 0.2);
+    assert!(app.world().get_entity(jackal).is_err(), "the Jackal is destroyed");
+    assert_eq!(standing::FACTIONS.map(|f| standing_of(&app, f)), [-18, 2, -18]);
+    let line = app.world().resource::<StandingLine>();
+    assert_eq!(line.text(), "REGIME +2  SCRAPPERS +2  PMC +2");
+    assert!(line.left > 0.0, "the line is up");
+    run(&mut app, Tuning::default().ship_combat.standing_line);
+    assert_eq!(app.world().resource::<StandingLine>().left, 0.0, "and gone a few seconds later");
+}
+
+/// The Kestrel 600 m up with a Censer patrol (for the Roost, so it is not culled) parked 300 m
+/// off its nose, held still: the guns' target.
+fn patrol_on_the_range() -> (App, Entity) {
+    let (mut app, jackal) = gunnery_range(300.0);
+    let tf = *app.world().get::<Transform>(jackal).unwrap();
+    app.world_mut().despawn(jackal);
+    let censer = spec_of(&app, "censer");
+    let patrol = spawn_enemy(app.world_mut(), censer, tf.translation, tf.rotation, Vec3::ZERO, Role::Patrol { base: 0, slot: 9 });
+    app.world_mut().entity_mut(patrol).insert((RigidBody::Static, Hull::new(10_000.0, 0.0)));
+    run(&mut app, 0.1);
+    (app, patrol)
+}
+
+#[test]
+fn a_hit_on_a_patrol_costs_3_once_a_fight_and_its_kill_25_in_all_with_5_from_its_rival() {
+    let (mut app, patrol) = patrol_on_the_range();
+    let ship = ship_entity(&mut app);
+    hold_fire(&mut app, 1.5);
+    run(&mut app, 0.5);
+    let hull = *app.world().get::<Hull>(patrol).unwrap();
+    assert!(hull.hp < 10_000.0 - 3.0 * Tuning::default().ship_combat.gun_damage, "several hits landed: {}", hull.hp);
+    assert_eq!(standing_of(&app, Faction::Regime), -23, "-3 for the first hit, and no more for the rest");
+    assert!(app.world().get::<Enemy>(patrol).unwrap().provoked);
+    assert_eq!(app.world().resource::<StandingLine>().text(), "REGIME -3");
+    // Shot down by you: 25 in all, and the Scrappers, who hold a grudge against the Regime, like it.
+    let mut hull = app.world_mut().get_mut::<Hull>(patrol).unwrap();
+    (hull.hp, hull.last_hit_by) = (0.0, Some(ship));
+    run(&mut app, 0.2);
+    assert!(app.world().get_entity(patrol).is_err(), "shot down");
+    assert_eq!((standing_of(&app, Faction::Regime), standing_of(&app, Faction::Scrappers), standing_of(&app, Faction::Pmc)), (-45, 5, -20));
+    assert_eq!(app.world().resource::<StandingLine>().text(), "REGIME -25  SCRAPPERS +5", "the hit and the kill add up on the line");
+    // A kill with no hit first costs the 25 on its own, and it clamps at -100.
+    let (mut app, patrol) = patrol_on_the_range();
+    set_standing(&mut app, Faction::Regime, -90);
+    let ship = ship_entity(&mut app);
+    let mut hull = app.world_mut().get_mut::<Hull>(patrol).unwrap();
+    (hull.hp, hull.last_hit_by) = (0.0, Some(ship));
+    run(&mut app, 0.2);
+    assert_eq!(standing_of(&app, Faction::Regime), -100);
+    assert_eq!(app.world().resource::<Save>().standing["regime"], -100);
+}
+
+#[test]
+fn a_patrol_attacks_at_minus_20_leaves_you_be_at_0_and_comes_for_you_once_shot() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    board(&mut app);
+    let (base, up) = reliquary(&app);
+    fly_to(&mut app, "bastion", base + up * 7500.0);
+    run(&mut app, 0.5);
+    put_ship(&mut app, base + up * 2000.0, Vec3::ZERO);
+    run(&mut app, 0.3);
+    assert!(patrol_modes(&mut app).iter().all(|m| *m != Mode::Patrol), "at -20 they come for you, {:?}", patrol_modes(&mut app));
+    put_ship(&mut app, base + up * 4500.0, Vec3::ZERO);
+    run(&mut app, 0.3);
+    assert!(patrol_modes(&mut app).iter().all(|m| *m == Mode::Patrol), "and let you go");
+    // At 10 they fly past.
+    set_standing(&mut app, Faction::Regime, 10);
+    put_ship(&mut app, base + up * 2000.0, Vec3::ZERO);
+    run(&mut app, 1.0);
+    assert_eq!(patrol_modes(&mut app), [Mode::Patrol, Mode::Patrol], "at 10 they leave you be");
+    // Shoot one: it comes for you, and only it, since 7 is still friendly enough for the other.
+    let ship = ship_entity(&mut app);
+    let patrols: Vec<Entity> = enemies(&mut app).into_iter().filter(|e| matches!(e.1, Role::Patrol { .. })).map(|e| e.0).collect();
+    app.world_mut().write_message(solar::combat::ShotLanded { by: ship, on: patrols[0] });
+    run(&mut app, 0.3);
+    assert_eq!(standing_of(&app, Faction::Regime), 7);
+    let mode = |app: &App, e: Entity| app.world().get::<Enemy>(e).unwrap().mode;
+    assert_ne!(mode(&app, patrols[0]), Mode::Patrol, "the one you shot comes for you");
+    assert_eq!(mode(&app, patrols[1]), Mode::Patrol, "the other does not");
+    // Once you are well away it lets you go and forgets; at 0 they both leave you be again.
+    put_ship(&mut app, base + up * 4500.0, Vec3::ZERO);
+    run(&mut app, 0.3);
+    assert!(!app.world().get::<Enemy>(patrols[0]).unwrap().provoked, "the fight is over");
+    set_standing(&mut app, Faction::Regime, 0);
+    put_ship(&mut app, base + up * 2000.0, Vec3::ZERO);
+    run(&mut app, 1.0);
+    assert_eq!(patrol_modes(&mut app), [Mode::Patrol, Mode::Patrol], "at 0 they leave you be");
+    // At 0 one hit makes the Regime hostile: both come for you.
+    app.world_mut().write_message(solar::combat::ShotLanded { by: ship, on: patrols[1] });
+    run(&mut app, 0.3);
+    assert_eq!(standing_of(&app, Faction::Regime), -3);
+    assert!(patrol_modes(&mut app).iter().all(|m| *m != Mode::Patrol), "below 0 they all come for you, {:?}", patrol_modes(&mut app));
+}
+
+#[test]
+fn the_scrappers_patrols_let_you_pass_at_the_start_until_you_shoot_one() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    board(&mut app);
+    // The Yard's ground point and up on Cinder.
+    let (base, up) = {
+        let bases = app.world().resource::<solar::base::Bases>().clone();
+        let solar = app.world().resource::<Solar>();
+        let spec = bases.base.iter().find(|b| b.id == "yard").unwrap();
+        let (ground, frame, deck) = solar::base::site(spec, &solar.spheres["cinder"], solar.pad);
+        (ground + frame * Vec3::Y * deck, frame * Vec3::Y)
+    };
+    fly_to(&mut app, "cinder", base + up * 7500.0);
+    run(&mut app, 0.5);
+    assert_eq!(standing_of(&app, Faction::Scrappers), 0, "a new save is neutral with the Scrappers");
+    put_ship(&mut app, base + up * 2000.0, Vec3::ZERO);
+    run(&mut app, 1.0);
+    assert_eq!(patrol_modes(&mut app), [Mode::Patrol, Mode::Patrol], "their Welders let you pass");
+    let welder = spec_of(&app, "welder");
+    let patrols: Vec<Entity> = enemies(&mut app).into_iter().filter(|e| matches!(e.1, Role::Patrol { .. })).map(|e| e.0).collect();
+    assert!(patrols.iter().all(|e| app.world().get::<Ship>(*e).unwrap().spec == welder));
+    let ship = ship_entity(&mut app);
+    app.world_mut().write_message(solar::combat::ShotLanded { by: ship, on: patrols[0] });
+    run(&mut app, 0.3);
+    assert_eq!(standing_of(&app, Faction::Scrappers), -3);
+    assert!(patrol_modes(&mut app).iter().all(|m| *m != Mode::Patrol), "shot at, they come for you: {:?}", patrol_modes(&mut app));
+}
+
+#[test]
+fn at_minus_60_a_faction_sends_hunters_flying_its_patrol_hull() {
+    let t = Tuning::default().ship_combat;
+    let hunters = |app: &mut App| -> Vec<Entity> { enemies(app).into_iter().filter(|e| e.1 == Role::Hunter).map(|e| e.0).collect() };
+    let mut app = aloft(3400.0);
+    app.world_mut().resource_mut::<Raids>().aboard = t.raid_grace + 1.0;
+    set_standing(&mut app, Faction::Pmc, -59);
+    run(&mut app, 0.2);
+    assert!(app.world().resource::<Raids>().hunts.is_empty(), "at -59 nobody hunts you");
+    set_standing(&mut app, Faction::Pmc, -60);
+    run(&mut app, 0.2);
+    assert!(hunters(&mut app).is_empty(), "the hunters' clock has only just started");
+    app.world_mut().resource_mut::<Raids>().hunts.insert("pmc".into(), t.raid_delay - 0.01);
+    run(&mut app, 0.2);
+    let pack = hunters(&mut app);
+    assert!((t.hunt_pack[0]..=t.hunt_pack[1]).contains(&pack.len()), "a pack of two or three: {}", pack.len());
+    let (sentry, ship) = (spec_of(&app, "sentry"), ship_entity(&mut app));
+    let (from, _, _) = pose(&app, ship);
+    for &e in &pack {
+        assert_eq!(app.world().get::<Ship>(e).unwrap().spec, sentry, "the PMC hunts in Sentries");
+        assert_eq!(*app.world().get::<Faction>(e).unwrap(), Faction::Pmc);
+        let d = pose(&app, e).0.distance(from);
+        assert!((t.spawn_near..=t.spawn_far).contains(&d), "came in {d:.0} m off, as raiders do");
+    }
+    assert!(enemies(&mut app).iter().all(|e| e.1 != Role::Raider), "the raiders keep their own clock");
+    assert_eq!(app.world().resource::<Raids>().hunts["pmc"], 0.0, "and its clock starts again");
+    // Back above -60, the hunt is off.
+    set_standing(&mut app, Faction::Pmc, -50);
+    run(&mut app, 0.1);
+    assert!(app.world().resource::<Raids>().hunts.is_empty());
+}
+
+/// `stand_at_station`, with any station a test put there before taken away first.
+fn only_station(app: &mut App, kind: StationKind, base: usize) {
+    let old: Vec<Entity> = app.world_mut().query::<(Entity, &Station)>().iter(app.world()).filter(|(_, s)| s.label == "Test").map(|(e, _)| e).collect();
+    for e in old {
+        app.world_mut().despawn(e);
+    }
+    stand_at_station(app, kind, base);
+}
+
+#[test]
+fn a_friendly_base_sells_for_less_a_wary_one_for_more_and_a_hostile_one_not_at_all() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    let yard = 2;
+    stand_at_station(&mut app, StationKind::Workshop, yard);
+    let prompt = |app: &App| app.world().resource::<solar::station::Prompt>().text();
+    // Friendly at 40: Mk1 for 15% off.
+    set_standing(&mut app, Faction::Scrappers, 40);
+    run(&mut app, 0.1);
+    assert!(prompt(&app).contains("$255 (15% off)"), "{}", prompt(&app));
+    app.world_mut().resource_mut::<Save>().banked = 255;
+    press_use(&mut app);
+    assert_eq!((app.world().resource::<Save>().ship_level, app.world().resource::<Save>().banked), (1, 0), "Mk1 for $255");
+    // Below -40: Mk2 for 15% more.
+    set_standing(&mut app, Faction::Scrappers, -41);
+    app.world_mut().resource_mut::<Save>().banked = UPGRADE_COST[1];
+    press_use(&mut app);
+    assert_eq!(app.world().resource::<Save>().ship_level, 1, "too poor at the marked-up price");
+    assert!(prompt(&app).contains(&format!("${}", (UPGRADE_COST[1] as f32 * 1.15).round() as u32)), "{}", prompt(&app));
+    // At -60 it will not deal with you at all.
+    set_standing(&mut app, Faction::Scrappers, -60);
+    app.world_mut().resource_mut::<Save>().banked = 10_000;
+    press_use(&mut app);
+    assert_eq!((app.world().resource::<Save>().ship_level, app.world().resource::<Save>().banked), (1, 10_000), "refused");
+    assert!(prompt(&app).contains("The Scrappers will not serve you"), "{}", prompt(&app));
+    // Hated by the PMC, its courier desk still hands out a parcel, while any other station of
+    // Site Vantage's would refuse you.
+    let vantage = 3;
+    set_standing(&mut app, Faction::Pmc, -80);
+    only_station(&mut app, StationKind::Contracts, vantage);
+    press_use(&mut app);
+    assert!(app.world().resource::<Save>().contract.is_some(), "a parcel at -80: {}", prompt(&app));
+    only_station(&mut app, StationKind::Workshop, vantage);
+    app.world_mut().resource_mut::<Save>().ship_level = 1;
+    press_use(&mut app);
+    assert_eq!(app.world().resource::<Save>().ship_level, 1, "refused");
+    assert!(prompt(&app).contains("The PMC will not serve you"), "{}", prompt(&app));
+    // The shrine at the Reliquary, to a friend of the Regime: the tithe for 15% off.
+    set_standing(&mut app, Faction::Regime, 40);
+    only_station(&mut app, StationKind::Shrine, 1);
+    app.world_mut().resource_mut::<Save>().banked = TITHE;
+    press_use(&mut app);
+    assert_eq!(app.world().resource::<Save>().banked, TITHE - (TITHE as f32 * 0.85).round() as u32, "blessed for less");
+}
+
+#[test]
+fn a_parcel_to_a_friends_base_pays_a_fifth_more_and_raises_your_standing_there() {
+    let deliver = |standing: i32| -> (u32, i32, String) {
+        let mut app = system_app();
+        run(&mut app, 1.0);
+        set_standing(&mut app, Faction::Scrappers, standing);
+        app.world_mut().resource_mut::<Save>().contract = Some(Contract { to: "yard".into(), pay: 250 });
+        // A stand-in for the Yard (on Cinder) with its doorway where the player stands.
+        let bases = app.world().resource::<solar::base::Bases>().clone();
+        let yard = bases.base.iter().position(|b| b.id == "yard").unwrap();
+        let at = player(&mut app).0 - Vec3::from(bases.base[yard].door);
+        app.world_mut().spawn((solar::base::Base { spec: yard }, GlobalTransform::from_translation(at)));
+        run(&mut app, 0.2);
+        let save = app.world().resource::<Save>();
+        assert!(save.contract.is_none(), "delivered");
+        (save.banked, standing_of(&app, Faction::Scrappers), app.world().resource::<solar::station::Prompt>().text())
+    };
+    let (paid, after, _) = deliver(-20);
+    assert_eq!((paid, after), (250, -10), "a stranger is paid the usual, and stands 10 better for it");
+    let (paid, after, said) = deliver(40);
+    assert_eq!((paid, after), (300, 50), "a friend is paid 20% more");
+    assert!(said.contains("$50 for your standing"), "{said}");
+}
+
+// ------------------------------------------------------------------------------------ salvage
+
+use solar::salvage::{self as salvage, Loot, Module, Pickup, SalvageLine};
+
+/// Every pickup: its entity, what it holds and where it is in the world frame.
+fn pickups(app: &mut App) -> Vec<(Entity, Loot, Vec3)> {
+    app.world_mut().query::<(Entity, &Pickup, &Transform)>().iter(app.world()).map(|(e, p, tf)| (e, p.loot, tf.translation)).collect()
+}
+
+/// Puts salvage holding `loot` at `offset` (world frame) from the player, at rest.
+fn salvage_near(app: &mut App, loot: Loot, offset: Vec3) -> Entity {
+    let at = player(app).0 + offset;
+    let pickup = Pickup::new(loot, Vec3::ZERO, &Tuning::default().ship_combat);
+    app.world_mut().spawn((pickup, Transform::from_translation(at))).id()
+}
+
+#[test]
+fn a_wreck_drops_its_scrap_where_it_died_drifting_with_it_until_it_times_out() {
+    let t = Tuning::default().ship_combat;
+    let (mut app, jackal) = gunnery_range(300.0);
+    // Modules come later: here every wreck drops only its scrap.
+    app.world_mut().resource_mut::<Tuning>().ship_combat.module_chance = 0.0;
+    let at = app.world().get::<Transform>(jackal).unwrap().translation;
+    app.world_mut().get_mut::<Hull>(jackal).unwrap().hp = 0.0;
+    run(&mut app, 0.1);
+    assert!(app.world().get_entity(jackal).is_err(), "shot down");
+    let dropped = pickups(&mut app);
+    assert_eq!(dropped.len(), 1, "a Jackal's scrap");
+    assert_eq!(dropped[0].1, Loot::Scrap(2));
+    assert!(dropped[0].2.distance(at) < 0.5, "where it blew apart: {} m off", dropped[0].2.distance(at));
+    // 300 m off is out of the Kestrel's reach: it hangs there.
+    run(&mut app, 1.0);
+    assert_eq!((pickups(&mut app).len(), app.world().resource::<Save>().scrap), (1, 0));
+    // A wreck that was moving (a Welder another ship shot down, 300 m off) carries its scrap on,
+    // slowing in the air.
+    let welder = spec_of(&app, "welder");
+    let v = Vec3::new(0.0, 0.0, -50.0);
+    app.world_mut().write_message(solar::combat::ShipDestroyed { ship: Entity::PLACEHOLDER, spec: welder, faction: Faction::Scrappers, killer: None, at: at + Vec3::X * 40.0, velocity: v });
+    run(&mut app, 1.0);
+    let (moving, loot, p) = pickups(&mut app).into_iter().find(|(_, l, _)| *l == Loot::Scrap(8)).expect("the Welder's scrap");
+    let gone = (p - (at + Vec3::X * 40.0)).dot(v.normalize());
+    assert!(loot == Loot::Scrap(8) && gone > 40.0 && gone < 50.0, "drifted {gone} m on in a second");
+    let speed = app.world().get::<Pickup>(moving).unwrap().velocity.length();
+    assert!(speed < 50.0 && speed > 40.0, "slowed by the air: {speed}");
+    assert_eq!(app.world().get::<Pickup>(moving).unwrap().life.round(), t.scrap_life - 1.0, "90 s to live");
+    // And once that is up it is gone.
+    app.world_mut().get_mut::<Pickup>(moving).unwrap().life = 0.5;
+    run(&mut app, 1.0);
+    assert!(app.world().get_entity(moving).is_err(), "timed out");
+    assert_eq!(pickups(&mut app).len(), 1, "the Jackal's scrap is still there");
+}
+
+#[test]
+fn salvage_is_pulled_in_from_40_m_by_the_ship_you_fly_and_never_on_foot() {
+    let mut app = aloft(600.0);
+    let near = salvage_near(&mut app, Loot::Scrap(4), Vec3::X * 30.0);
+    let far = salvage_near(&mut app, Loot::Scrap(5), Vec3::X * -50.0);
+    let cues = listen(&mut app, 1.0, |_| {});
+    assert!(app.world().get_entity(near).is_err(), "30 m off: pulled in and aboard");
+    assert!(app.world().get_entity(far).is_ok(), "50 m off: out of reach");
+    assert_eq!(app.world().resource::<Save>().scrap, 4);
+    let line = app.world().resource::<SalvageLine>();
+    assert_eq!(line.text(), "+4 SCRAP");
+    assert!(line.left > 0.0, "the line is up");
+    assert_eq!(of(&cues, Sfx::Scrap).len(), 1, "a clink as it comes aboard");
+    run(&mut app, Tuning::default().ship_combat.scrap_line);
+    assert_eq!(app.world().resource::<SalvageLine>().left, 0.0, "and gone a few seconds later");
+    // On foot beside the parked Kestrel nothing pulls it in, the ship included.
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    let ship = ship_entity(&mut app);
+    let beside = (app.world().get::<Transform>(ship).unwrap().translation - player(&mut app).0) * 0.5;
+    let lying = salvage_near(&mut app, Loot::Scrap(4), beside + Vec3::Y * 3.0);
+    run(&mut app, 1.0);
+    assert!(app.world().get_entity(lying).is_ok(), "on foot it stays where it is");
+    assert_eq!(app.world().resource::<Save>().scrap, 0);
+}
+
+#[test]
+fn a_wreck_of_your_own_ship_drops_nothing() {
+    let mut app = aloft(600.0);
+    let wreck = shoot_down(&mut app);
+    run(&mut app, 0.2);
+    assert_eq!(app.world().resource::<Downed>().wreck, Some(wreck), "shot down");
+    assert!(pickups(&mut app).is_empty(), "no scrap from your own ship");
+}
+
+#[test]
+fn salvage_left_behind_at_a_handoff_is_gone() {
+    let mut app = aloft(600.0);
+    let left = salvage_near(&mut app, Loot::Scrap(4), Vec3::X * 2000.0);
+    run(&mut app, 0.2);
+    assert!(app.world().get_entity(left).is_ok());
+    let (ground, up) = reliquary(&app);
+    fly_to(&mut app, "bastion", ground + up * 3000.0);
+    assert!(app.world().get_entity(left).is_err(), "dropped with the old world's frame");
+}
+
+#[test]
+fn an_old_save_without_salvage_still_loads() {
+    let path = std::env::temp_dir().join(format!("rust-regime-old-salvage-{}.toml", std::process::id()));
+    std::fs::write(&path, "banked = 500\nship_level = 2\nkills = 2\n\n[standing]\nregime = 10\n").unwrap();
+    let file = SaveFile(Some(path.clone()));
+    let save = file.load();
+    assert_eq!((save.banked, save.ship_level, save.kills, save.standing["regime"]), (500, 2, 2, 10), "the old fields are kept");
+    assert_eq!((save.scrap, save.ship_parts, save.modules.len(), save.fitted.len()), (0, [0; 4], 0, 0), "and it starts with no salvage");
+    let salvaged = Save { scrap: 37, ship_parts: [1, 0, 3, 2], modules: vec!["ram".into(), "spire".into()], fitted: vec!["spire".into()], ..save };
+    file.write(&salvaged);
+    assert_eq!(file.load(), salvaged, "salvage round-trips");
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn the_yards_parts_rack_opens_its_menu_and_sells_for_scrap_at_the_scrappers_prices() {
+    use crate::menu::{Menu, Panel, Screen};
+    let mut app = counter_app();
+    let yard = 2;
+    stand_at_station(&mut app, StationKind::Parts, yard);
+    app.world_mut().resource_mut::<Save>().scrap = 30;
+    run(&mut app, 0.1);
+    let prompt = |app: &App| app.world().resource::<solar::station::Prompt>().text();
+    assert!(prompt(&app).contains("fit parts to the Kestrel for scrap (30 scrap)"), "{}", prompt(&app));
+    press_use(&mut app);
+    run(&mut app, 0.2);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Paused);
+    let menu = app.world().resource::<Menu>();
+    assert_eq!((menu.panel, menu.from_station, menu.rack), (Panel::Parts, true, Faction::Scrappers));
+    // Enter buys hull plating Mk1 (12); down a row, the shield cell Mk1 (12); then Mk2 is short.
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!((app.world().resource::<Save>().scrap, app.world().resource::<Save>().ship_parts), (18, [1, 0, 0, 0]));
+    assert!(app.world().resource::<Menu>().note.contains("-12 scrap"), "{}", app.world().resource::<Menu>().note);
+    tap(&mut app, KeyCode::KeyS);
+    tap(&mut app, KeyCode::Enter);
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!((app.world().resource::<Save>().scrap, app.world().resource::<Save>().ship_parts), (6, [1, 1, 0, 0]));
+    assert!(app.world().resource::<Menu>().note.contains("18 scrap short"), "{}", app.world().resource::<Menu>().note);
+    tap(&mut app, KeyCode::Escape);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Playing, "back to the game");
+    // A friend of the Scrappers pays 15% less: the missile rack's 15 for 13.
+    set_standing(&mut app, Faction::Scrappers, 40);
+    app.world_mut().resource_mut::<Save>().scrap = 100;
+    press_use(&mut app);
+    run(&mut app, 0.2);
+    for _ in 0..3 {
+        tap(&mut app, KeyCode::KeyS);
+    }
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!((app.world().resource::<Save>().scrap, app.world().resource::<Save>().ship_parts[3]), (87, 1), "Mk1 rack for 13");
+    tap(&mut app, KeyCode::Escape);
+    // At -60 the Yard will not sell to you: the menu does not open.
+    set_standing(&mut app, Faction::Scrappers, -60);
+    press_use(&mut app);
+    run(&mut app, 0.2);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Playing);
+    assert!(prompt(&app).contains("The Scrappers will not serve you"), "{}", prompt(&app));
+    assert_eq!(app.world().resource::<Save>().scrap, 87);
+}
+
+#[test]
+fn parts_land_on_a_fresh_kestrel_and_are_kept_after_being_shot_down() {
+    let t = Tuning::default().ship_combat;
+    let mut app = aloft(600.0);
+    let ship = ship_entity(&mut app);
+    app.world_mut().resource_mut::<Save>().ship_parts = [3, 2, 0, 1];
+    run(&mut app, 0.1);
+    let h = *app.world().get::<Hull>(ship).unwrap();
+    assert_eq!((h.hp, h.max_hp, h.shield, h.max_shield), (175.0, 175.0, 90.0, 90.0), "+75 hull and +30 shield");
+    assert!((h.regen - 1.4).abs() < 1e-5, "the shield comes back 40% faster: {}", h.regen);
+    assert_eq!(missiles(&app, ship).count, t.missiles + 1, "one more missile on the rack");
+    assert_eq!(app.world().resource::<crate::hud::FlightHud>().fight.max_hull, 175.0, "the HUD's hull bar runs to the new top");
+    // The gun capacitor: three levels heat the guns well under half as fast.
+    let heat = |level: u8| -> f32 {
+        let mut app = aloft(600.0);
+        app.world_mut().resource_mut::<Save>().ship_parts[2] = level;
+        run(&mut app, 0.1);
+        hold_fire(&mut app, 2.0);
+        let ship = ship_entity(&mut app);
+        app.world().get::<Gun>(ship).unwrap().heat
+    };
+    let (stock, cooled) = (heat(0), heat(3));
+    assert!(stock > 0.2 && cooled < stock * 0.5, "two seconds of fire: stock {stock}, capacitor Mk3 {cooled}");
+    // Shot down, the fresh Kestrel on the pad has them all.
+    let wreck = shoot_down(&mut app);
+    run(&mut app, 0.2);
+    back_at_the_roost(&mut app, wreck);
+    assert_eq!(app.world().resource::<Save>().ship_parts, [3, 2, 0, 1], "kept");
+    let kestrel = ship_entity(&mut app);
+    let h = *app.world().get::<Hull>(kestrel).unwrap();
+    assert_eq!((h.hp, h.shield), (175.0, 90.0));
+    assert_eq!(missiles(&app, kestrel).count, t.missiles + 1);
+}
+
+#[test]
+fn a_wreck_drops_its_module_beside_its_scrap_and_a_spare_turns_into_scrap() {
+    let (mut app, jackal) = gunnery_range(30.0);
+    // Every wreck drops its module here (the rate itself is the seeded roll's, in `salvage`).
+    app.world_mut().resource_mut::<Tuning>().ship_combat.module_chance = 1.0;
+    let at = app.world().get::<Transform>(jackal).unwrap();
+    let (at, facing) = (at.translation, at.rotation);
+    let kill = |app: &mut App, target: Entity| -> Vec<Cue> {
+        app.world_mut().get_mut::<Hull>(target).unwrap().hp = 0.0;
+        listen(app, 1.0, |_| {})
+    };
+    let heard = kill(&mut app, jackal);
+    let save = app.world().resource::<Save>().clone();
+    assert_eq!((save.scrap, save.modules.clone()), (2, vec!["afterburner".to_string()]), "a Jackal's two scrap and its afterburner, both pulled in from 30 m");
+    assert!(pickups(&mut app).is_empty());
+    assert_eq!(app.world().resource::<SalvageLine>().text(), "+2 SCRAP  MODULE FOUND  AFTERBURNER");
+    assert_eq!(of(&heard, Sfx::Module).len(), 1, "the module's chime");
+    // A second Jackal's afterburner, once the line has gone, is a spare: ten scrap instead.
+    run(&mut app, Tuning::default().ship_combat.scrap_line);
+    let spec = spec_of(&app, "jackal");
+    let again = solar::ship::spawn(app.world_mut(), spec, Transform::from_translation(at).with_rotation(facing));
+    app.world_mut().entity_mut(again).insert((RigidBody::Static, Position(at), Rotation(facing)));
+    run(&mut app, 0.1);
+    kill(&mut app, again);
+    let save = app.world().resource::<Save>().clone();
+    assert_eq!((save.scrap, save.modules.len()), (2 + 2 + 10, 1), "a spare turns into scrap");
+    assert_eq!(app.world().resource::<SalvageLine>().text(), "+12 SCRAP  SPARE AFTERBURNER");
+}
+
+#[test]
+fn modules_fit_two_at_a_time_from_the_ship_screen() {
+    use crate::menu::{Menu, Panel, Screen};
+    let mut app = counter_app();
+    app.world_mut().resource_mut::<Save>().modules = ["afterburner", "spire", "ram"].map(String::from).to_vec();
+    tap(&mut app, KeyCode::Escape);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Paused);
+    app.world_mut().resource_mut::<Menu>().panel = Panel::Ship;
+    app.update();
+    let fitted = |app: &App| salvage::fitted(app.world().resource::<Save>());
+    // Slot 1: right fits the first you own. Slot 2 steps past it, then round to empty.
+    tap(&mut app, KeyCode::KeyD);
+    assert_eq!(fitted(&app), [Module::Afterburner]);
+    tap(&mut app, KeyCode::KeyS);
+    for want in [vec![Module::Afterburner, Module::Spire], vec![Module::Afterburner, Module::Ram], vec![Module::Afterburner]] {
+        tap(&mut app, KeyCode::KeyD);
+        assert_eq!(fitted(&app), want);
+    }
+    tap(&mut app, KeyCode::KeyA);
+    assert_eq!(fitted(&app), [Module::Afterburner, Module::Ram]);
+    assert_eq!(app.world().resource::<Save>().fitted.len(), 2, "never more than two");
+    // On the Kestrel at once.
+    let ship = ship_entity(&mut app);
+    tap(&mut app, KeyCode::Escape);
+    tap(&mut app, KeyCode::Escape);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Playing);
+    run(&mut app, 0.1);
+    let refit = *app.world().get::<salvage::Refit>(ship).unwrap();
+    assert_eq!((refit.boost_refill > 1.0, refit.ram), (true, 30.0), "the afterburner and the ram plate are on");
+}
+
+/// The Kestrel 600 m up with `modules` fitted.
+fn fitted_aloft(modules: &[&str]) -> App {
+    let mut app = aloft(600.0);
+    {
+        let mut save = app.world_mut().resource_mut::<Save>();
+        save.modules = modules.iter().map(|m| m.to_string()).collect();
+        save.fitted = save.modules.clone();
+    }
+    run(&mut app, 0.1);
+    app
+}
+
+#[test]
+fn the_afterburner_refills_the_boost_faster_for_less_shield() {
+    let refilled = |modules: &[&str]| -> (f32, f32) {
+        let mut app = fitted_aloft(modules);
+        let ship = ship_entity(&mut app);
+        let mut s = app.world_mut().get_mut::<Ship>(ship).unwrap();
+        (s.boost_used, s.boost_idle) = (1.0, 2.0);
+        run(&mut app, 1.0);
+        (1.0 - app.world().get::<Ship>(ship).unwrap().boost_used, app.world().get::<Hull>(ship).unwrap().max_shield)
+    };
+    let ((stock, shield), (burner, less)) = (refilled(&[]), refilled(&["afterburner"]));
+    assert!((burner / stock - 1.4).abs() < 0.05, "refills {burner} a second against {stock}");
+    assert_eq!((shield, less), (60.0, 54.0), "for a tenth of the shield");
+}
+
+#[test]
+fn the_targeting_array_locks_in_0_8_s_in_a_tighter_cone() {
+    let lock = |modules: &[&str], degrees: f32| -> (bool, bool) {
+        let (mut app, jackal) = gunnery_range(800.0);
+        {
+            let mut save = app.world_mut().resource_mut::<Save>();
+            save.modules = modules.iter().map(|m| m.to_string()).collect();
+            save.fitted = save.modules.clone();
+        }
+        off_nose(&mut app, jackal, 800.0, degrees);
+        let ship = ship_entity(&mut app);
+        run(&mut app, 0.85);
+        let early = missiles(&app, ship).locked() == Some(jackal);
+        run(&mut app, 0.5);
+        (early, missiles(&app, ship).locked() == Some(jackal))
+    };
+    assert_eq!(lock(&[], 1.0), (false, true), "stock: not at 0.85 s, locked by 1.35");
+    assert_eq!(lock(&["targeting"], 1.0), (true, true), "the array locks by 0.85 s");
+    assert_eq!(lock(&[], 3.0), (false, true), "3 degrees off is inside the stock cone");
+    assert_eq!(lock(&["targeting"], 3.0), (false, false), "and outside the array's, 4 degrees tighter");
+}
+
+#[test]
+fn the_spire_coil_fires_faster_harder_shots_that_heat_the_guns_faster() {
+    let t = Tuning::default().ship_combat;
+    let shoot = |modules: &[&str]| -> (f32, f32, f32) {
+        let (mut app, jackal) = gunnery_range(300.0);
+        app.world_mut().entity_mut(jackal).insert(Hull::new(10_000.0, 0.0));
+        {
+            let mut save = app.world_mut().resource_mut::<Save>();
+            save.modules = modules.iter().map(|m| m.to_string()).collect();
+            save.fitted = save.modules.clone();
+        }
+        run(&mut app, 0.1);
+        hold_fire(&mut app, 1.0 / 66.0);
+        let ship = ship_entity(&mut app);
+        let heat = app.world().get::<Gun>(ship).unwrap().heat;
+        let speed = app.world_mut().query::<&solar::combat::Projectile>().iter(app.world()).map(|p| p.velocity.length()).fold(0.0, f32::max);
+        hold_fire(&mut app, 0.3);
+        run(&mut app, 0.5);
+        (heat, speed, 10_000.0 - app.world().get::<Hull>(jackal).unwrap().hp)
+    };
+    let ((heat, speed, hurt), (hot, fast, harder)) = (shoot(&[]), shoot(&["spire"]));
+    assert!((heat - t.heat_per_shot).abs() < 1e-5 && (hot - t.heat_per_shot * 1.2).abs() < 1e-5, "a shot's heat: {heat}, with the coil {hot}");
+    // A shot loses a little to the air in its first tick.
+    assert!((speed / t.gun_speed - 1.0).abs() < 0.01 && (fast / speed - 1.25).abs() < 0.01, "muzzle speed {speed}, with the coil {fast}");
+    let hits = |hurt: f32, each: f32| (hurt / each).round();
+    assert!(hurt > 0.0 && (hurt / t.gun_damage - hits(hurt, t.gun_damage)).abs() < 1e-3, "12 a hit: {hurt}");
+    assert!(harder > 0.0 && (harder / (t.gun_damage * 1.15) - hits(harder, t.gun_damage * 1.15)).abs() < 1e-3, "13.8 a hit: {harder}");
+}
+
+#[test]
+fn the_ram_plate_hurts_what_you_ram_for_30_and_costs_a_tenth_of_the_thrust() {
+    let pushed = |modules: &[&str]| -> f32 {
+        let mut app = fitted_aloft(modules);
+        input(&mut app).thrust = 1.0;
+        run(&mut app, 0.5);
+        ship_state(&mut app).1.length()
+    };
+    let (stock, rammer) = (pushed(&[]), pushed(&["ram"]));
+    assert!((rammer / stock - 0.9).abs() < 0.03, "half a second of thrust: {rammer} m/s against {stock}");
+    // Fly into a parked Jackal 25 m ahead.
+    let (mut app, jackal) = gunnery_range(25.0);
+    {
+        let mut save = app.world_mut().resource_mut::<Save>();
+        save.modules = vec!["ram".into()];
+        save.fitted = vec!["ram".into()];
+    }
+    run(&mut app, 0.1);
+    app.world_mut().entity_mut(jackal).insert(Hull::new(1000.0, 30.0));
+    for _ in 0..(2.0 / DT) as usize {
+        input(&mut app).thrust = 1.0;
+        app.update();
+    }
+    let ship = ship_entity(&mut app);
+    let h = *app.world().get::<Hull>(jackal).unwrap();
+    assert_eq!((h.shield, h.hp, h.last_hit_by), (0.0, 1000.0, Some(ship)), "rammed once for 30, the shield first");
+    // Without the plate a bump does nothing.
+    let (mut app, jackal) = gunnery_range(25.0);
+    app.world_mut().entity_mut(jackal).insert(Hull::new(1000.0, 30.0));
+    for _ in 0..(2.0 / DT) as usize {
+        input(&mut app).thrust = 1.0;
+        app.update();
+    }
+    let h = *app.world().get::<Hull>(jackal).unwrap();
+    assert_eq!((h.shield, h.hp), (30.0, 1000.0), "no plate, no harm");
+}
+
+#[test]
+fn fitted_modules_are_kept_through_being_shot_down() {
+    let mut app = fitted_aloft(&["spire", "afterburner"]);
+    let wreck = shoot_down(&mut app);
+    run(&mut app, 0.2);
+    back_at_the_roost(&mut app, wreck);
+    let save = app.world().resource::<Save>().clone();
+    assert_eq!(salvage::fitted(&save), [Module::Spire, Module::Afterburner], "kept");
+    let kestrel = ship_entity(&mut app);
+    assert_eq!(*app.world().get::<salvage::Refit>(kestrel).unwrap(), salvage::Refit::of(&save, &Tuning::default().ship_combat), "on the fresh Kestrel");
+    assert_eq!(app.world().get::<Hull>(kestrel).unwrap().max_shield, 54.0, "the afterburner's cost too");
+}
+
+#[test]
+fn the_hud_shows_your_scrap_beside_the_bank() {
+    assert_eq!(crate::hud::haul(&Save { banked: 750, scrap: 12, ..default() }), "BANK 750   SCRAP 12");
 }

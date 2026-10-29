@@ -569,6 +569,81 @@ pub struct ShipCombat {
     pub loss_card: f32,
     /// Seconds the `+$120 BOUNTY` line stays over the HUD after a kill.
     pub bounty_line: f32,
+    /// Faction standing (`solar::standing`), -100 to 100, with the Regime, the Scrappers and the
+    /// PMC: where you start with each, by faction id (a faction not listed starts at -20, a
+    /// stranger); the Deserters are your own side and stay at `standing_deserters`.
+    pub standing_start: std::collections::BTreeMap<String, i32>,
+    pub standing_deserters: i32,
+    /// What moves it: a parcel delivered to a faction's base, a raider shot down (with each of
+    /// the three), one of a faction's ships shot down (with it, and with each faction that holds
+    /// a grudge against it), and a hit on one of its ships, once a ship a fight.
+    pub standing_delivery: i32,
+    pub standing_raider_kill: i32,
+    pub standing_kill: i32,
+    pub standing_rival_kill: i32,
+    pub standing_hit: i32,
+    /// Below where it started it creeps back by `standing_recovery` every `standing_day` seconds
+    /// of game time (a Haven day), no further than where it started.
+    pub standing_recovery: i32,
+    pub standing_day: f32,
+    /// At `standing_friendly` or above a base sells for `standing_discount` less and a parcel to
+    /// it pays `standing_bonus` more; below `standing_wary` it sells for `standing_markup` more;
+    /// at `standing_hunted` or below it will not serve you and that faction hunts you.
+    pub standing_friendly: i32,
+    pub standing_wary: i32,
+    pub standing_hunted: i32,
+    pub standing_discount: f32,
+    pub standing_markup: f32,
+    pub standing_bonus: f32,
+    /// Hunters: packs of `hunt_pack` (fewest, most) of the faction's patrol hull, on their own
+    /// clock at the raiders' rate.
+    pub hunt_pack: [usize; 2],
+    /// Who holds a grudge against whom, by faction id: shooting down one of their enemies'
+    /// ships pleases them by `standing_rival_kill`.
+    pub grudges: std::collections::BTreeMap<String, Vec<String>>,
+    /// Seconds the `REGIME -25` line stays over the HUD after standing changes.
+    pub standing_line: f32,
+    /// Salvage (`solar::salvage`): the scrap each enemy hull drops where it is shot down, by ship
+    /// id (a hull not listed, the Kestrel among them, drops nothing). It drifts on with the
+    /// wreck's velocity, slowed by air as a shot is, for `scrap_life` seconds, and the ship you
+    /// fly pulls it in from `scrap_pull` metres. The `+4 SCRAP` line stays up `scrap_line` seconds.
+    pub scrap: std::collections::BTreeMap<String, u32>,
+    pub scrap_life: f32,
+    pub scrap_pull: f32,
+    pub scrap_line: f32,
+    /// Ship parts, bought with scrap at the Yard: what each level of hull plating, shield cell,
+    /// gun capacitor and missile rack costs, three levels each.
+    pub part_costs: [[u32; 3]; 4],
+    /// What each level gives the Kestrel: hull plating `plating_hull`; a shield cell
+    /// `cell_shield` and `cell_regen` faster regeneration; a gun capacitor guns that heat
+    /// `capacitor_heat` slower and cool `capacitor_cool` faster; a missile rack `rack_missiles`
+    /// more and `rack_reload` seconds off the reload.
+    pub plating_hull: f32,
+    pub cell_shield: f32,
+    pub cell_regen: f32,
+    pub capacitor_heat: f32,
+    pub capacitor_cool: f32,
+    pub rack_missiles: u32,
+    pub rack_reload: f32,
+    /// Modules: which hull drops which (by ship id), the chance it does, and the scrap a
+    /// duplicate turns into.
+    pub module_from: std::collections::BTreeMap<String, String>,
+    pub module_chance: f32,
+    pub module_scrap: u32,
+    /// What each module gives and what it costs. Afterburner: the boost tank refills
+    /// `afterburner_refill` faster, for `afterburner_shield` less shield. Targeting array: a lock
+    /// in `targeting_lock` seconds, in a cone `targeting_cone` degrees tighter. Spire coil: shots
+    /// `spire_speed` faster and `spire_damage` harder, guns heating `spire_heat` faster. Ram
+    /// plate: a ramming hit on an enemy hurts it for `ram_damage`, for `ram_thrust` less thrust.
+    pub afterburner_refill: f32,
+    pub afterburner_shield: f32,
+    pub targeting_lock: f32,
+    pub targeting_cone: f32,
+    pub spire_speed: f32,
+    pub spire_damage: f32,
+    pub spire_heat: f32,
+    pub ram_damage: f32,
+    pub ram_thrust: f32,
 }
 
 impl Default for ShipCombat {
@@ -625,6 +700,51 @@ impl Default for ShipCombat {
             downed: 3.0,
             loss_card: 4.0,
             bounty_line: 3.0,
+            standing_start: [("regime", -20), ("scrappers", 0), ("pmc", -20)].into_iter().map(|(id, v)| (id.to_string(), v)).collect(),
+            standing_deserters: 50,
+            standing_delivery: 10,
+            standing_raider_kill: 2,
+            standing_kill: -25,
+            standing_rival_kill: 5,
+            standing_hit: -3,
+            standing_recovery: 1,
+            standing_day: 2880.0,
+            standing_friendly: 40,
+            standing_wary: -40,
+            standing_hunted: -60,
+            standing_discount: 0.15,
+            standing_markup: 0.15,
+            standing_bonus: 0.2,
+            hunt_pack: [2, 3],
+            grudges: [("regime", &["deserters", "scrappers"][..]), ("scrappers", &["regime", "pmc"][..]), ("pmc", &[][..])]
+                .into_iter()
+                .map(|(id, foes)| (id.to_string(), foes.iter().map(|f| f.to_string()).collect()))
+                .collect(),
+            standing_line: 3.0,
+            scrap: [("jackal", 2), ("sentry", 4), ("censer", 5), ("welder", 8)].into_iter().map(|(id, n)| (id.to_string(), n)).collect(),
+            scrap_life: 90.0,
+            scrap_pull: 40.0,
+            scrap_line: 3.0,
+            part_costs: [[12, 24, 40], [12, 24, 40], [10, 20, 32], [15, 30, 50]],
+            plating_hull: 25.0,
+            cell_shield: 15.0,
+            cell_regen: 0.2,
+            capacitor_heat: 0.2,
+            capacitor_cool: 0.2,
+            rack_missiles: 1,
+            rack_reload: 1.5,
+            module_from: [("jackal", "afterburner"), ("sentry", "targeting"), ("censer", "spire"), ("welder", "ram")].into_iter().map(|(id, m)| (id.to_string(), m.to_string())).collect(),
+            module_chance: 0.25,
+            module_scrap: 10,
+            afterburner_refill: 0.4,
+            afterburner_shield: 0.1,
+            targeting_lock: 0.8,
+            targeting_cone: 4.0,
+            spire_speed: 0.25,
+            spire_damage: 0.15,
+            spire_heat: 0.2,
+            ram_damage: 30.0,
+            ram_thrust: 0.1,
         }
     }
 }
