@@ -132,7 +132,7 @@ impl Plugin for SolarPlugin {
             .add_systems(FixedPostUpdate, (switch_anchor.before(rebase), tick_epoch.after(PhysicsSystems::Last)))
             .init_resource::<crate::comic::ComicTheme>()
             .add_systems(Startup, (seed_ground, spawn_fixtures, spawn_sky, spawn_hud).chain())
-            .add_systems(PostStartup, (setup_camera, dev_start.run_if(|| std::env::var_os("RUST_REGIME_AT").is_some())))
+            .add_systems(PostStartup, (setup_camera, dev_start.run_if(|| std::env::var_os("RUST_REGIME_AT").is_some()), ship::place_fighter.after(dev_start).run_if(|| std::env::var_os("RUST_REGIME_FIGHTER").is_some())))
             .add_systems(Update, (place_bodies, light_and_stars, flight_text).chain());
     }
 }
@@ -234,6 +234,15 @@ fn spawn_fixtures(world: &mut World) {
             e.insert((Mesh3d(mesh), MeshMaterial3d(material)));
         }
     }
+    // A slab of its own for the fighter parked off the apron (`ship::FIGHTER_BERTH`).
+    let [x, z] = ship::FIGHTER_BERTH;
+    let size = Vec3::new(FIGHTER_PAD, size.y, FIGHTER_PAD);
+    let transform = Transform::from_translation(origin.world(pad + frame * Vec3::new(x, fighter_deck(sphere, pad) - size.y / 2.0, z))).with_rotation(frame);
+    let mesh = world.get_resource_mut::<Assets<Mesh>>().map(|mut m| m.add(Cuboid::from_size(size)));
+    let mut e = world.spawn((Name::new("Berth"), Fixture, RigidBody::Static, Collider::cuboid(size.x, size.y, size.z), transform));
+    if let (Some(mesh), Some(material)) = (mesh, material) {
+        e.insert((Mesh3d(mesh), MeshMaterial3d(material)));
+    }
     // The course stands 70 m east of the pad.
     let course = sphere.surface_point((pad + frame * Vec3::X * 70.0).normalize());
     for e in spawn_course(world, &surface, &origin, course) {
@@ -243,21 +252,35 @@ fn spawn_fixtures(world: &mut World) {
 
 /// How wide each ship's berth is, along the row.
 pub const BERTH_WIDTH: f32 = 18.0;
+/// The parked fighter's slab, square.
+pub const FIGHTER_PAD: f32 = 10.0;
 
 /// The deck height of a berth `x` metres along the row from the pad, in the pad's frame: a deck
 /// over the pad's ground, or more where the ground under the berth rises above that.
 pub fn berth_deck(sphere: &Sphere, pad: Vec3, x: f32) -> f32 {
+    COURSE_DECK.max(rise_under(sphere, pad, Vec2::new(x, 0.0), Vec2::new(BERTH_WIDTH / 2.0, 12.0)) + 0.6)
+}
+
+/// The deck height of the parked fighter's slab, in the pad's frame: just over the highest ground
+/// under it, wherever that is against the pad.
+pub fn fighter_deck(sphere: &Sphere, pad: Vec3) -> f32 {
+    rise_under(sphere, pad, Vec2::from(ship::FIGHTER_BERTH), Vec2::splat(FIGHTER_PAD / 2.0)) + 0.6
+}
+
+/// How far the ground rises, at most, over the pad's ground under a slab centred at `at` (x, z)
+/// in the pad's frame and `half` its size across.
+fn rise_under(sphere: &Sphere, pad: Vec3, at: Vec2, half: Vec2) -> f32 {
     let surface = Surface::Sphere(Arc::new(sphere.clone()));
     let frame = surface.frame(pad);
     let ground = |dx: f32, dz: f32| sphere.height((pad + frame * Vec3::new(dx, 0.0, dz)).normalize());
     let here = ground(0.0, 0.0);
-    let mut rise = 0.0_f32;
-    for dx in [-BERTH_WIDTH / 2.0, 0.0, BERTH_WIDTH / 2.0] {
-        for dz in [-12.0, 0.0, 12.0] {
-            rise = rise.max(ground(x + dx, dz) - here);
+    let mut rise = f32::MIN;
+    for dx in [-half.x, 0.0, half.x] {
+        for dz in [-half.y, 0.0, half.y] {
+            rise = rise.max(ground(at.x + dx, at.y + dz) - here);
         }
     }
-    COURSE_DECK.max(rise + 0.6)
+    rise
 }
 
 /// One coarse mesh for the whole of `sphere`: every node at `FAR_DEPTH`, merged, in body
@@ -696,7 +719,7 @@ fn flight_text(
     let pad = actions.as_ref().is_some_and(|a| a.pad_last);
     let key = |ctx: Ctx, action: Action| hint(ctx, action, pad);
     if driving.is_none() {
-        let near = ships.iter().map(|(s, _, ship)| (s.translation.distance(tf.translation), ship.spec)).filter(|(d, _)| *d < ship::BOARD_RADIUS).min_by(|a, b| a.0.total_cmp(&b.0));
+        let near = ships.iter().filter(|(_, _, ship)| specs.ship[ship.spec].boardable()).map(|(s, _, ship)| (s.translation.distance(tf.translation), ship.spec)).filter(|(d, _)| *d < ship::BOARD_RADIUS).min_by(|a, b| a.0.total_cmp(&b.0));
         if let Some((_, spec)) = near {
             line.push_str(&format!("\n[{}] board {}", key(Ctx::Foot, Action::Use), specs.ship[spec].name));
         }

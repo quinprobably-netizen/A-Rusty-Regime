@@ -1,6 +1,7 @@
 //! The ships: six-degree-of-freedom craft on Avian dynamic bodies, boarded like vehicles. Four of
 //! them stand on Haven's apron, one per faction, each with its own handling from
-//! `assets/ships.toml` and its own hull from `models/ships/<id>.glb` (built by `tools/ships`).
+//! `assets/ships.toml` and its own hull from `models/ships/<id>.glb` (built by `tools/ships`);
+//! a fighter, which has no cabin and cannot be boarded, is parked off it.
 //! The mouse pitches and yaws, A and D roll, W and S thrust along the nose, Space and Ctrl
 //! lift and sink, Shift boosts from a tank, X stops, held Alt looks round. On a pad the left
 //! stick is a flight joystick (pull back for nose up, sideways to roll), the bumpers yaw, the
@@ -45,6 +46,9 @@ const DRAG: f32 = 4.4e-5;
 const HOT: f32 = 1.5e8;
 /// Where the ships stand on the apron, metres west of the pad's centre, in spec order.
 pub const BERTHS: [f32; 4] = [-1.0, -19.0, -37.0, -55.0];
+/// Where the parked fighter stands, metres east and south of the pad's centre: off the apron on
+/// the way to the Roost, in sight of the spawn.
+pub const FIGHTER_BERTH: [f32; 2] = [0.0, 60.0];
 
 /// One collision box of a ship, in its frame.
 #[derive(Deserialize, Clone, Debug)]
@@ -70,11 +74,23 @@ impl ShipBox {
     }
 }
 
+/// What a hull is: a ship with a cabin you walk up the ramp into and fly, or a small solid
+/// fighter with no inside, which the player cannot board.
+#[derive(Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ShipKind {
+    #[default]
+    Cabin,
+    Fighter,
+}
+
 /// One ship's numbers from `assets/ships.toml`.
 #[derive(Deserialize, Clone, Debug)]
 pub struct ShipSpec {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub kind: ShipKind,
     pub mass: f32,
     /// Main engine, along the nose, m/s².
     pub thrust: f32,
@@ -93,8 +109,10 @@ pub struct ShipSpec {
     pub drag: f32,
     /// From the ship's centre down to the bottom of its landing gear.
     pub rest: f32,
-    /// Where the pilot sits, and where they step out, in the ship's frame.
+    /// Where the pilot sits, and where they step out, in the ship's frame (cabin ships only).
+    #[serde(default)]
     pub seat: [f32; 3],
+    #[serde(default)]
     pub exit: [f32; 3],
     /// Chase camera distance and height.
     pub cam: [f32; 2],
@@ -102,12 +120,16 @@ pub struct ShipSpec {
     pub engine_r: f32,
     /// Cabin floor and ceiling heights.
     #[cfg_attr(not(test), allow(dead_code))]
+    #[serde(default)]
     pub cabin: [f32; 2],
     /// The boarding ramp: its hinge, its length and how steeply it slopes when open, degrees.
     #[cfg_attr(not(test), allow(dead_code))]
+    #[serde(default)]
     pub ramp: [f32; 3],
     #[cfg_attr(not(test), allow(dead_code))]
+    #[serde(default)]
     pub ramp_len: f32,
+    #[serde(default)]
     pub ramp_slope: f32,
     pub collider: Vec<ShipBox>,
 }
@@ -143,6 +165,11 @@ pub fn assist(clearance: f32) -> f32 {
 }
 
 impl ShipSpec {
+    /// Whether the player can walk into this ship and fly it.
+    pub fn boardable(&self) -> bool {
+        self.kind == ShipKind::Cabin
+    }
+
     /// How fast flight assist lets the ship go at `clearance` metres over the ground: with the
     /// boost on, one and a half times the clearance a second, from twice cruising speed up to the
     /// deep-space limit; off it, cruising speed near the ground, then growing smoothly with height
@@ -289,6 +316,32 @@ fn spawn_fleet(world: &mut World) {
         let at = origin.world(pad + frame * Vec3::new(x, deck + rest + 0.05, -2.0));
         spawn(world, spec, Transform::from_translation(at).with_rotation(frame));
     }
+    // One fighter parked on its own slab off the apron, nose west, to look at (and, with
+    // `combat`, to shoot at). `RUST_REGIME_FIGHTER=<id>` picks another; see `place_fighter`.
+    let wanted = std::env::var("RUST_REGIME_FIGHTER").ok().and_then(|v| v.split(',').next().map(|id| id.trim().to_string()));
+    let ships = world.resource::<Ships>();
+    let Some(spec) = ships.ship.iter().position(|s| s.kind == ShipKind::Fighter && s.id == wanted.as_deref().unwrap_or("jackal")) else { return };
+    let deck = super::fighter_deck(sphere, pad) + ships.ship[spec].rest + 0.05;
+    let at = origin.world(pad + frame * Vec3::new(FIGHTER_BERTH[0], deck, FIGHTER_BERTH[1]));
+    spawn(world, spec, Transform::from_translation(at).with_rotation(frame * Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)));
+}
+
+/// Dev aid: with `RUST_REGIME_FIGHTER=<id>[,<metres>]` the parked fighter waits in front of the
+/// player instead, broadside on and 80 m off unless told otherwise: ahead of the nose when flying
+/// (`RUST_REGIME_AT`), along the view on foot. It hangs where it is put, parked like any ship.
+pub fn place_fighter(world: &mut World) {
+    let dist: f32 = std::env::var("RUST_REGIME_FIGHTER").ok().and_then(|v| v.split(',').nth(1).and_then(|d| d.trim().parse().ok())).unwrap_or(80.0);
+    let Ok((player, ptf)) = world.query_filtered::<(Entity, &Transform), With<Player>>().single(world).map(|(e, t)| (e, *t)) else { return };
+    let flown = world.get::<Driving>(player).and_then(|d| world.get::<Transform>(d.0)).copied();
+    let (from, facing) = match flown {
+        Some(tf) => (tf.translation, tf.rotation),
+        None => (ptf.translation, world.resource::<ViewAngles>().rotation()),
+    };
+    let specs = world.resource::<Ships>().clone();
+    let Some(fighter) = world.query::<(Entity, &Ship)>().iter(world).find(|(_, s)| specs.ship[s.spec].kind == ShipKind::Fighter).map(|(e, _)| e) else { return };
+    let at = from + facing * Vec3::NEG_Z * dist;
+    let rotation = (facing * Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)).normalize();
+    world.entity_mut(fighter).insert((Transform::from_translation(at).with_rotation(rotation), Position(at), Rotation(rotation), LinearVelocity::ZERO));
 }
 
 /// Ship number `spec` at `transform`: its body and collider now, its hull streamed in from the
@@ -374,7 +427,8 @@ fn dress(
     commands.entity(ready.entity).remove::<Pending>();
     let x90 = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
     // The nose glow scales with the hull: the Kestrel's 2.4 m fuselage had a 2 × 1.6 × 4 m glow.
-    let hull_scale = spec.collider.first().map_or(1.0, |b| b.size[0] / 2.4);
+    // A fighter's one box is round its wings too, so its length against the Kestrel's 9.5 m cabin.
+    let hull_scale = spec.collider.first().map_or(1.0, |b| if spec.boardable() { b.size[0] / 2.4 } else { b.size[2] / 9.5 });
     for e in children.iter_descendants(ready.entity) {
         let Ok(name) = names.get(e) else { continue };
         if name.starts_with("exhaust.") {
@@ -486,9 +540,10 @@ pub fn board(
             commands.entity(pe).remove::<(Driving, ColliderDisabled)>();
             commands.entity(se).remove::<KeepAwake>();
         } else {
+            // Fighters have no cabin to board.
             let near = ships
                 .iter()
-                .filter(|(_, s, _, _)| s.pilot.is_none())
+                .filter(|(_, s, _, _)| s.pilot.is_none() && specs.ship[s.spec].boardable())
                 .map(|(e, _, tf, _)| (e, tf.translation.distance(ptf.translation)))
                 .filter(|(_, d)| *d < BOARD_RADIUS)
                 .min_by(|a, b| a.1.total_cmp(&b.1));
@@ -718,7 +773,7 @@ fn seat(specs: Res<Ships>, ships: Query<(&Ship, &Position, &Rotation)>, mut play
 /// A ship with no pilot that has come to rest turns static, so walking about inside it cannot
 /// nudge it and it never jitters on its gear; boarding wakes it. The ship the player last flew,
 /// once parked, is where they come back after a fall or a reset: on its cabin floor. Before any
-/// flight that is the first ship.
+/// flight that is the first ship. A fighter has no cabin floor, so it is never the respawn.
 fn park(mut commands: Commands, specs: Res<Ships>, ships: Query<(Entity, &Ship, &Transform, &LinearVelocity, &RigidBody)>, origin: Res<Origin>, mut bounds: ResMut<WorldBounds>) {
     for (e, ship, _, v, body) in &ships {
         if ship.pilot.is_none() && *body == RigidBody::Dynamic && v.0.length() < 0.5 {
@@ -727,7 +782,7 @@ fn park(mut commands: Commands, specs: Res<Ships>, ships: Query<(Entity, &Ship, 
     }
     let newest = ships
         .iter()
-        .filter(|(_, s, _, v, _)| s.pilot.is_none() && v.0.length() < 0.5)
+        .filter(|(_, s, _, v, _)| s.pilot.is_none() && v.0.length() < 0.5 && specs.ship[s.spec].boardable())
         .max_by(|a, b| a.1.landed_at.total_cmp(&b.1.landed_at).then(b.1.spec.cmp(&a.1.spec)));
     if let Some((_, ship, tf, _, _)) = newest {
         let spawn = origin.body(tf.translation + tf.rotation * Vec3::from(specs.ship[ship.spec].exit));

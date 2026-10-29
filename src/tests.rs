@@ -1808,7 +1808,7 @@ fn boosting_is_capped_by_height_over_the_ground() {
 #[test]
 fn ships_toml_lists_four_ships_with_models_and_matching_rest_heights() {
     let ships = solar::ship::Ships::load();
-    assert_eq!(ships.ship.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["kestrel", "litany", "mule", "vantage"]);
+    assert_eq!(ships.ship.iter().filter(|s| s.boardable()).map(|s| s.id.as_str()).collect::<Vec<_>>(), ["kestrel", "litany", "mule", "vantage"]);
     for s in &ships.ship {
         assert!(std::path::Path::new(&format!("assets/models/ships/{}.glb", s.id)).exists(), "{} has a model", s.id);
         assert!((s.bottom() + s.rest).abs() < 0.05, "{}: collider bottom {} vs rest {}", s.id, s.bottom(), s.rest);
@@ -1878,7 +1878,7 @@ fn four_ships_rest_in_a_row_on_the_apron_without_touching() {
     let mut app = system_app();
     run(&mut app, 1.0);
     let ships = app.world().resource::<solar::ship::Ships>().clone();
-    let mut parked: Vec<(usize, Vec3)> = app.world_mut().query::<(&Ship, &Transform)>().iter(app.world()).map(|(s, tf)| (s.spec, tf.translation)).collect();
+    let mut parked: Vec<(usize, Vec3)> = app.world_mut().query::<(&Ship, &Transform)>().iter(app.world()).filter(|(s, _)| ships.ship[s.spec].boardable()).map(|(s, tf)| (s.spec, tf.translation)).collect();
     parked.sort_by_key(|p| p.0);
     assert_eq!(parked.len(), 4);
     let origin = *app.world().resource::<Origin>();
@@ -1931,7 +1931,7 @@ fn respawn_follows_the_last_flown_ship() {
 #[test]
 fn every_cabin_fits_a_standing_player_and_its_ramp_reaches_the_ground() {
     let ships = solar::ship::Ships::load();
-    for spec in &ships.ship {
+    for spec in ships.ship.iter().filter(|s| s.boardable()) {
         let exit = Vec3::from(spec.exit);
         // A 1.8 m, 0.4 m radius capsule standing on the cabin floor: bottom and top sphere centres.
         for p in [exit + Vec3::Y * -0.45, exit, exit + Vec3::Y * 0.45] {
@@ -1949,6 +1949,61 @@ fn every_cabin_fits_a_standing_player_and_its_ramp_reaches_the_ground() {
             assert!(!b.touches(door, 0.35), "{}: the doorway is blocked by the box at {:?}", spec.id, b.center);
         }
     }
+}
+
+#[test]
+fn the_four_fighters_are_solid_hulls_with_their_glbs_nodes() {
+    use solar::ship::ShipKind;
+    let ships = solar::ship::Ships::load();
+    let fighters: Vec<_> = ships.ship.iter().filter(|s| s.kind == ShipKind::Fighter).collect();
+    assert_eq!(fighters.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["jackal", "sentry", "censer", "welder"]);
+    for s in &fighters {
+        assert!(!s.boardable(), "{} cannot be boarded", s.id);
+        assert_eq!(s.collider.len(), 1, "{}: one box round the hull", s.id);
+        assert_eq!((s.ramp_len, s.cabin), (0.0, [0.0; 2]), "{}: no ramp or cabin", s.id);
+        // The glb's own nodes: an exhaust for the glow discs and the heat glow at the nose.
+        let glb = std::fs::read(format!("assets/models/ships/{}.glb", s.id)).unwrap();
+        let text = String::from_utf8_lossy(&glb);
+        for node in ["\"exhaust.0\"", "\"heat\"", "\"light.0\""] {
+            assert!(text.contains(node), "{} has a {node} node", s.id);
+        }
+    }
+    // `kind` defaults to a cabin ship, and a fighter needs none of the cabin's fields.
+    let parsed = solar::ship::Ships::parse(
+        "[[ship]]\nid = \"a\"\nname = \"A\"\nmass = 1\nthrust = 1\nlift = 1\nrates = [1, 1, 1]\ncruise = 1\nboost_max = 2\nrest = 1\nseat = [0, 0, 0]\nexit = [0, 0, 0]\ncam = [1, 1]\nengine_r = 1\ncabin = [0, 2]\nramp = [0, 0, 0]\nramp_len = 1\nramp_slope = 1\ncollider = []\n\
+         [[ship]]\nid = \"b\"\nname = \"B\"\nkind = \"fighter\"\nmass = 1\nthrust = 1\nlift = 1\nrates = [1, 1, 1]\ncruise = 1\nboost_max = 2\nrest = 1\ncam = [1, 1]\nengine_r = 1\ncollider = [{ center = [0, 0, 0], size = [1, 2, 1] }]\n",
+    )
+    .unwrap();
+    assert_eq!(parsed.ship.iter().map(|s| s.kind).collect::<Vec<_>>(), [ShipKind::Cabin, ShipKind::Fighter]);
+}
+
+#[test]
+fn a_jackal_is_parked_off_the_apron_and_cannot_be_boarded() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    let specs = app.world().resource::<solar::ship::Ships>().clone();
+    let fighters: Vec<(Entity, usize, Transform)> = app.world_mut().query::<(Entity, &Ship, &Transform)>().iter(app.world()).filter(|(_, s, _)| !specs.ship[s.spec].boardable()).map(|(e, s, tf)| (e, s.spec, *tf)).collect();
+    assert_eq!(fighters.len(), 1, "one parked fighter");
+    let (jackal, spec, tf) = fighters[0];
+    assert_eq!(specs.ship[spec].id, "jackal");
+    assert_eq!(*app.world().get::<RigidBody>(jackal).unwrap(), RigidBody::Static, "parked");
+    // Standing on its slab south of the apron, toward the Roost, above the ground.
+    let origin = *app.world().resource::<Origin>();
+    let Surface::Sphere(sphere) = app.world().resource::<Surface>().clone() else { panic!("round world") };
+    let p = origin.body(tf.translation);
+    let pad = app.world().resource::<Solar>().pad;
+    let local = app.world().resource::<Surface>().frame(pad).inverse() * (p - pad);
+    let deck = solar::fighter_deck(&sphere, pad) + specs.ship[spec].rest;
+    assert!((local.y - deck).abs() < 0.3, "rests on its slab at {} (want {deck})", local.y);
+    assert!(p.length() - sphere.sea_radius() - sphere.height(p.normalize()) > specs.ship[spec].rest, "above the ground");
+    assert!(local.z > 40.0, "south of the apron, toward the Roost: {local}");
+    // E beside it does nothing: a fighter has no cabin.
+    let player = app.world_mut().query_filtered::<Entity, With<Player>>().single(app.world()).unwrap();
+    set_player(&mut app, tf.translation + tf.rotation * Vec3::new(0.0, 0.0, 4.5), Vec3::ZERO);
+    run(&mut app, 0.5);
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 0.2);
+    assert!(app.world().get::<Driving>(player).is_none(), "not boarded");
 }
 
 #[test]
@@ -2327,3 +2382,4 @@ fn the_shrine_sells_a_blessing_that_lengthens_the_health_bar_for_a_while() {
     let health = app.world().resource::<PlayerHealth>().clone();
     assert!((health.max - plain).abs() < 0.01 && health.hp <= health.max, "back to normal: {} / {}", health.hp, health.max);
 }
+

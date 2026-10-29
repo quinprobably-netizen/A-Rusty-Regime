@@ -188,7 +188,12 @@ Blender like the weapons: `tools/ships/build.sh [ids] [--no-bake] [--preview] [-
 writes `assets/models/ships/<id>.glb` (under 30 k triangles and one 1024² baked texture
 each) from `tools/ships/ships/<id>.py`; the game finds each engine's `exhaust.<n>` node,
 the `heat` node and the `ramp` hinge by name, and the collision boxes in `ships.toml` are
-the floor, walls, ceiling and open ramp you walk between.
+the floor, walls, ceiling and open ramp you walk between. The four enemy fighters (the
+raiders' **Jackal**, the PMC's **Sentry**, the Regime's **Censer** and the Scrappers'
+**Welder**) are `kind = "fighter"` entries: solid hulls with one collision box and no cabin,
+which you cannot board. A Jackal stands on a slab of its own 60 m south of the pad, toward
+the Roost; `RUST_REGIME_FIGHTER=<id>[,<metres>]` parks that fighter (`jackal`, `sentry`,
+`censer`, `welder`) in front of you instead, 80 m off unless told otherwise.
 
 Each faction has a base on its world, from `assets/bases.toml` and
 `assets/models/bases/<id>.glb` (built like the ships: `tools/bases/build.sh [ids]
