@@ -8,6 +8,7 @@ use bevy::prelude::*;
 use crate::controller::{ControllerSet, MoveState, Player};
 use crate::input::{PlayerInput, Rumble, ViewAngles};
 use crate::save::Save;
+use crate::surface::Origin;
 use crate::tuning::{Gun, Tuning};
 
 pub struct WeaponPlugin;
@@ -195,7 +196,7 @@ impl Default for Muzzle {
     }
 }
 
-/// A bullet in flight: it drops under 9.81 m/s², slows by `drag` per metre, and does
+/// A bullet in flight: it drops under the surface's gravity, slows by `drag` per metre, and does
 /// `damage` times its remaining energy (the square of its speed over its muzzle speed).
 #[derive(Component, Debug)]
 pub struct Bullet {
@@ -249,7 +250,14 @@ pub enum Surface {
     Stone,
 }
 
-/// A bit of debris, casing or spark: flies under `gravity`, spins, shrinks away over its last 40%.
+/// Gravity on a projectile at world position `at`: the surface's pull there, scaled by
+/// `weight` over the flat world's 9.8, so a 12 m/s² grenade falls 12/9.8 times as hard as a
+/// bullet on any world, and nothing falls in deep space.
+fn pull(surface: &crate::surface::Surface, origin: &Origin, t: &Tuning, at: Vec3, weight: f32) -> Vec3 {
+    surface.gravity(origin.body(at), t.gravity) * (weight / t.gravity)
+}
+
+/// A bit of debris, casing or spark: flies under `gravity` (scaled as in `pull`), spins, shrinks away over its last 40%.
 #[derive(Component)]
 pub struct Debris {
     velocity: Vec3,
@@ -269,7 +277,7 @@ fn spawn_debris(commands: &mut Commands, fx: &FxAssets, material: &Handle<Standa
     ));
 }
 
-fn fly_debris(mut commands: Commands, time: Res<Time>, mut bits: Query<(Entity, &mut Debris, &mut Transform)>) {
+fn fly_debris(mut commands: Commands, time: Res<Time>, tuning: Res<Tuning>, surface: Res<crate::surface::Surface>, origin: Res<Origin>, mut bits: Query<(Entity, &mut Debris, &mut Transform)>) {
     let dt = time.delta_secs();
     for (e, mut d, mut tf) in &mut bits {
         d.age += dt;
@@ -277,7 +285,8 @@ fn fly_debris(mut commands: Commands, time: Res<Time>, mut bits: Query<(Entity, 
             commands.entity(e).despawn();
             continue;
         }
-        d.velocity.y -= d.gravity * dt;
+        let fall = pull(&surface, &origin, &tuning, tf.translation, d.gravity);
+        d.velocity += fall * dt;
         tf.translation += d.velocity * dt;
         if d.spin != Vec3::ZERO {
             tf.rotate_local(Quat::from_euler(EulerRot::XYZ, d.spin.x * dt, d.spin.y * dt, d.spin.z * dt));
@@ -366,8 +375,8 @@ struct Rocket {
 }
 
 #[derive(Component)]
-struct GrenadeShell {
-    velocity: Vec3,
+pub struct GrenadeShell {
+    pub velocity: Vec3,
     fuse: f32,
 }
 
@@ -587,7 +596,7 @@ fn fire(
         WeaponKind::Grenade => {
             let g = &t.grenade;
             arsenal.cooldown = g.cooldown;
-            let velocity = forward * g.speed + Vec3::Y * g.lift + p.velocity * 0.5;
+            let velocity = forward * g.speed + p.up() * g.lift + p.velocity * 0.5;
             let mut e = commands.spawn((GrenadeShell { velocity, fuse: g.fuse }, Transform::from_translation(muzzle)));
             if let Some(fx) = &fx {
                 e.insert((Mesh3d(fx.grenade_mesh.clone()), MeshMaterial3d(fx.grenade_mat.clone())));
@@ -616,7 +625,7 @@ fn fire(
             if let Ok((body, mut lv, mass)) = bodies.get_mut(hit.entity)
                 && *body == RigidBody::Dynamic
             {
-                lv.0 += (forward * f.knockback + Vec3::Y * 2.0) * (t.prop_ref_mass * mass.inverse()).min(1.0);
+                lv.0 += (forward * f.knockback + p.up() * 2.0) * (t.prop_ref_mass * mass.inverse()).min(1.0);
             }
             // Punching anything throws you back off it: off a wall, off the floor.
             p.velocity += -forward * f.launch;
@@ -647,7 +656,7 @@ fn fire(
 
     arsenal.cooldown = gun.cooldown;
     // Spread: the gun's, wider with heat and on the move, tighter crouched or aiming.
-    let moving = (p.velocity.xz().length() / t.max_speed).clamp(0.0, 1.0);
+    let moving = (p.horizontal_speed() / t.max_speed).clamp(0.0, 1.0);
     let mut spread = gun.spread_degrees.to_radians() * (1.0 + recoil.heat * gun.heat_spread) * (1.0 + moving * 0.8);
     if p.crouched {
         spread *= 0.7;
@@ -725,6 +734,8 @@ fn fly_grenades(
     time: Res<Time>,
     tuning: Res<Tuning>,
     spatial: SpatialQuery,
+    surface: Res<crate::surface::Surface>,
+    origin: Res<Origin>,
     mut shells: Query<(Entity, &mut GrenadeShell, &mut Transform)>,
     player: Single<Entity, With<Player>>,
     mut detonate: MessageWriter<Detonate>,
@@ -734,7 +745,7 @@ fn fly_grenades(
     let filter = SpatialQueryFilter::from_excluded_entities([*player]);
     for (entity, mut shell, mut tf) in &mut shells {
         shell.fuse -= dt;
-        shell.velocity.y -= g.gravity * dt;
+        shell.velocity += pull(&surface, &origin, &tuning, tf.translation, g.gravity) * dt;
         let step = shell.velocity * dt;
         let burst = shell.fuse <= 0.0;
         if let Ok(dir) = Dir3::new(step)
@@ -760,6 +771,8 @@ fn fly_spears(
     time: Res<Time>,
     tuning: Res<Tuning>,
     spatial: SpatialQuery,
+    surface: Res<crate::surface::Surface>,
+    origin: Res<Origin>,
     mut spears: Query<(Entity, &mut Spear, &mut Transform), Without<Player>>,
     mut player: Single<(Entity, &mut Player, &Transform)>,
     mut bodies: Query<(&RigidBody, &mut LinearVelocity, &ComputedMass), Without<Player>>,
@@ -771,7 +784,7 @@ fn fly_spears(
     let filter = SpatialQueryFilter::from_excluded_entities([*player_entity]);
     for (entity, mut spear, mut tf) in &mut spears {
         spear.life -= dt;
-        spear.velocity.y -= h.gravity * dt;
+        spear.velocity += pull(&surface, &origin, &tuning, tf.translation, h.gravity) * dt;
         let step = spear.velocity * dt;
         let Ok(dir) = Dir3::new(step) else { continue };
         let Some(hit) = spatial.cast_ray(tf.translation, dir, step.length(), true, &filter) else {
@@ -784,16 +797,17 @@ fn fly_spears(
         };
         commands.entity(entity).despawn();
         let point = tf.translation + dir * hit.distance;
-        let to_player = (player_tf.translation - point).normalize_or(Vec3::Y);
+        let up = surface.up(origin.body(point));
+        let to_player = (player_tf.translation - point).normalize_or(up);
         let dynamic = bodies.get(hit.entity).is_ok_and(|(b, _, _)| *b == RigidBody::Dynamic);
         if dynamic {
             if let Ok((body, mut lv, mass)) = bodies.get_mut(hit.entity)
                 && *body == RigidBody::Dynamic
             {
-                lv.0 += (to_player * h.pull_target + Vec3::Y * 2.0) * (tuning.prop_ref_mass * mass.inverse()).min(1.0);
+                lv.0 += (to_player * h.pull_target + up * 2.0) * (tuning.prop_ref_mass * mass.inverse()).min(1.0);
             }
         } else {
-            p.velocity = -to_player * h.pull_player + Vec3::Y * 2.5;
+            p.velocity = -to_player * h.pull_player + p.up() * 2.5;
             p.knockback_lock = 0.15;
             if p.state != MoveState::Mantle {
                 p.state = MoveState::Air;
@@ -809,6 +823,8 @@ fn detonate(
     mut commands: Commands,
     tuning: Res<Tuning>,
     spatial: SpatialQuery,
+    surface: Res<crate::surface::Surface>,
+    origin: Res<Origin>,
     fx: Option<Res<FxAssets>>,
     mut materials: Option<ResMut<Assets<StandardMaterial>>>,
     mut blasts: MessageReader<Detonate>,
@@ -821,12 +837,13 @@ fn detonate(
     let filter = SpatialQueryFilter::from_excluded_entities([*player_entity]);
     for b in blasts.read() {
         let center = b.center;
+        let up = surface.up(origin.body(center));
         // Player knockback, TF2-style linear falloff to 50% at the edge.
         let to_player = player_tf.translation - center;
         let d = to_player.length();
         if d < b.radius {
             let falloff = 1.0 - 0.5 * d / b.radius;
-            p.velocity += to_player.normalize_or(Vec3::Y) * b.self_knockback * falloff;
+            p.velocity += to_player.normalize_or(up) * b.self_knockback * falloff;
             p.knockback_lock = 0.1;
             if p.state != MoveState::Mantle {
                 p.state = MoveState::Air;
@@ -840,7 +857,7 @@ fn detonate(
             let Ok((body, pos, mut lv, mass)) = bodies.get_mut(e) else { continue };
             let offset = pos.0 - center;
             let falloff = 1.0 - 0.5 * (offset.length() / b.radius).min(1.0);
-            let push = (offset.normalize_or(Vec3::Y) + Vec3::Y * 0.3) * t.prop_knockback * falloff;
+            let push = (offset.normalize_or(up) + up * 0.3) * t.prop_knockback * falloff;
             if *body != RigidBody::Dynamic {
                 continue;
             }
@@ -892,12 +909,14 @@ fn fly_bullets(
     mut bodies: Query<(&RigidBody, &mut LinearVelocity, &ComputedMass), (Without<Player>, Without<Bullet>)>,
     mut hits: MessageWriter<crate::health::PlayerHit>,
     surfaces: Query<(Has<crate::planet::Chunk>, Has<crate::solar::ship::Ship>, Has<crate::solar::Fixture>)>,
+    surface: Res<crate::surface::Surface>,
+    origin: Res<Origin>,
 ) {
     let dt = time.delta_secs();
     let t = &*tuning;
     for (entity, mut b, mut tf) in &mut bullets {
         b.age += dt;
-        b.velocity.y -= 9.81 * dt;
+        b.velocity += pull(&surface, &origin, t, tf.translation, t.gravity) * dt;
         let speed = b.velocity.length();
         if b.age > 3.0 || speed < 20.0 {
             commands.entity(entity).despawn();

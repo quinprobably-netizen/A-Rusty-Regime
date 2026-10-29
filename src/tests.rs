@@ -417,11 +417,16 @@ fn drop_flat_floor(app: &mut App) {
 /// dynamic bodies fall toward the centre, and terrain chunks of `cell` metres cover
 /// `ground_radius` around the spawn (none when it is 0).
 fn sphere_app(cell: f32, spawn_dir: Vec3, ground_radius: f32) -> (App, Arc<Sphere>, Origin, Vec<Arc<ChunkMesh>>) {
+    sphere_app_on(Body::test_moon(), cell, spawn_dir, ground_radius)
+}
+
+/// `sphere_app` on `body` in place of the test moon.
+fn sphere_app_on(body: Body, cell: f32, spawn_dir: Vec3, ground_radius: f32) -> (App, Arc<Sphere>, Origin, Vec<Arc<ChunkMesh>>) {
     let mut tuning = Tuning::default();
     tuning.terrain.cell = cell;
     let mut app = build_app(tuning);
     drop_flat_floor(&mut app);
-    let sphere = Arc::new(Sphere::new(Body::test_moon()));
+    let sphere = Arc::new(Sphere::new(body));
     let spawn = sphere.surface_point(spawn_dir) + spawn_dir * 1.0;
     let origin = Origin::at(spawn, QUANTUM);
     app.insert_resource(Surface::Sphere(sphere.clone()))
@@ -475,6 +480,46 @@ fn resting_bodies_stay_asleep_under_gravity() {
     assert!(app.world().get::<Sleeping>(id).is_some(), "asleep after settling");
     run(&mut app, 1.0);
     assert!(app.world().get::<Sleeping>(id).is_some(), "gravity does not keep waking it");
+}
+
+/// Fires `kind` level at +X on the test moon given `gravity`, with no ground to hit, and
+/// returns how fast the shot then gains speed sideways to its flight (m/s²) and how closely
+/// that points at the centre (1 is straight at it). `probe` reads the shot's position and velocity.
+fn projectile_fall(gravity: f32, kind: WeaponKind, probe: fn(&mut App) -> (Vec3, Vec3)) -> (f32, f32) {
+    let (mut app, _, origin, _) = sphere_app_on(Body { gravity, ..Body::test_moon() }, 4.0, Vec3::X, 0.0);
+    select_weapon(&mut app, kind);
+    input(&mut app).fire_pressed = true;
+    run(&mut app, 0.05);
+    let (_, v0) = probe(&mut app);
+    let flight = 16.0 * DT;
+    run(&mut app, flight);
+    let (pos, v1) = probe(&mut app);
+    // Drag and the fall's own direction both act along the flight: only the rest is the pull.
+    let (dv, along) = (v1 - v0, v0.normalize());
+    let side = dv - along * dv.dot(along);
+    let down = -origin.body(pos).normalize();
+    (side.dot(down) / flight, side.normalize_or_zero().dot(down))
+}
+
+#[test]
+fn bullets_and_grenades_fall_toward_the_centre_with_the_worlds_gravity() {
+    use crate::weapon::{Bullet, GrenadeShell};
+    fn bullet(app: &mut App) -> (Vec3, Vec3) {
+        let mut q = app.world_mut().query::<(&Bullet, &Transform)>();
+        q.single(app.world()).map(|(b, tf)| (tf.translation, b.velocity)).expect("one bullet in the air")
+    }
+    fn grenade(app: &mut App) -> (Vec3, Vec3) {
+        let mut q = app.world_mut().query::<(&GrenadeShell, &Transform)>();
+        q.single(app.world()).map(|(g, tf)| (tf.translation, g.velocity)).expect("one grenade in the air")
+    }
+    // Haven's 9.8 and Ash's 1.9. Level at +X is north, world +Y: the old fixed -Y pull acted
+    // along the flight and none of it toward the centre.
+    let grenade_g = Tuning::default().grenade.gravity;
+    for (g, kind, probe, expect) in [(9.8, WeaponKind::Pistol, bullet as fn(&mut App) -> _, 9.8), (1.9, WeaponKind::Pistol, bullet, 1.9), (9.8, WeaponKind::Grenade, grenade, grenade_g), (1.9, WeaponKind::Grenade, grenade, grenade_g * 1.9 / 9.8)] {
+        let (fall, aim) = projectile_fall(g, kind, probe);
+        assert!(aim > 0.99, "{kind:?} on a {g} world falls toward the centre: {aim}");
+        assert!((fall - expect).abs() < 0.05 * expect, "{kind:?} on a {g} world falls at {fall}, not {expect}");
+    }
 }
 
 /// The surface point under `at_dir` and the local frame there.
