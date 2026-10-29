@@ -1,6 +1,8 @@
 //! What persists between sessions, in `save.toml` next to `tuning.toml`: banked money, the outfit, the
-//! loadout, the weapons and parts you own, the ship's tune and the courier parcel.
+//! loadout, the weapons and parts you own, the ship's tune, the courier parcel, and the ships you
+//! have shot down and lost.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use bevy::prelude::*;
@@ -74,4 +76,9 @@ pub struct Save {
     /// The courier parcel being carried, and how many have been delivered.
     pub contract: Option<crate::solar::station::Contract>,
     pub contracts_done: u32,
+    /// Enemy ships you have shot down, in all and by faction id (`combat::Faction::id`), for
+    /// faction standing later; and how often your own ship has been shot down.
+    pub kills: u32,
+    pub faction_kills: BTreeMap<String, u32>,
+    pub deaths: u32,
 }

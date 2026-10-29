@@ -531,6 +531,16 @@ pub struct ShipCombat {
     /// seconds ahead along their sink rate.
     pub ai_floor: f32,
     pub ai_lookahead: f32,
+    /// What shooting down each enemy hull pays into the bank, by ship id; a hull not listed pays
+    /// nothing (`solar::loss`).
+    pub bounty: std::collections::BTreeMap<String, u32>,
+    /// When your own ship is shot down: the share of the bank you lose (rounded down), seconds
+    /// before you are back at the Roost, and seconds the card stays up after that.
+    pub bank_loss: f32,
+    pub downed: f32,
+    pub loss_card: f32,
+    /// Seconds the `+$120 BOUNTY` line stays over the HUD after a kill.
+    pub bounty_line: f32,
 }
 
 impl Default for ShipCombat {
@@ -566,6 +576,11 @@ impl Default for ShipCombat {
             patrol_respawn: 600.0,
             ai_floor: 150.0,
             ai_lookahead: 4.0,
+            bounty: [("jackal", 60), ("sentry", 120), ("censer", 150), ("welder", 200)].into_iter().map(|(id, pay)| (id.to_string(), pay)).collect(),
+            bank_loss: 0.25,
+            downed: 3.0,
+            loss_card: 4.0,
+            bounty_line: 3.0,
         }
     }
 }
