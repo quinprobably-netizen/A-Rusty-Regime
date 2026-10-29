@@ -29,7 +29,7 @@ pub const PAD_SIZE: f32 = 26.0;
 pub struct BaseSpec {
     pub id: String,
     pub name: String,
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Whose base it is; a faction that flies a fighter patrols it (`enemy`).
     pub faction: String,
     pub body: String,
     /// The faction's colour (rgb): its waypoint and the beam over the base.

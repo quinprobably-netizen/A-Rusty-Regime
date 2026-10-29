@@ -2563,3 +2563,302 @@ fn the_shrine_sells_a_blessing_that_lengthens_the_health_bar_for_a_while() {
     assert!((health.max - plain).abs() < 0.01 && health.hp <= health.max, "back to normal: {} / {}", health.hp, health.max);
 }
 
+
+// ------------------------------------------------------------------- raiders, patrols and the AI
+
+use solar::ai::{Enemy, Mode, Role};
+use solar::enemy::{spawn_enemy, Patrols, Raids};
+
+/// Every enemy ship: its entity, why it is there and what it is doing.
+fn enemies(app: &mut App) -> Vec<(Entity, Role, Mode)> {
+    app.world_mut().query::<(Entity, &Enemy)>().iter(app.world()).map(|(e, en)| (e, en.role, en.mode)).collect()
+}
+
+/// The Kestrel boarded and hanging `height` metres straight over the pad, at rest.
+fn aloft(height: f32) -> App {
+    let mut app = system_app();
+    run(&mut app, 0.5);
+    board(&mut app);
+    let (p, _) = ship_state(&mut app);
+    put_ship(&mut app, p + p.normalize() * height, Vec3::ZERO);
+    run(&mut app, 0.1);
+    app
+}
+
+/// Where a ship is, its nose and its velocity, in the world frame.
+fn pose(app: &App, e: Entity) -> (Vec3, Vec3, Vec3) {
+    let (p, r, v) = (app.world().get::<Position>(e).unwrap().0, app.world().get::<Rotation>(e).unwrap().0, app.world().get::<LinearVelocity>(e).unwrap().0);
+    (p, r * Vec3::NEG_Z, v)
+}
+
+/// The ship spec index of `id`.
+fn spec_of(app: &App, id: &str) -> usize {
+    app.world().resource::<solar::ship::Ships>().ship.iter().position(|s| s.id == id).unwrap()
+}
+
+/// An enemy `id` at `offset` (world frame) from the Kestrel, nose toward it, at rest.
+fn enemy_near(app: &mut App, id: &str, offset: Vec3, role: Role) -> Entity {
+    let spec = spec_of(app, id);
+    let ship = ship_entity(app);
+    let (p, _, _) = pose(app, ship);
+    let at = p + offset;
+    let up = app.world().resource::<Surface>().up(app.world().resource::<Origin>().body(at));
+    let facing = Transform::from_translation(at).looking_at(p, up).rotation;
+    let e = spawn_enemy(app.world_mut(), spec, at, facing, Vec3::ZERO, role);
+    run(app, 1.0 / 66.0);
+    e
+}
+
+#[test]
+fn a_raid_comes_in_off_to_one_side_inside_the_band_and_never_over_the_cap() {
+    let mut app = aloft(3400.0);
+    let t = Tuning::default().ship_combat;
+    let ship = ship_entity(&mut app);
+    let mut packs = Vec::new();
+    for _ in 0..5 {
+        let (from, nose, _) = pose(&app, ship);
+        let before: HashSet<Entity> = enemies(&mut app).iter().map(|e| e.0).collect();
+        app.world_mut().resource_mut::<Raids>().force = true;
+        run(&mut app, 2.0 / 66.0);
+        let new: Vec<Entity> = enemies(&mut app).iter().map(|e| e.0).filter(|e| !before.contains(e)).collect();
+        for &e in &new {
+            let (p, _, _) = pose(&app, e);
+            let d = p.distance(from);
+            assert!((t.spawn_near..=t.spawn_far).contains(&d), "came in {d:.0} m off");
+            assert!((p - from).normalize().dot(nose) <= 0.0, "never ahead of the nose: {:.0} degrees off it", (p - from).angle_between(nose).to_degrees());
+            assert_eq!(app.world().get::<Ship>(e).map(|s| s.spec), Some(spec_of(&app, "jackal")), "raiders fly Jackals");
+        }
+        packs.push(new.len());
+    }
+    let alive = enemies(&mut app).len();
+    assert!(packs[0] >= 2 && packs[0] <= 4, "a pack of two to four: {packs:?}");
+    assert_eq!(alive, t.enemy_cap, "packs fill up to the cap and no further: {packs:?}");
+    assert_eq!(*packs.last().unwrap(), 0, "a full sky takes no more: {packs:?}");
+    assert!(enemies(&mut app).iter().all(|e| e.1 == Role::Raider));
+}
+
+#[test]
+fn a_raider_past_six_km_is_gone() {
+    let mut app = aloft(3400.0);
+    let ship = ship_entity(&mut app);
+    let side = app.world().get::<Rotation>(ship).unwrap().0 * Vec3::X;
+    let near = enemy_near(&mut app, "jackal", side * 5500.0, Role::Raider);
+    let far = enemy_near(&mut app, "jackal", -side * 6300.0, Role::Raider);
+    run(&mut app, 0.1);
+    assert!(app.world().get_entity(far).is_err(), "6.3 km off: gone");
+    assert!(app.world().get_entity(near).is_ok(), "5.5 km off: still coming");
+}
+
+#[test]
+fn no_raiders_on_foot_near_a_base_or_in_the_first_minute_after_boarding() {
+    let t = Tuning::default().ship_combat;
+    let due = |app: &mut App, aboard: f32| {
+        let mut r = app.world_mut().resource_mut::<Raids>();
+        r.clock = t.raid_delay + 1.0;
+        r.aboard = aboard;
+    };
+    // On foot, beside the ship: whatever the clock says.
+    let mut app = system_app();
+    run(&mut app, 0.5);
+    due(&mut app, 1000.0);
+    run(&mut app, 1.0);
+    assert!(enemies(&mut app).is_empty(), "nothing hunts you on foot");
+    // On the pad, a hundred metres from the Roost: none, however long you have been aboard.
+    board(&mut app);
+    due(&mut app, 1000.0);
+    run(&mut app, 1.0);
+    assert!(enemies(&mut app).is_empty(), "none within 3 km of a base");
+    // Away from it, but only just aboard: none until the minute is up.
+    let (p, _) = ship_state(&mut app);
+    put_ship(&mut app, p + p.normalize() * 3400.0, Vec3::ZERO);
+    due(&mut app, 0.0);
+    run(&mut app, 2.0);
+    assert!(enemies(&mut app).is_empty(), "none in the first minute");
+    due(&mut app, t.raid_grace + 0.5);
+    run(&mut app, 0.1);
+    assert!(enemies(&mut app).len() >= 2, "then the pack comes");
+    assert_eq!(app.world().resource::<Raids>().clock, 0.0, "and the clock starts again");
+}
+
+#[test]
+fn the_raid_clock_runs_faster_the_longer_the_flight_goes_without_a_fight() {
+    let mut app = aloft(3400.0);
+    run(&mut app, 2.0);
+    let early = app.world().resource::<Raids>().clock;
+    app.world_mut().resource_mut::<Raids>().quiet = 240.0;
+    let before = app.world().resource::<Raids>().clock;
+    run(&mut app, 2.0);
+    let late = app.world().resource::<Raids>().clock - before;
+    assert!(late > early * 2.5, "four quiet minutes in, it runs about three times as fast: {early:.2} then {late:.2}");
+}
+
+/// Hands the flight over to `body` with the Kestrel at `p` (that body's coordinates), at rest
+/// over its ground, then lets its fixtures stand.
+fn fly_to(app: &mut App, body: &str, p: Vec3) {
+    let (q, v) = {
+        let solar = app.world().resource::<Solar>();
+        let (q, v) = solar.bodies.convert(body, &solar.anchor, solar.epoch, p.as_dvec3(), bevy::math::DVec3::ZERO);
+        (q.as_vec3(), v.as_vec3())
+    };
+    put_ship(app, q, v);
+    run(app, 0.3);
+    assert_eq!(app.world().resource::<Solar>().anchor, body);
+}
+
+/// The Reliquary's ground point and up on Bastion, body coordinates.
+fn reliquary(app: &App) -> (Vec3, Vec3) {
+    let bases = app.world().resource::<solar::base::Bases>().clone();
+    let solar = app.world().resource::<Solar>();
+    let spec = bases.base.iter().find(|b| b.id == "reliquary").unwrap();
+    let (ground, frame, deck) = solar::base::site(spec, &solar.spheres["bastion"], solar.pad);
+    (ground + frame * Vec3::Y * deck, frame * Vec3::Y)
+}
+
+/// The patrols in the sky: what each is doing.
+fn patrol_modes(app: &mut App) -> Vec<Mode> {
+    enemies(app).into_iter().filter(|e| matches!(e.1, Role::Patrol { .. })).map(|e| e.2).collect()
+}
+
+#[test]
+fn patrols_guard_a_base_inside_eight_km_attack_inside_two_and_a_half_and_come_back_after_ten_minutes() {
+    let t = Tuning::default().ship_combat;
+    let mut app = system_app();
+    run(&mut app, 0.5);
+    run(&mut app, 0.5);
+    assert!(enemies(&mut app).is_empty(), "the Roost has no patrols");
+    board(&mut app);
+    let (base, up) = reliquary(&app);
+    fly_to(&mut app, "bastion", base + up * 9000.0);
+    run(&mut app, 0.5);
+    assert!(patrol_modes(&mut app).is_empty(), "9 km off: none up");
+    put_ship(&mut app, base + up * 7500.0, Vec3::ZERO);
+    run(&mut app, 0.5);
+    assert_eq!(patrol_modes(&mut app), [Mode::Patrol, Mode::Patrol], "7.5 km off: two up, flying their loop");
+    let censer = spec_of(&app, "censer");
+    let origin = *app.world().resource::<Origin>();
+    for (e, _, _) in enemies(&mut app) {
+        assert_eq!(app.world().get::<Ship>(e).unwrap().spec, censer, "the Regime flies Censers");
+        let (p, _, _) = pose(&app, e);
+        let height = (origin.body(p) - base).dot(up);
+        assert!((height - t.patrol_altitude).abs() < 20.0, "at patrol height: {height:.0} m");
+        assert!(app.world().get::<crate::planet::bubble::KeepAwake>(e).is_some(), "kept awake so far from you");
+    }
+    put_ship(&mut app, base + up * 3000.0, Vec3::ZERO);
+    run(&mut app, 0.5);
+    assert!(patrol_modes(&mut app).iter().all(|m| *m == Mode::Patrol), "3 km off: left alone");
+    put_ship(&mut app, base + up * 2000.0, Vec3::ZERO);
+    run(&mut app, 0.3);
+    assert!(patrol_modes(&mut app).iter().all(|m| *m != Mode::Patrol), "2 km off: they come for you, {:?}", patrol_modes(&mut app));
+    put_ship(&mut app, base + up * 3500.0, Vec3::ZERO);
+    run(&mut app, 0.3);
+    assert!(patrol_modes(&mut app).iter().all(|m| *m != Mode::Patrol), "3.5 km off: they keep after you");
+    put_ship(&mut app, base + up * 4500.0, Vec3::ZERO);
+    run(&mut app, 0.3);
+    assert!(patrol_modes(&mut app).iter().all(|m| *m == Mode::Patrol), "4.5 km off: they give up, {:?}", patrol_modes(&mut app));
+    // One shot down: back only after ten minutes of game time.
+    let (shot, _, _) = enemies(&mut app)[0];
+    app.world_mut().get_mut::<Hull>(shot).unwrap().hp = 0.0;
+    run(&mut app, 0.5);
+    assert!(app.world().get_entity(shot).is_err(), "shot down");
+    assert_eq!(patrol_modes(&mut app).len(), 1, "one left");
+    app.world_mut().resource_mut::<Patrols>().clock += t.patrol_respawn as f64 - 5.0;
+    run(&mut app, 0.5);
+    assert_eq!(patrol_modes(&mut app).len(), 1, "not yet");
+    app.world_mut().resource_mut::<Patrols>().clock += 5.0;
+    run(&mut app, 0.5);
+    assert_eq!(patrol_modes(&mut app).len(), 2, "back after ten minutes");
+    // Leaving: they go.
+    put_ship(&mut app, base + up * 9000.0, Vec3::ZERO);
+    run(&mut app, 0.2);
+    assert!(patrol_modes(&mut app).is_empty(), "gone once you are well away");
+}
+
+#[test]
+fn a_raider_closes_on_the_kestrel_and_fires_only_with_it_in_the_cone() {
+    let mut app = aloft(2000.0);
+    let t = Tuning::default().ship_combat;
+    let ship = ship_entity(&mut app);
+    let side = app.world().get::<Rotation>(ship).unwrap().0 * Vec3::X;
+    // A steady hand, so every pass that should land does.
+    let spec = spec_of(&app, "jackal");
+    app.world_mut().resource_mut::<solar::ship::Ships>().ship[spec].ai.wobble = 0.0;
+    let jackal = enemy_near(&mut app, "jackal", side * 2000.0, Role::Raider);
+    let ai = app.world().resource::<solar::ship::Ships>().ship[spec].ai.clone();
+    let (mut nearest, mut fired, mut modes) = (f32::MAX, 0, HashSet::new());
+    for _ in 0..(10.0 / DT) as usize {
+        let ((p, nose, v), (q, _, w)) = (pose(&app, jackal), pose(&app, ship));
+        nearest = nearest.min(p.distance(q));
+        app.update();
+        let Some(enemy) = app.world().get::<Enemy>(jackal) else { break };
+        modes.insert(format!("{:?}", enemy.mode));
+        if app.world().get::<ShipControls>(jackal).unwrap().fire {
+            fired += 1;
+            let aim = solar::ai::lead(q - p, w - v, t.gun_speed);
+            let off = nose.angle_between(aim).to_degrees();
+            assert!(off < ai.cone + 1.0, "fired {off:.1} degrees off the lead");
+        }
+    }
+    assert!(nearest < 800.0, "closed from 2 km to {nearest:.0} m");
+    assert!(fired > 0, "and fired: {modes:?}");
+    let hull = *app.world().get::<Hull>(ship).unwrap();
+    assert!(hull.shield < 60.0, "and hit: shield {} hull {}", hull.shield, hull.hp);
+    assert!(modes.contains("Break"), "and broke off after a pass: {modes:?}");
+}
+
+#[test]
+fn an_enemy_pilot_diving_on_a_low_target_never_flies_into_the_ground() {
+    let mut app = aloft(60.0);
+    let ship = ship_entity(&mut app);
+    let rot = app.world().get::<Rotation>(ship).unwrap().0;
+    let mut ships = Vec::new();
+    for id in ["jackal", "censer", "welder", "sentry"] {
+        let e = enemy_near(&mut app, id, rot * Vec3::new(400.0 * ships.len() as f32 - 600.0, 300.0, -1200.0), Role::Raider);
+        // One side, so none is shot down by another's stray fire.
+        app.world_mut().entity_mut(e).insert(Faction::Raiders);
+        app.world_mut().get_mut::<LinearVelocity>(e).unwrap().0 = (pose(&app, ship).0 - pose(&app, e).0).normalize() * 150.0;
+        ships.push((id, e, f32::MAX));
+    }
+    for _ in 0..(40.0 / DT) as usize {
+        app.update();
+        let solar = app.world().resource::<Solar>();
+        let (surface, origin) = (app.world().resource::<Surface>(), app.world().resource::<Origin>());
+        for (_, e, low) in &mut ships {
+            let Some(p) = app.world().get::<Position>(*e) else { continue };
+            *low = low.min(solar::ship::clearance(solar, surface, origin.body(p.0)));
+        }
+    }
+    for (id, e, low) in ships {
+        assert!(app.world().get_entity(e).is_ok(), "{id} still flying");
+        assert!(low > 25.0, "{id} came down to {low:.0} m over the ground");
+    }
+}
+
+#[test]
+fn a_dogfight_across_an_origin_rebase_keeps_every_ship_on_its_path() {
+    let mut app = aloft(2000.0);
+    let ship = ship_entity(&mut app);
+    let (_, nose, _) = pose(&app, ship);
+    let side = app.world().get::<Rotation>(ship).unwrap().0 * Vec3::X;
+    let raiders = [enemy_near(&mut app, "jackal", side * 900.0 - nose * 300.0, Role::Raider), enemy_near(&mut app, "jackal", -side * 1200.0, Role::Raider)];
+    // Full throttle, level: the Kestrel runs and the raiders chase it, the world re-centring on
+    // it every 400 m.
+    app.world_mut().resource_mut::<Tuning>().terrain.origin_step = 400.0;
+    input(&mut app).thrust = 1.0;
+    let start = app.world().resource::<Origin>().offset;
+    let mut rebased = 0;
+    for tick in 0..(10.0 / DT) as usize {
+        let origin = *app.world().resource::<Origin>();
+        let last: Vec<(Vec3, Vec3)> = raiders.iter().map(|&e| (origin.body(app.world().get::<Position>(e).unwrap().0), app.world().get::<LinearVelocity>(e).unwrap().0)).collect();
+        app.update();
+        let now = *app.world().resource::<Origin>();
+        rebased += (now.offset != origin.offset) as i32;
+        for (k, &e) in raiders.iter().enumerate() {
+            let (pos, tf, v) = (app.world().get::<Position>(e).unwrap().0, app.world().get::<Transform>(e).unwrap().translation, app.world().get::<LinearVelocity>(e).unwrap().0);
+            assert!(pos.distance(tf) < 0.01, "tick {tick}: transform and body agree");
+            let step = now.body(pos) - last[k].0;
+            let expected = (last[k].1 + v) / 2.0 * DT;
+            assert!(step.distance(expected) < 1.0, "tick {tick}: raider {k} jumped {:.2} m off its path", step.distance(expected));
+        }
+    }
+    assert!(rebased > 0 && app.world().resource::<Origin>().offset != start, "the origin moved under the fight");
+}

@@ -16,6 +16,7 @@ use bevy::prelude::*;
 use bevy::world_serialization::{WorldAssetRoot, WorldInstanceReady};
 use serde::Deserialize;
 
+use super::ai::AiSpec;
 use super::combat::Faction;
 use super::Solar;
 use crate::camera::ChaseCam;
@@ -144,6 +145,9 @@ pub struct ShipSpec {
     /// The nose guns' muzzles, in the ship's frame; a ship with none has no guns.
     #[serde(default)]
     pub guns: Vec<[f32; 3]>,
+    /// How the hull fights when an enemy pilot (`ai`) flies it.
+    #[serde(default)]
+    pub ai: AiSpec,
 }
 
 /// Every ship in the game, in the order they stand on the apron. The first is the player's.
@@ -174,6 +178,18 @@ fn default_shield() -> f32 {
 }
 fn default_hull() -> f32 {
     100.0
+}
+
+/// How high body point `body` is over the anchor's ground (over the sea, the water), or
+/// `f32::MAX` in deep space.
+pub fn clearance(solar: &Solar, surface: &Surface, body: Vec3) -> f32 {
+    if solar.anchor == super::orbit::STAR {
+        return f32::MAX;
+    }
+    let sphere = &solar.spheres[&solar.anchor];
+    let up = surface.up(body);
+    let floor = if sphere.body.land < 1.0 { sphere.height(up).max(0.0) } else { sphere.height(up) };
+    surface.altitude(body) - floor
 }
 
 /// How much flight assist holds the ship at `clearance` metres over the ground: fully below
@@ -271,6 +287,11 @@ pub struct ShipControls {
     /// The mouse as a stick, smoothed over a few ticks so uneven frames do not jolt the ship.
     mouse_stick: Vec2,
 }
+
+/// A ship flown by an enemy pilot (`ai`) instead of someone in its seat: `fly` flies it on its
+/// own stick like a piloted ship, and it never parks.
+#[derive(Component)]
+pub struct Autopilot;
 
 #[derive(Component)]
 struct Exhaust;
@@ -487,11 +508,12 @@ fn controls(
     input: Res<PlayerInput>,
     mut view: ResMut<ViewAngles>,
     flying: Query<Entity, (With<Player>, With<Driving>)>,
-    mut ships: Query<(&Ship, &mut ShipControls, &mut ChaseCam)>,
+    mut ships: Query<(&Ship, &mut ShipControls, &mut ChaseCam, &Transform)>,
+    enemies: Query<&Transform, With<Autopilot>>,
 ) {
     let player = flying.single().ok();
-    let Some((_, mut controls, mut chase)) = ships.iter_mut().find(|(s, ..)| s.pilot.is_some() && s.pilot == player) else {
-        for (_, mut controls, _) in &mut ships {
+    let Some((_, mut controls, mut chase, tf)) = ships.iter_mut().find(|(s, ..)| s.pilot.is_some() && s.pilot == player) else {
+        for (_, mut controls, _, _) in &mut ships {
             controls.look = Vec2::ZERO;
         }
         return;
@@ -505,6 +527,17 @@ fn controls(
     } else {
         controls.mouse += turned;
         controls.look *= (-8.0 * time.delta_secs()).exp();
+    }
+    // Dev aid: `RUST_REGIME_SCREENSHOT_LOOK=<yaw>,<pitch>` (degrees, left and up) holds the view
+    // looking round, or `=enemy` at the nearest enemy ship, for screenshots of what is beside or
+    // behind the ship.
+    if let Ok(dev) = std::env::var("RUST_REGIME_SCREENSHOT_LOOK") {
+        let mut angles = dev.split(',').map(|a| a.trim().parse::<f32>().unwrap_or(0.0).to_radians());
+        let nearest = enemies.iter().map(|e| e.translation - tf.translation).min_by(|a, b| a.length().total_cmp(&b.length()));
+        controls.look = match nearest.filter(|_| dev == "enemy").map(|d| tf.rotation.inverse() * d.normalize_or_zero()) {
+            Some(l) => Vec2::new((-l.x).atan2(-l.z), l.y.clamp(-1.0, 1.0).asin()).clamp(Vec2::new(-2.6, -1.2), Vec2::new(2.6, 1.2)),
+            None => Vec2::new(angles.next().unwrap_or(0.0), angles.next().unwrap_or(0.0)),
+        };
     }
     chase.look = controls.look;
     // The stick comes from the bindings (see `controls`): keys, triggers, the left stick and the
@@ -596,9 +629,10 @@ const CAP_BRAKE: f32 = 600.0;
 /// Past this deceleration needed to stop short of the ground, assist pulls the ship out of a dive.
 const PULL_OUT: f32 = 50.0;
 
-/// One tick of flight for each ship being flown, on its own stick, and the pilot carried in its seat.
-#[allow(clippy::too_many_arguments)]
-fn fly(
+/// One tick of flight for each ship being flown, by a pilot or an autopilot, on its own stick, and
+/// the pilot carried in its seat.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub(super) fn fly(
     time: Res<Time>,
     solar: Res<Solar>,
     surface: Res<Surface>,
@@ -609,7 +643,7 @@ fn fly(
     spatial: Option<SpatialQuery>,
     mut input: ResMut<PlayerInput>,
     mut hud: ResMut<crate::hud::FlightHud>,
-    mut ships: Query<(Entity, &mut Ship, &mut ShipControls, &mut ChaseCam, Forces)>,
+    mut ships: Query<(Entity, &mut Ship, &mut ShipControls, &mut ChaseCam, Forces, Has<Autopilot>)>,
     mut players: Query<(&mut Player, &mut Transform), With<Driving>>,
 ) {
     let dt = time.delta_secs();
@@ -618,22 +652,25 @@ fn fly(
     }
     hud.too_fast = (hud.too_fast - dt).max(0.0);
     hud.active = false;
-    // The Yard's tuning rig: more thrust and speed, a little sharper turning.
-    let (power, agility) = super::station::tune(save.map_or(0, |s| s.ship_level));
+    // The Yard's tuning rig: more thrust and speed, a little sharper turning, on the player's ship.
+    let tuned = super::station::tune(save.map_or(0, |s| s.ship_level));
     let mut flown = false;
-    for (entity, mut ship, mut controls, mut chase, mut forces) in &mut ships {
+    for (entity, mut ship, mut controls, mut chase, mut forces, autopilot) in &mut ships {
         // The mouse as a stick: how fast it moved against how fast makes full stick, eased over a
         // few ticks, so the same flick turns the ship the same at any frame or tick rate.
         let mouse = std::mem::take(&mut controls.mouse);
         let raw = (Vec2::new(mouse.y, mouse.x) / (MOUSE_RATE * dt) * tuning.flight_mouse).clamp(Vec2::NEG_ONE, Vec2::ONE);
         controls.mouse_stick = controls.mouse_stick.lerp(raw, 1.0 - (-30.0 * dt).exp());
-        let Some(pilot) = ship.pilot else {
+        let pilot = ship.pilot;
+        if pilot.is_none() && !autopilot {
             ship.burn = 0.0;
             ship.heat *= (-0.5 * dt).exp();
             ship.boost_used = (ship.boost_used - dt / BOOST_REFILL).max(0.0);
             continue;
-        };
-        flown = true;
+        }
+        flown |= pilot.is_some();
+        // An enemy flies its hull stock.
+        let (power, agility) = if pilot.is_some() { tuned } else { (1.0, 1.0) };
         let spec = &specs.ship[ship.spec];
         let rot = forces.rotation().0;
         let pos = forces.position().0;
@@ -641,15 +678,13 @@ fn fly(
         let up = surface.up(body);
         let anchored = solar.anchor != super::orbit::STAR;
         let sphere = &solar.spheres[&solar.anchor];
-        // Over the sea the water is the ground.
-        let floor = if sphere.body.land < 1.0 { sphere.height(up).max(0.0) } else { sphere.height(up) };
-        let clearance = if anchored { surface.altitude(body) - floor } else { f32::MAX };
+        let clearance = clearance(&solar, &surface, body);
         // Under the gear: close to the ground a ray finds the pads and decks the height map misses.
         let reach = LANDING_HEIGHT * 2.0 + spec.rest;
         let ray = (anchored && clearance < reach + 50.0)
             .then(|| spatial.as_ref().zip(Dir3::new(-up).ok()))
             .flatten()
-            .and_then(|(q, down)| q.cast_ray(pos, down, reach, true, &SpatialQueryFilter::from_excluded_entities([entity, pilot])));
+            .and_then(|(q, down)| q.cast_ray(pos, down, reach, true, &SpatialQueryFilter::from_excluded_entities(std::iter::once(entity).chain(pilot))));
         let gear = ray.map_or(clearance - spec.rest, |hit| (hit.distance - spec.rest).min(clearance - spec.rest));
         let assisted = if anchored { assist(clearance) } else { 0.0 };
         let air = sphere.body.air.as_ref().filter(|_| anchored).map_or(0.0, |a| a.density_at(surface.altitude(body)));
@@ -746,6 +781,8 @@ fn fly(
         // The chase camera widens with speed and more with the boost.
         chase.kick = boosting as i32 as f32 * 0.7 + (speed / (spec.cruise * 3.0)).min(1.0) * 0.3;
 
+        // The rest is the pilot's seat and the HUD, which an autopilot has neither of.
+        let Some(pilot) = pilot else { continue };
         if let Ok((mut p, mut tf)) = players.get_mut(pilot) {
             tf.translation = pos + rot * Vec3::from(spec.seat);
             tf.rotation = carry(p.frame, up);
@@ -807,17 +844,18 @@ fn seat(specs: Res<Ships>, ships: Query<(&Ship, &Position, &Rotation)>, mut play
 /// nudge it and it never jitters on its gear; boarding wakes it. The ship the player last flew,
 /// once parked, is where they come back after a fall or a reset: on its cabin floor. Before any
 /// flight that is the first ship. A fighter has no cabin floor, so it is never the respawn.
-fn park(mut commands: Commands, specs: Res<Ships>, ships: Query<(Entity, &Ship, &Transform, &LinearVelocity, &RigidBody)>, origin: Res<Origin>, mut bounds: ResMut<WorldBounds>) {
-    for (e, ship, _, v, body) in &ships {
-        if ship.pilot.is_none() && *body == RigidBody::Dynamic && v.0.length() < 0.5 {
+#[allow(clippy::type_complexity)]
+fn park(mut commands: Commands, specs: Res<Ships>, ships: Query<(Entity, &Ship, &Transform, &LinearVelocity, &RigidBody, Has<Autopilot>)>, origin: Res<Origin>, mut bounds: ResMut<WorldBounds>) {
+    for (e, ship, _, v, body, autopilot) in &ships {
+        if ship.pilot.is_none() && !autopilot && *body == RigidBody::Dynamic && v.0.length() < 0.5 {
             commands.entity(e).insert(RigidBody::Static);
         }
     }
     let newest = ships
         .iter()
-        .filter(|(_, s, _, v, _)| s.pilot.is_none() && v.0.length() < 0.5 && specs.ship[s.spec].boardable())
+        .filter(|(_, s, _, v, _, _)| s.pilot.is_none() && v.0.length() < 0.5 && specs.ship[s.spec].boardable())
         .max_by(|a, b| a.1.landed_at.total_cmp(&b.1.landed_at).then(b.1.spec.cmp(&a.1.spec)));
-    if let Some((_, ship, tf, _, _)) = newest {
+    if let Some((_, ship, tf, _, _, _)) = newest {
         let spawn = origin.body(tf.translation + tf.rotation * Vec3::from(specs.ship[ship.spec].exit));
         if spawn.distance(bounds.spawn) > 0.5 {
             bounds.spawn = spawn;

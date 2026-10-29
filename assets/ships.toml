@@ -18,6 +18,15 @@
 # points (default 60 and 100; the shield takes damage first and comes back), `faction` is whose
 # ship it is (default "deserters", the player's side: shots never hurt their own side) and `guns`
 # are the nose guns' muzzles in the ship's frame, fired in turn (none, no guns).
+#
+# `ai` is how the hull fights when an enemy pilot flies it (`src/solar/ai.rs`), through the same
+# stick and flight model as yours: inside `attack_range` (m, default 1200) it aims where its shots
+# will meet you and fires while that is within `cone` degrees of its nose (3); it closes to `hold`
+# metres and keeps there (0, the default, rushes straight in); nearer than `break_range` (150) it
+# breaks off for about `break_time` seconds (2.5) at `break_turn` of full stick (1: a hard turn;
+# less is a wide one) and opens out to three times that range before it turns back in; at
+# `flee_hull` of its hull it runs for good (0, never); further than `boost_range` (1500) it
+# boosts; its aim wanders up to `wobble` degrees across the lead (1).
 
 [[ship]]
 id = "kestrel"
@@ -199,6 +208,7 @@ faction = "raiders"
 shield = 30
 hull = 40
 guns = [[-0.75, -0.05, -0.4], [0.75, -0.05, -0.4]]
+ai = { attack_range = 1000, cone = 4, break_range = 250, break_time = 2, flee_hull = 0.3, wobble = 1.5 }   # rushes in, runs when hurt
 mass = 2500          # the raiders' scrapper: light and quick, comes in packs
 thrust = 40
 lift = 24
@@ -220,6 +230,7 @@ faction = "pmc"
 shield = 50
 hull = 70
 guns = [[-1.6, -0.05, -1.0], [1.6, -0.05, -1.0]]
+ai = { attack_range = 1200, hold = 600, break_range = 300, break_time = 3, break_turn = 0.9, wobble = 1.2 }   # stands off and shoots
 mass = 3500          # the PMC's patrol: light and quick, keeps its distance
 thrust = 38
 lift = 22
@@ -241,6 +252,7 @@ faction = "regime"
 shield = 50
 hull = 90
 guns = [[-1.0, -0.05, -1.5], [1.0, -0.05, -1.5]]
+ai = { attack_range = 1500, cone = 2.5, break_range = 400, break_time = 6, break_turn = 0.5, boost_range = 2500, wobble = 0.8 }   # long strafing passes, a wide turn
 mass = 5000          # the Regime's patrol: fast in a straight line, slow to turn
 thrust = 48
 lift = 18
@@ -262,6 +274,7 @@ faction = "scrappers"
 shield = 60
 hull = 200
 guns = [[-2.0, -0.35, -1.5], [1.6, 0.0, -1.5]]
+ai = { attack_range = 900, cone = 4, hold = 60, break_range = 40, break_time = 3, break_turn = 0.8 }   # closes right in
 mass = 9000          # the Scrappers' patrol: heavy and slow
 thrust = 24
 lift = 22

@@ -203,6 +203,21 @@ hurt your own side. Damage takes the shield first, which comes back after 5 s wi
 hull at zero blows the ship apart, so the parked Jackal can be shot down. The numbers are in
 `[ship_combat]` in `tuning.toml`. `RUST_REGIME_SCREENSHOT_FIRE=1` holds the trigger for
 screenshots, e.g. with `RUST_REGIME_AT=home,600 RUST_REGIME_FIGHTER=jackal,150`.
+**Enemies** hunt ships, never you on foot. While you fly, **raiders** come in packs of two to
+four Jackals every minute and a half or so (sooner the longer you go without a fight), 1.5 to
+3 km off to one side and never ahead of your nose, but not in the first minute after you board
+or within 3 km of a base; one that falls 6 km behind is gone. Each faction base but the Roost
+keeps **two patrols** up while you are within 8 km (Censers over the Reliquary, Welders over the
+Yard, Sentries over Site Vantage), circling it 300 m up; they come for you inside 2.5 km of it,
+let you go past 4 km, and one shot down is back after ten minutes. At most eight enemy ships fly
+at once. Each is flown by `solar::ai` through its own stick, with the same flight model, boost
+tank and flight assist as yours: it leads its shots, fires inside a small cone, breaks off after
+a pass, and keeps off the ground. How each hull fights is its `ai` entry in `ships.toml` (the
+Jackal rushes in and runs at 30% hull, the Sentry stands off at 600 m, the Censer makes long
+strafing passes and wide turns, the Welder closes right in); the rest is in `[ship_combat]`.
+`RUST_REGIME_RAIDERS=1` sends a pack at once, and `RUST_REGIME_SCREENSHOT_LOOK=<yaw>,<pitch>`
+(degrees, or `enemy` for the nearest enemy) holds the flight view looking round, e.g.
+`RUST_REGIME_AT=home,1500 RUST_REGIME_RAIDERS=1 RUST_REGIME_SCREENSHOT_LOOK=100,10`.
 
 Each faction has a base on its world, from `assets/bases.toml` and
 `assets/models/bases/<id>.glb` (built like the ships: `tools/bases/build.sh [ids]

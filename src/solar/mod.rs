@@ -8,8 +8,10 @@
 //! re-expresses the player and the ship in the new body's frame, drops the old ground and streams
 //! the new one, so the handoff is continuous in position and velocity.
 
+pub mod ai;
 pub mod base;
 pub mod combat;
+pub mod enemy;
 pub mod orbit;
 pub mod ship;
 pub mod station;
@@ -124,6 +126,8 @@ impl Plugin for SolarPlugin {
         add_streaming(app);
         ship::build(app);
         combat::build(app);
+        ai::build(app);
+        enemy::build(app);
         base::build(app);
         station::build(app);
         app.add_systems(Startup, crate::quartermaster::start_kit.after(crate::gunsmith::restore));
