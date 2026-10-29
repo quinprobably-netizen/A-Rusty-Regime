@@ -4277,16 +4277,29 @@ fn the_yards_parts_rack_opens_its_menu_and_sells_for_scrap_at_the_scrappers_pric
     tap(&mut app, KeyCode::Enter);
     assert_eq!((app.world().resource::<Save>().scrap, app.world().resource::<Save>().ship_parts[3]), (87, 1), "Mk1 rack for 13");
     tap(&mut app, KeyCode::Escape);
-    // The row under the parts sells the hold: 87 scrap at a friend's $7.
+    // The row under the parts sells the hold: 87 scrap from a friend's $7, a little less as the
+    // Yard's stock fills.
     press_use(&mut app);
     run(&mut app, 0.2);
     let banked = app.world().resource::<Save>().banked;
+    let (_, worth) = solar::economy::sale(app.world().resource::<Save>(), "yard", Faction::Scrappers, &Tuning::default().economy, &Tuning::default().ship_combat);
+    assert!(worth < 87 * 7 && worth > 87 * 6, "{worth}");
     for _ in 0..4 {
         tap(&mut app, KeyCode::KeyS);
     }
     tap(&mut app, KeyCode::Enter);
-    assert_eq!((app.world().resource::<Save>().scrap, app.world().resource::<Save>().banked), (0, banked + 87 * 7), "sold to a friend at $7");
-    assert_eq!(app.world().resource::<Menu>().note, format!("Sold 87 scrap: +${}", 87 * 7));
+    assert_eq!((app.world().resource::<Save>().scrap, app.world().resource::<Save>().banked), (0, banked + worth), "sold to a friend");
+    assert_eq!(app.world().resource::<Menu>().note, format!("Sold 87 scrap: +${worth}"));
+    assert_eq!(app.world().resource::<Save>().yard_stock.map(|s| s.round()), Some(387.0), "on the Yard's stockpile");
+    // The row under that buys a lot back at half again over the Yard's price.
+    let banked = app.world().resource::<Save>().banked;
+    tap(&mut app, KeyCode::KeyS);
+    tap(&mut app, KeyCode::Enter);
+    let save = app.world().resource::<Save>().clone();
+    assert_eq!(save.scrap, 10);
+    assert!(banked - save.banked >= 10 * 5, "{} for 10", banked - save.banked);
+    tap(&mut app, KeyCode::KeyW);
+    app.world_mut().resource_mut::<Save>().scrap = 0;
     tap(&mut app, KeyCode::Enter);
     assert_eq!(app.world().resource::<Menu>().note, "The hold is empty");
     tap(&mut app, KeyCode::Escape);

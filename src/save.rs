@@ -110,6 +110,8 @@ pub struct Save {
     pub day: u32,
     pub day_clock: f32,
     pub seed: u64,
+    /// The Yard's scrap stockpile (`solar::economy`); `None` is full, at `[economy] yard_target`.
+    pub yard_stock: Option<f32>,
     /// Enemy ships you have shot down, in all and by faction id (`combat::Faction::id`), and how
     /// often your own ship has been shot down.
     pub kills: u32,

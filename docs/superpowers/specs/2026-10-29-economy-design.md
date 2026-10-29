@@ -6,7 +6,9 @@ death rule. **Stage A is built** (`docs/superpowers/plans/2026-10-29-economy-sta
 simplifications: the Roost charges list price, and selling scrap is at the Yard only until stage
 B gives Vantage a board screen). **Stage B is built** (`docs/superpowers/plans/2026-10-29-economy-stage-b.md`,
 which records the choices it made: courier pay per km, supply runs raising standing like a
-delivery, the board spawned inside each door). C and D are not built.
+delivery, the board spawned inside each door). **Stage C is built**
+(`docs/superpowers/plans/2026-10-29-economy-stage-c.md`; the stock recovers 5% of the gap a game
+minute, not 1%, so it is 90% back in a day as this spec intends). D is not built.
 
 ## TL;DR
 

@@ -290,7 +290,10 @@ bank: a fresh Kestrel costs a **rebuy fee** of a tenth of what the engine tune a
 are worth (parts count their scrap at $6), at least $100 and at most $1500, and never more than
 the bank holds. Reaching a base's door also **repairs** the hull of the ship you landed, if it is
 parked within 400 m, at $1 a point (priced by your standing there) as far as the bank goes. The
-Yard's parts rack **buys scrap** at $6 each ($7 to a friend, $5 below -40). Every price in the
+Yard's parts rack **buys scrap** from its **stockpile** price: $6 each with 300 in stock, more
+when it runs low and less as you fill it ($3 to $12, 15% more to a friend, 15% less below -40),
+each scrap of a big sale at the price it meets. The stock drifts back to 300 over a game day.
+The rack also sells scrap back, ten at a time, at half again over its price. Every price in the
 game is in `[economy]` in `tuning.toml`.
 **Job boards** (stage B, `solar::board`): every base has a board just inside its door, and Site
 Vantage's courier desk is one too. E opens it (W/S to pick, Enter to take). It holds three offers
@@ -298,7 +301,8 @@ a game day (48 minutes), the same however often you look: a **courier** parcel f
 door ($250 and $3 a km between the worlds, half again to a faction whose patrols shoot you), a
 **cull** of 4 to 8 raiders shot down by your ship ($50 each, into the pocket on the last one, on
 top of the bounties), and on some days a **supply run** of 20 to 40 scrap brought back to that
-board (never at the Yard). You carry two jobs at a time, each due by the end of the next day. A
+board (at the Yard only while its stock is under half, paying 60% more, and the scrap goes on
+its stockpile). You carry two jobs at a time, each due by the end of the next day. A
 parcel let lapse or lost with your ship costs 5 standing with whoever gave it to you; culls and
 supply runs are not cargo and survive being shot down. Vantage's board buys scrap at $4. Your jobs
 show in the flight readout and Pause > Contracts, and a base's marker says DELIVER HERE or HAND IN

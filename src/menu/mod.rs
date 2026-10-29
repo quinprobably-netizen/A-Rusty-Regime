@@ -372,6 +372,8 @@ enum Row {
     Part(usize),
     /// Sell the hold's scrap, on the parts rack and on a board that buys it.
     Sell,
+    /// Buy a lot of scrap, on the Yard's parts rack.
+    Buy,
     /// An offer on the open job board.
     Offer(usize),
     /// One of the jobs you carry, on the job board.
@@ -492,6 +494,7 @@ fn rows(panel: Panel, screen: Screen, tuned: [bool; 4], fits: bool) -> Vec<Row> 
         Panel::Parts => {
             rows.extend((0..crate::solar::salvage::Part::ALL.len()).map(Row::Part));
             rows.push(Row::Sell);
+            rows.push(Row::Buy);
             rows.push(Row::Action("BACK", Action::Back));
         }
         Panel::Wardrobe => {
@@ -941,13 +944,22 @@ fn act(
         Row::Sell => {
             if select && let (Some(mut save), Some(file)) = (save, file) {
                 let scrap = save.scrap;
-                let (faction, share) = if menu.panel == Panel::Board { (menu.board_faction, tuning.economy.scrap_buyers.get(&menu.board).copied()) } else { (menu.rack, Some(1.0)) };
-                menu.note = match share {
+                let (base, faction) = if menu.panel == Panel::Board { (menu.board.clone(), menu.board_faction) } else { (crate::solar::economy::YARD.to_string(), menu.rack) };
+                menu.note = match crate::solar::economy::sell_scrap(&mut save, &base, faction, &tuning.economy, &tuning.ship_combat) {
                     None => "This board buys no scrap".to_string(),
-                    Some(share) => match crate::solar::economy::sell_scrap(&mut save, faction, share, &tuning.economy, &tuning.ship_combat) {
-                        0 => "The hold is empty".to_string(),
-                        money => format!("Sold {scrap} scrap: +${money}"),
-                    },
+                    Some(_) if scrap == 0 => "The hold is empty".to_string(),
+                    Some(money) => format!("Sold {scrap} scrap: +${money}"),
+                };
+                file.write(&save);
+            }
+        }
+        Row::Buy => {
+            if select && let (Some(mut save), Some(file)) = (save, file) {
+                use crate::solar::economy::{buy_scrap, Short};
+                menu.note = match buy_scrap(&mut save, menu.rack, &tuning.economy, &tuning.ship_combat) {
+                    Ok((n, cost)) => format!("Bought {n} scrap: -${cost}"),
+                    Err(Short::Hold) => "The hold is full".to_string(),
+                    Err(Short::Money(each)) => format!("Scrap is ${each} each: you have ${}", save.banked),
                 };
                 file.write(&save);
             }
@@ -965,7 +977,7 @@ fn act(
         }
         Row::Job(_) => {
             if select && let (Some(mut save), Some(file)) = (save, file) {
-                menu.note = match crate::solar::board::hand_in(&mut save, &menu.board) {
+                menu.note = match crate::solar::board::hand_in(&mut save, &menu.board, &tuning.economy) {
                     Some((scrap, pay)) => {
                         crate::solar::standing::delivered(&mut save, menu.board_faction, &tuning.ship_combat);
                         format!("Handed in {scrap} scrap: +${pay}")

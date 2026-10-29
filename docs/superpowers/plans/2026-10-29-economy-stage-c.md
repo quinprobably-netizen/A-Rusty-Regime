@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- New numbers in `[economy]`: `yard_target = 300`, `yard_recover = 0.01` (share of the gap a game minute), `scrap_price_min = 3`, `scrap_price_max = 12`, `scrap_markup = 1.5`, `yard_shortage = 0.5`, `shortage_pay = 1.6`, `scrap_lot = 10`.
+- New numbers in `[economy]`: `yard_target = 300`, `yard_recover = 0.05` (share of the gap a game minute, so 90% back in a day), `scrap_price_min = 3`, `scrap_price_max = 12`, `scrap_markup = 1.5`, `yard_shortage = 0.5`, `shortage_pay = 1.6`, `scrap_lot = 10`.
 - `Save::yard_stock: Option<f32>`; `None` reads as `yard_target`, so old saves start full.
 - Selling sells one scrap at a time at the price that scrap meets, so a big hold cannot dump at the full price.
 
@@ -34,7 +34,7 @@
 - `sale(save, base, faction, e, t) -> (u32, u32)`: scrap sold and money, pure: one scrap at a time at `standing::buys(round(value))` with the Yard's stock rising by one after each.
 - `sell_scrap(save, base, faction, e, t) -> u32` applies `sale`: hold to 0, money banked, the Yard's stock up by the scrap.
 - System `recover_stock`: `stock += (target - stock) × (1 - (1 - yard_recover)^(dt / 60))`.
-- Tests: price at target is 6, at half stock about 8.5, at 4× stock 3 (floor), at 0 stock 12 (cap); selling 60 at the Yard pays less than 360 and leaves stock 360; Vantage's 30 pays 120 whatever the Yard's stock; recovery moves 1% of the gap a minute and reaches within 10% of target in a day.
+- Tests: price at target is 6, at half stock about 8.5, at 4× stock 3 (floor), at 0 stock 12 (cap); selling 60 at the Yard pays less than 360 and leaves stock 360; Vantage's 30 pays 120 whatever the Yard's stock; recovery moves 5% of the gap a minute and reaches within 10% of target in a day.
 
 ### Task 2: Buying scrap at the Yard
 

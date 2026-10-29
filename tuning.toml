@@ -379,7 +379,15 @@ supply_chance = 0.5         # a board has a supply run this share of days (never
 jobs = 2                    # jobs you can carry at once
 drop_standing = -5          # a parcel lost with your ship or let lapse, with whoever gave it
 day = 2880                  # s of game time to a day: boards change, jobs taken yesterday lapse
-scrap_buyers = { yard = 1.0, outpost = 0.7 }  # boards that buy scrap, at this share of scrap_value
+scrap_buyers = { yard = 1.0, outpost = 0.7 }  # boards that buy scrap, at this share of scrap_value (the Yard's of its stockpile price)
+yard_target = 300           # the Yard's scrap stockpile: at this it pays scrap_value
+yard_recover = 0.05         # share of the way back to target a game minute (90% in a day)
+scrap_price_min = 3         # $ a scrap, however full the Yard is
+scrap_price_max = 12        # and however empty
+scrap_markup = 1.5          # the Yard sells scrap at this over its price
+scrap_lot = 10              # scrap a purchase
+yard_shortage = 0.5         # below this share of target its board asks for supply runs
+shortage_pay = 1.6          # paying this much more
 scrap_value = 6             # $ a scrap: what the Yard pays, and what parts count for in the ship's value
 hold_base = 60              # scrap the hold carries
 hold_per_plating = 20       # and this much more a level of hull plating
