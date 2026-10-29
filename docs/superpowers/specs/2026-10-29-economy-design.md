@@ -41,6 +41,7 @@ want any of it changed. Faction hulls for sale (stage D) is the part most worth 
 | `board_day` | u32 | New. Game day the boards were last generated for. |
 | `yard_stock` | u32 | New. The Yard's scrap stockpile. Starts at `yard_target`. |
 | `day_clock` | f32 | New. Game seconds into the current day. A day is 2880 s, as standing recovery already uses. |
+| `seed` | u64 | New. Drawn once when the save is created; every board draws from it. There is no save seed today. |
 
 Standing, weapons, parts, tune, ship parts, modules and fitted are unchanged and survive death.
 
