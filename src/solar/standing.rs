@@ -129,7 +129,7 @@ impl Level {
     pub fn gives(self, t: &ShipCombat) -> String {
         let pct = |f: f32| (f * 100.0).round() as i32;
         match self {
-            Level::Hostile => "Patrols shoot on sight, hunters come after you, and its base will not serve you".into(),
+            Level::Hostile => "Patrols shoot on sight, hunters come after you, and its base will not serve you (its courier desk still will)".into(),
             Level::Wary => format!("Patrols shoot on sight; below {} its base charges {}% more", t.standing_wary, pct(t.standing_markup)),
             Level::Neutral => "Patrols let you pass; the usual prices".into(),
             Level::Friendly | Level::Allied => format!("Patrols let you pass; {}% off at its base, and parcels to it pay {}% more", pct(t.standing_discount), pct(t.standing_bonus)),
@@ -167,7 +167,7 @@ pub fn hostile(save: &Save, faction: Faction, t: &ShipCombat) -> bool {
     get(save, faction, t) < 0
 }
 
-/// It hunts you, and its base will not serve you.
+/// It hunts you, and its base will not serve you (but for a courier desk).
 pub fn hunted(save: &Save, faction: Faction, t: &ShipCombat) -> bool {
     moves(faction) && get(save, faction, t) <= t.standing_hunted
 }

@@ -3715,6 +3715,15 @@ fn at_minus_60_a_faction_sends_hunters_flying_its_patrol_hull() {
     assert!(app.world().resource::<Raids>().hunts.is_empty());
 }
 
+/// `stand_at_station`, with any station a test put there before taken away first.
+fn only_station(app: &mut App, kind: StationKind, base: usize) {
+    let old: Vec<Entity> = app.world_mut().query::<(Entity, &Station)>().iter(app.world()).filter(|(_, s)| s.label == "Test").map(|(e, _)| e).collect();
+    for e in old {
+        app.world_mut().despawn(e);
+    }
+    stand_at_station(app, kind, base);
+}
+
 #[test]
 fn a_friendly_base_sells_for_less_a_wary_one_for_more_and_a_hostile_one_not_at_all() {
     let mut app = system_app();
@@ -3741,9 +3750,21 @@ fn a_friendly_base_sells_for_less_a_wary_one_for_more_and_a_hostile_one_not_at_a
     press_use(&mut app);
     assert_eq!((app.world().resource::<Save>().ship_level, app.world().resource::<Save>().banked), (1, 10_000), "refused");
     assert!(prompt(&app).contains("The Scrappers will not serve you"), "{}", prompt(&app));
+    // Hated by the PMC, its courier desk still hands out a parcel, while any other station of
+    // Site Vantage's would refuse you.
+    let vantage = 3;
+    set_standing(&mut app, Faction::Pmc, -80);
+    only_station(&mut app, StationKind::Contracts, vantage);
+    press_use(&mut app);
+    assert!(app.world().resource::<Save>().contract.is_some(), "a parcel at -80: {}", prompt(&app));
+    only_station(&mut app, StationKind::Workshop, vantage);
+    app.world_mut().resource_mut::<Save>().ship_level = 1;
+    press_use(&mut app);
+    assert_eq!(app.world().resource::<Save>().ship_level, 1, "refused");
+    assert!(prompt(&app).contains("The PMC will not serve you"), "{}", prompt(&app));
     // The shrine at the Reliquary, to a friend of the Regime: the tithe for 15% off.
     set_standing(&mut app, Faction::Regime, 40);
-    stand_at_station(&mut app, StationKind::Shrine, 1);
+    only_station(&mut app, StationKind::Shrine, 1);
     app.world_mut().resource_mut::<Save>().banked = TITHE;
     press_use(&mut app);
     assert_eq!(app.world().resource::<Save>().banked, TITHE - (TITHE as f32 * 0.85).round() as u32, "blessed for less");

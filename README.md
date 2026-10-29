@@ -269,7 +269,8 @@ while its faction is below 0, or once you have shot it, until it lets you go; at
 flies past and its diamond is hollow. At -60 or below the faction **hunts** you: two or three of
 its patrol hulls come in like raiders, on their own clock at the raiders' rate. At its base,
 standing sets the price of what it sells (15% off at 40 or above, 15% on below -40), at -60 or
-below it will not serve you at all (the prompt says so), and a parcel to a base at 40 or above
+below it will not serve you at all (the prompt says so) except at a courier desk, which always
+hands out parcels, and a parcel to a base at 40 or above
 pays 20% more. The Roost is never affected. Pause > **Standing** shows where you stand; the
 numbers and the grudges are in `[ship_combat]`. `RUST_REGIME_STANDING=regime:50,pmc:-70` sets
 standing at startup for screenshots (it is saved with the next save, so pair it with

@@ -9,7 +9,8 @@
 //! - the Reliquary's shrine sells a blessing: more health for a while.
 //!
 //! Your standing with a base's faction (`standing`) sets its prices: 15% off to a friend, 15% on
-//! below -40, and at -60 or below it will not serve you at all. A parcel delivered to a friend's
+//! below -40, and at -60 or below it will not serve you at all, but for the courier desk, which
+//! always hands out work (contracts are the income you climb back with). A parcel delivered to a friend's
 //! base pays 20% more, and every delivery raises your standing there. The Roost is your own
 //! side's and is never affected.
 
@@ -164,7 +165,7 @@ fn use_station(
     input.interact_pressed = false;
     let t = &tuning.ship_combat;
     let faction = faction_of(&bases, station.base);
-    if standing::hunted(&save, faction, t) {
+    if standing::hunted(&save, faction, t) && station.kind != StationKind::Contracts {
         prompt.say(standing::refusal(faction));
         return;
     }
@@ -286,7 +287,7 @@ fn nearby(
             let faction = faction_of(&bases, s.base);
             let note = standing::price_note(faction, &save, t);
             let what = match s.kind {
-                _ if standing::hunted(&save, faction, t) => format!("the {} will not serve you (Hostile)", faction.name()),
+                kind if kind != StationKind::Contracts && standing::hunted(&save, faction, t) => format!("the {} will not serve you (Hostile)", faction.name()),
                 StationKind::Resupply => "resupply free, buy guns and attachments".to_string(),
                 StationKind::Locker => "change clothes".to_string(),
                 StationKind::Workshop => match UPGRADE_COST.get(save.ship_level as usize) {
