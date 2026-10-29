@@ -15,6 +15,7 @@ from mathutils import Matrix, Vector
 
 FPS = 60
 TEX = 2048
+DEVICE = "CPU"  # Cycles device for bake_wear; the ship kit switches it to "GPU" when one is found
 
 # name: (base color, worn color, metallic, roughness, how much the edges wear 0..1, emission strength)
 PALETTE = {
@@ -464,7 +465,7 @@ def bake_wear(gun, objs, scale=1.0):
     grows the wear, dirt and occlusion sizes for bigger models (characters use 8)."""
     scene = gun.scene
     scene.render.engine = "CYCLES"
-    scene.cycles.device = "CPU"
+    scene.cycles.device = DEVICE
     scene.cycles.samples = 12
     scene.cycles.use_denoising = False
     bpy.ops.object.select_all(action="DESELECT")
