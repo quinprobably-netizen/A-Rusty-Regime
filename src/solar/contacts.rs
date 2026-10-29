@@ -2,13 +2,16 @@
 //! on each enemy ship within 4 km, the nearest eight, with its type and distance, clamped to the
 //! screen edge when it is off-screen or behind you like the waypoints (`waypoint::project`). The
 //! ship your missiles are locking on gets a ring of ticks round its diamond that light up as the
-//! lock comes on, and a solid ring once it is locked. They hide on foot and under the menus.
+//! lock comes on, and a solid ring once it is locked. A patrol that will not shoot you (your
+//! standing with its faction is 0 or more, and you have not shot it) is a hollow diamond, its
+//! outline in the faction's colour. They hide on foot and under the menus.
 
 use std::f32::consts::TAU;
 
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
+use super::ai::Enemy;
 use super::base::Bases;
 use super::combat::{Faction, Hull};
 use super::missile::Missiles;
@@ -16,6 +19,8 @@ use super::ship::{Ship, Ships};
 use super::waypoint::{km, project, MARGIN};
 use crate::camera::PlayerCamera;
 use crate::hud::{FlightHud, HudRoot};
+use crate::save::Save;
+use crate::tuning::Tuning;
 
 /// Enemy ships further off than this are not marked, metres.
 pub const RANGE: f32 = 4000.0;
@@ -97,6 +102,7 @@ fn spawn_contacts(mut commands: Commands, theme: Res<crate::comic::ComicTheme>) 
                     Node { position_type: PositionType::Absolute, left: Val::Px(-SIZE / 2.0), top: Val::Px(-SIZE / 2.0), width: Val::Px(SIZE), height: Val::Px(SIZE), border: UiRect::all(Val::Px(3.0)), ..default() },
                     BackgroundColor(RAIDERS),
                     BorderColor::all(theme.ink),
+                    Outline { width: Val::Px(1.5), offset: Val::ZERO, color: Color::NONE },
                     UiTransform::from_rotation(Rot2::degrees(45.0)),
                 ));
                 p.spawn((
@@ -118,12 +124,15 @@ fn update_contacts(
     hud: Res<FlightHud>,
     bases: Res<Bases>,
     specs: Res<Ships>,
+    tuning: Res<Tuning>,
+    save: Option<Res<Save>>,
     theme: Res<crate::comic::ComicTheme>,
     camera: Query<(&Transform, &Projection), With<PlayerCamera>>,
     window: Query<&Window, With<PrimaryWindow>>,
     ships: Query<(Entity, &Ship, &Faction, &Transform, Option<&Missiles>), With<Hull>>,
+    pilots: Query<&Enemy>,
     mut pins: Query<(&Pin, &mut Node, &mut Visibility), (Without<Label>, Without<Tick>, Without<Solid>)>,
-    mut diamonds: Query<(&Diamond, &mut BackgroundColor), Without<Tick>>,
+    mut diamonds: Query<(&Diamond, &mut BackgroundColor, &mut BorderColor, &mut Outline), Without<Tick>>,
     mut labels: Query<(&Label, &mut Node, &mut Text, &mut TextColor), (Without<Pin>, Without<Tick>, Without<Solid>)>,
     mut ticks: Query<(&Tick, &mut Visibility, &mut BackgroundColor), (Without<Pin>, Without<Solid>, Without<Diamond>)>,
     mut solids: Query<(&Solid, &mut Visibility), (Without<Pin>, Without<Tick>)>,
@@ -144,8 +153,9 @@ fn update_contacts(
     let lock = missiles.map_or(0.0, |m| m.lock);
     let enemies = ships.iter().filter(|(_, s, f, ..)| *f != mine && s.pilot.is_none()).map(|(e, _, _, tf, _)| (e, tf.translation));
     let marked = nearest(from.translation, enemies, target);
-    // What each slot shows this frame: where, in what colour, what it says, and how far the lock is.
-    let slots: Vec<(Vec2, Color, String, Option<f32>)> = marked
+    // What each slot shows this frame: where, in what colour, what it says, how far the lock is,
+    // and whether it will shoot you.
+    let slots: Vec<(Vec2, Color, String, Option<f32>, bool)> = marked
         .iter()
         .filter_map(|(e, d)| {
             let (_, ship, faction, tf, _) = ships.get(*e).ok()?;
@@ -153,7 +163,8 @@ fn update_contacts(
             let locked = (Some(*e) == target).then_some(lock);
             let name = specs.ship[ship.spec].name.to_uppercase();
             let line = if locked.is_some_and(|l| l >= 1.0) { format!("{name}  LOCKED\n{}", km(*d)) } else { format!("{name}\n{}", km(*d)) };
-            Some((point, faction_color(*faction, &bases), line, locked))
+            let hostile = pilots.get(*e).ok().is_none_or(|enemy| super::standing::attacks(enemy, *faction, save.as_deref(), &tuning.ship_combat));
+            Some((point, faction_color(*faction, &bases), line, locked, hostile))
         })
         .collect();
     for (pin, mut node, mut v) in &mut pins {
@@ -165,13 +176,17 @@ fn update_contacts(
         node.top = Val::Px(point.y);
         v.set_if_neq(Visibility::Inherited);
     }
-    for (d, mut bg) in &mut diamonds {
-        if let Some((_, color, ..)) = slots.get(d.0) {
-            bg.0 = *color;
+    // Solid in its colour and ringed in ink when it will shoot; hollow, its outline in its colour
+    // over a thin ink one, when it will not.
+    for (d, mut bg, mut border, mut outline) in &mut diamonds {
+        if let Some((_, color, _, _, hostile)) = slots.get(d.0) {
+            bg.0 = if *hostile { *color } else { Color::NONE };
+            border.set_all(if *hostile { theme.ink } else { *color });
+            outline.color = if *hostile { Color::NONE } else { theme.ink };
         }
     }
     for (label, mut node, mut text, mut color) in &mut labels {
-        let Some((point, c, line, _)) = slots.get(label.0) else { continue };
+        let Some((point, c, line, ..)) = slots.get(label.0) else { continue };
         if text.0 != *line {
             text.0.clone_from(line);
         }

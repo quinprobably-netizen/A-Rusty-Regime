@@ -29,6 +29,7 @@ pub(super) fn blurb(action: Action) -> &'static str {
         Action::Starmap => "The worlds, their bases, and where you are.",
         Action::Ship => "Your ships: where they are and how they're tuned.",
         Action::Contracts => "The courier job you're carrying.",
+        Action::Standing => "Where you stand with each faction, and what it gets you.",
     }
 }
 
@@ -40,7 +41,7 @@ pub(super) fn hints(panel: Panel, screen: Screen) -> &'static [(&'static str, &'
         Panel::Settings => &[("L R", "A D", "ADJUST"), ("A", "ENTER", "TOGGLE"), ("B", "ESC", "BACK")],
         Panel::Quartermaster => &[("LB RB", "Q E", "WEAPON"), ("L R", "A D", "PART / TUNE"), ("A", "ENTER", "BUY"), ("B", "ESC", "BACK")],
         Panel::Wardrobe => &[("UP DN", "W S", "SLOT"), ("L R", "A D", "CHANGE"), ("B", "ESC", "BACK")],
-        Panel::Controls | Panel::Starmap | Panel::Ship | Panel::Contracts => &[("B", "ESC", "BACK")],
+        Panel::Controls | Panel::Starmap | Panel::Ship | Panel::Contracts | Panel::Standing => &[("B", "ESC", "BACK")],
         Panel::Maps => &[("A", "ENTER", "PLAY"), ("B", "ESC", "BACK")],
     }
 }
@@ -132,12 +133,12 @@ pub(super) fn rebuild(
     let width = match menu.panel {
         Panel::Main => 360.0,
         Panel::Wardrobe => 620.0,
-        Panel::Starmap | Panel::Ship | Panel::Contracts => 300.0,
+        Panel::Starmap | Panel::Ship | Panel::Contracts | Panel::Standing => 300.0,
         _ => 560.0,
     };
     let mut halftones = halftones;
     let dots = halftones.as_mut().map(|h| halftone_layer(h, t.paper, t.red.with_alpha(0.16), 10.0, 2.0));
-    // The paused list on the solar level runs to nine rows, so its lettering shrinks to fit.
+    // The paused list on the solar level runs to ten rows, so its lettering shrinks to fit.
     let (main_px, row_h) = if selectable(&rows).count() > 6 { (34.0, 50.0) } else { (44.0, 64.0) };
     let screen_px = window.map_or(Vec2::new(1280.0, 720.0), |w| w.size());
     // The bench and the wardrobe put the gun or the body in the middle, with no slab over them.
@@ -182,6 +183,7 @@ pub(super) fn rebuild(
                 Panel::Starmap => ("THE HAVEN SYSTEM".to_string(), "STARMAP"),
                 Panel::Ship => ("THE HANGAR".to_string(), "SHIPS"),
                 Panel::Contracts => ("COURIER WORK".to_string(), "CONTRACTS"),
+                Panel::Standing => ("THE FACTIONS".to_string(), "STANDING"),
             };
             h.spawn((display_text(big, 60.0, t.red, &t), TextShadow { offset: Vec2::splat(4.0), color: t.ink }, UiTransform::from_rotation(Rot2::degrees(-2.0))));
             h.spawn((body_text(small, 17.0, t.ink, true, &t), Node { margin: UiRect::top(Val::Px(4.0)), ..default() }));
@@ -244,7 +246,7 @@ pub(super) fn rebuild(
         if menu.panel == Panel::Quartermaster {
             bench(p, &t, &rows, menu.cursor, kind, &loadout, save.as_deref(), &menu.note, screen_px);
         }
-        if matches!(menu.panel, Panel::Starmap | Panel::Ship | Panel::Contracts) {
+        if matches!(menu.panel, Panel::Starmap | Panel::Ship | Panel::Contracts | Panel::Standing) {
             super::space::draw(p, &t, menu.panel, &space, save.as_deref());
         }
         if menu.panel == Panel::Wardrobe {
@@ -689,7 +691,7 @@ mod tests {
 
     #[test]
     fn every_panel_has_hints_and_a_way_back() {
-        for panel in [Panel::Main, Panel::Maps, Panel::Settings, Panel::Controls, Panel::Quartermaster, Panel::Wardrobe, Panel::Starmap, Panel::Ship, Panel::Contracts] {
+        for panel in [Panel::Main, Panel::Maps, Panel::Settings, Panel::Controls, Panel::Quartermaster, Panel::Wardrobe, Panel::Starmap, Panel::Ship, Panel::Contracts, Panel::Standing] {
             let h = hints(panel, Screen::Paused);
             assert!(!h.is_empty(), "{panel:?}");
             assert!(h.iter().all(|(pad, key, what)| !pad.is_empty() && !key.is_empty() && !what.is_empty()), "{panel:?}");

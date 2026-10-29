@@ -73,9 +73,11 @@ First build takes a while. Linux needs `libasound2-dev libudev-dev libwayland-de
 The game boots to a title screen over the live world; Esc pauses (time stops, the cursor comes
 back). Both lists lead to the same screens: **Wardrobe** (character, head, colours, camo, skin, gloves, boots, webbing, metal, lights, visor, wear and three presets, shown on a mannequin), **Settings** (mouse sensitivity, invert Y, FOV, five volumes, sky, bloom, ambient
 occlusion, anti-aliasing, shadow distance; saved to `settings.toml`, which lays over
-`tuning.toml` so F5 keeps your choices), **Maps** (the solar system) and **Controls**. Navigate with W/S or arrows, adjust with
+`tuning.toml` so F5 keeps your choices), **Maps** (the solar system) and **Controls**; paused in the
+solar system, also **Starmap**, **Ship**, **Contracts** and **Standing** (a bar per faction, the
+word for it and what it gets you). Navigate with W/S or arrows, adjust with
 A/D, Enter picks, Esc backs out; the d-pad, A and B do the same on a pad; the mouse works too.
-`RUST_REGIME_MENU=title|pause|maps|settings|controls|quartermaster|wardrobe|play` opens straight into a screen
+`RUST_REGIME_MENU=title|pause|maps|settings|controls|quartermaster|wardrobe|starmap|ship|contracts|standing|play` opens straight into a screen
 (with `RUST_REGIME_SCREENSHOT` it skips the title unless set). Design notes:
 `docs/superpowers/specs/2026-10-18-menus-design.md`.
 
@@ -99,10 +101,11 @@ red and OVERHEATED while they cool, and the missiles on the rails with the next 
 take the health and weapon plates' places, which stay hidden until you are on foot again, the
 SHOT DOWN pause and card included. Each enemy ship within 4 km (the nearest eight) carries a
 diamond in its faction's colour with its type and distance, clamped to the screen edge like
-the waypoints; the one in your nose gets a ring of ticks that light up as the missile lock
+the waypoints, hollow for a patrol that will not shoot you; the one in your nose gets a ring of ticks that light up as the missile lock
 comes on and close into a solid ring once it is locked. Four white ticks flash round the nose
 when your shots land, wider and red on a kill, and MISSILE LOCK / MISSILE! shows under the
-compass while a Sentry has you locked or its missile is in the air.
+compass while a Sentry has you locked or its missile is in the air. When your standing with a
+faction changes, a short line under the bounty line says so (`REGIME -25  SCRAPPERS +5`).
 
 ## Movement
 - **Source/TF2 core** at 66 ticks/s: ground friction and acceleration, air strafing (30u air cap), bunny hopping (jump on the landing tick to skip friction), crouch-jumping (legs tuck up in the air), ramp sliding and surfing on steep slopes, stair stepping.
@@ -168,7 +171,7 @@ zooms in and tightens the spread.
 
 ## Survival and the world
 - **Health**: heavy hits make you bleed until a medkit. Health regenerates only up to 60% and not while bleeding.
-- **Save**: banked money, what you own, ships shot down (by faction) and times you were shot down persist in `save.toml` next to the binary (`RUST_REGIME_SAVE` overrides the path).
+- **Save**: banked money, what you own, ships shot down (by faction), times you were shot down and your standing with each faction persist in `save.toml` next to the binary (`RUST_REGIME_SAVE` overrides the path).
 - **Sound** is synthesized at startup. Put a CC0 `.ogg` with the same name in
   `assets/sounds/` (rifle, shotgun, pistol, rocket, explosion, hit, hurt, jump, land,
   wind, ship_gun_0..2, missile_launch, shield_hit, hull_hit, lock_beep, lock_tone,
@@ -254,6 +257,23 @@ costs the courier parcel and a quarter of the bank (rounded down; nothing if bot
 counts in `deaths`; your guns, parts and engine tune are kept. The numbers are in
 `[ship_combat]`. `RUST_REGIME_DIE=<seconds>` shoots down the ship you fly after that long, for
 screenshots of the card.
+**Faction standing** (stage 2, `docs/superpowers/specs/2026-10-29-ship-combat-stages-2-3-design.md`,
+`solar::standing`): the Regime, the Scrappers and the PMC each think of you from -100 to 100,
+and you start a stranger at -20 with all three; the Deserters are your own side, fixed at 50.
+A parcel delivered to a faction's base is +10 with it, a raider you shoot down +2 with each of
+the three, one of a faction's ships shot down -25 with it and +5 with each faction holding a
+grudge against it (the Regime hates the Deserters and the Scrappers, the Scrappers the Regime and
+the PMC; the PMC holds none), and your first hit on one of its ships in a fight -3 (a kill after
+it costs 25 in all). Below -20 it creeps back a point a Haven day. A patrol attacks you only
+while its faction is below 0, or once you have shot it, until it lets you go; at 0 or above it
+flies past and its diamond is hollow. At -60 or below the faction **hunts** you: two or three of
+its patrol hulls come in like raiders, on their own clock at the raiders' rate. At its base,
+standing sets the price of what it sells (15% off at 40 or above, 15% on below -40), at -60 or
+below it will not serve you at all (the prompt says so), and a parcel to a base at 40 or above
+pays 20% more. The Roost is never affected. Pause > **Standing** shows where you stand; the
+numbers and the grudges are in `[ship_combat]`. `RUST_REGIME_STANDING=regime:50,pmc:-70` sets
+standing at startup for screenshots (it is saved with the next save, so pair it with
+`RUST_REGIME_SAVE`).
 
 Each faction has a base on its world, from `assets/bases.toml` and
 `assets/models/bases/<id>.glb` (built like the ships: `tools/bases/build.sh [ids]
@@ -284,7 +304,8 @@ engines (three levels, $300 / $700 / $1400: more thrust and top speed, a little 
 turning); Site Vantage's courier desk hands out parcels to the other bases (the only income in
 the system: deliver by walking up to the destination's door, which is marked DELIVER HERE;
 $250 / $400 / $550); the Reliquary's shrine sells a blessing for a $150 tithe (+50 health for
-five minutes). The flight readout shows what is in reach, your bank and the parcel you carry.
+five minutes). Those prices move with your standing with the base's faction, which may also
+refuse you (see Faction standing). The flight readout shows what is in reach, your bank and the parcel you carry.
 
 Everything is in `assets/system.toml`: a star, Haven and its low-gravity moon Ash, and
 the three faction worlds, Bastion (Regime: heavy, slate, thin pale air), Cinder

@@ -1,6 +1,7 @@
 // The pause menu's space screens (comic redesign piece 4): STARMAP (the worlds around the star,
-// their bases, where you are), SHIP (each ship's state and engine tune) and CONTRACTS (the
-// courier job you carry). They read live state and draw nothing when the level has none.
+// their bases, where you are), SHIP (each ship's state and engine tune), CONTRACTS (the courier
+// job you carry) and STANDING (where you stand with each faction, and what each level gives).
+// They read live state and draw nothing when the level has none.
 
 use bevy::ecs::system::SystemParam;
 use bevy::math::DVec3;
@@ -9,7 +10,9 @@ use super::*;
 use super::draw::LEFT;
 use crate::comic::{body_text, caption, display_text, panel, segment_bar, stat_bar, ComicTheme};
 use crate::solar::base::Bases;
+use crate::solar::combat::Faction;
 use crate::solar::orbit::STAR;
+use crate::solar::standing::{self, Level};
 use crate::solar::ship::{Ship, Ships};
 use crate::solar::Solar;
 
@@ -25,6 +28,7 @@ pub(super) struct Space<'w, 's> {
     solar: Option<Res<'w, Solar>>,
     bases: Option<Res<'w, Bases>>,
     ships: Option<Res<'w, Ships>>,
+    tuning: Option<Res<'w, Tuning>>,
     parked: Query<'w, 's, &'static Ship, Without<crate::solar::ship::Autopilot>>,
 }
 
@@ -42,6 +46,7 @@ pub(super) fn draw(p: &mut ChildSpawnerCommands, t: &ComicTheme, panel_kind: Pan
         Panel::Starmap => starmap(p, t, space),
         Panel::Ship => ships(p, t, space, save),
         Panel::Contracts => contracts(p, t, space, save),
+        Panel::Standing => standings(p, t, space, save),
         _ => {}
     }
 }
@@ -153,6 +158,74 @@ fn contracts(p: &mut ChildSpawnerCommands, t: &ComicTheme, space: &Space, save: 
     });
 }
 
+/// Where on a bar from -100 to 100 standing `v` sits, 0 to 100%.
+fn along(v: i32) -> f32 {
+    (v - standing::MIN) as f32 / (standing::MAX - standing::MIN) as f32 * 100.0
+}
+
+fn standings(p: &mut ChildSpawnerCommands, t: &ComicTheme, space: &Space, save: Option<&Save>) {
+    let (Some(tuning), Some(bases)) = (&space.tuning, &space.bases) else { return };
+    let sc = tuning.ship_combat.clone();
+    let blank = Save::default();
+    let save = save.unwrap_or(&blank);
+    p.spawn(Node { position_type: PositionType::Absolute, left: Val::Px(LEFT + 380.0), right: Val::Px(LEFT), top: Val::Px(120.0), column_gap: Val::Px(28.0), align_items: AlignItems::FlexStart, ..default() }).with_children(|cols| {
+        cols.spawn(Node { width: Val::Px(500.0), flex_direction: FlexDirection::Column, row_gap: Val::Px(16.0), ..default() }).with_children(|col| {
+            for faction in standing::FACTIONS.into_iter().chain([Faction::Deserters]) {
+                let v = standing::get(save, faction, &sc);
+                let level = Level::of(v, &sc);
+                let own = !standing::moves(faction);
+                let color = crate::solar::contacts::faction_color(faction, bases);
+                let word = if own { "OWN SIDE".to_string() } else { level.word().to_uppercase() };
+                let gives = if own { "Fixed: the Roost is home, and its prices are its own".to_string() } else { level.gives(&sc) };
+                let (t2, sc2) = (t.clone(), sc.clone());
+                panel(col, t, t.paper, 0.0, move |c| {
+                    c.spawn(Node { justify_content: JustifyContent::SpaceBetween, align_items: AlignItems::Center, column_gap: Val::Px(12.0), ..default() }).with_children(|row| {
+                        row.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(10.0), ..default() }).with_children(|name| {
+                            name.spawn((Node { width: Val::Px(14.0), height: Val::Px(14.0), border: UiRect::all(Val::Px(3.0)), ..default() }, BackgroundColor(color), BorderColor::all(t2.ink), UiTransform::from_rotation(Rot2::degrees(45.0))));
+                            name.spawn(display_text(faction.name().to_uppercase(), 28.0, t2.ink, &t2));
+                        });
+                        row.spawn(display_text(format!("{v:+}"), 28.0, if v < 0 { t2.red } else { t2.ink }, &t2));
+                    });
+                    // The bar from -100 to 100: filled from the middle to where you stand, with ink
+                    // ticks where it starts to change something.
+                    c.spawn((Node { height: Val::Px(16.0), margin: UiRect::vertical(Val::Px(6.0)), border: UiRect::all(Val::Px(2.0)), ..default() }, BackgroundColor(t2.paper), BorderColor::all(t2.ink))).with_children(|bar| {
+                        let (a, b) = (along(v.min(0)), along(v.max(0)));
+                        bar.spawn((Node { position_type: PositionType::Absolute, left: Val::Percent(a), width: Val::Percent(b - a), top: Val::Px(0.0), bottom: Val::Px(0.0), ..default() }, BackgroundColor(color)));
+                        for mark in [sc2.standing_hunted, sc2.standing_wary, 0, sc2.standing_friendly] {
+                            let w = if mark == 0 { 3.0 } else { 2.0 };
+                            bar.spawn((Node { position_type: PositionType::Absolute, left: Val::Percent(along(mark)), margin: UiRect::left(Val::Px(-w / 2.0)), width: Val::Px(w), top: Val::Px(0.0), bottom: Val::Px(0.0), ..default() }, BackgroundColor(t2.ink)));
+                        }
+                    });
+                    c.spawn(body_text(word, 16.0, if v < 0 { t2.red } else { t2.ink }, true, &t2));
+                    c.spawn(body_text(gives, 15.0, t2.ink, false, &t2));
+                });
+            }
+        });
+        let (t2, sc2) = (t.clone(), sc.clone());
+        cols.spawn(Node { width: Val::Px(380.0), ..default() }).with_children(|col| {
+            panel(col, t, t.yellow, 1.0, move |c| {
+                c.spawn(display_text("WHAT IT GETS YOU", 26.0, t2.ink, &t2));
+                for level in Level::ALL {
+                    c.spawn((Node { flex_direction: FlexDirection::Column, margin: UiRect::top(Val::Px(8.0)), ..default() }, children![
+                        body_text(format!("{}  ({})", level.word().to_uppercase(), level.range(&sc2)), 16.0, t2.ink, true, &t2),
+                        body_text(level.gives(&sc2), 15.0, t2.ink, false, &t2),
+                    ]));
+                }
+                c.spawn((Node { margin: UiRect::top(Val::Px(12.0)), ..default() }, children![body_text(
+                    format!(
+                        "A parcel to their base {:+}. A raider shot down {:+} with each. One of their ships shot down {:+}, and {:+} with their rivals. Your first hit on one in a fight {:+}. Below {} it creeps back {} a day.",
+                        sc2.standing_delivery, sc2.standing_raider_kill, sc2.standing_kill, sc2.standing_rival_kill, sc2.standing_hit, sc2.standing_start, sc2.standing_recovery
+                    ),
+                    14.0,
+                    t2.muted,
+                    false,
+                    &t2,
+                )]));
+            });
+        });
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,5 +242,10 @@ mod tests {
             last = r;
         }
         assert_eq!(map_radius(5.0, 5.0, 5.0), MAP_MIN, "one world sits on the inner ring");
+    }
+
+    #[test]
+    fn the_standing_bar_runs_from_minus_a_hundred_to_a_hundred() {
+        assert_eq!((along(-100), along(0), along(100)), (0.0, 50.0, 100.0));
     }
 }

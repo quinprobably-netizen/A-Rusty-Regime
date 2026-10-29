@@ -2,7 +2,7 @@
 //! Bevy UI over the live world. Titanfall-style: a tall uppercase list on the left, the island
 //! behind it, button hints along the bottom. Time stands still while a menu is up.
 //!
-//! `RUST_REGIME_MENU=title|pause|settings|controls|maps|quartermaster|wardrobe|starmap|ship|contracts` opens straight into a
+//! `RUST_REGIME_MENU=title|pause|settings|controls|maps|quartermaster|wardrobe|starmap|ship|contracts|standing` opens straight into a
 //! screen (handy with `RUST_REGIME_SCREENSHOT`).
 
 use bevy::app::AppExit;
@@ -47,10 +47,12 @@ pub enum Panel {
     /// The Roost's counter: guns and attachments, bought with banked money.
     Quartermaster,
     Wardrobe,
-    /// The pause menu's space screens: the worlds and bases, your ships, your courier job.
+    /// The pause menu's space screens: the worlds and bases, your ships, your courier job, where
+    /// you stand with each faction.
     Starmap,
     Ship,
     Contracts,
+    Standing,
 }
 
 /// What the camera presents while a panel is open.
@@ -328,6 +330,7 @@ enum Action {
     Starmap,
     Ship,
     Contracts,
+    Standing,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -410,6 +413,7 @@ fn rows(panel: Panel, screen: Screen, tuned: [bool; 4], fits: bool) -> Vec<Row> 
                 rows.push(Row::Action("STARMAP", Action::Starmap));
                 rows.push(Row::Action("SHIP", Action::Ship));
                 rows.push(Row::Action("CONTRACTS", Action::Contracts));
+                rows.push(Row::Action("STANDING", Action::Standing));
             }
             rows.push(Row::Action("QUIT", Action::Quit));
         }
@@ -424,7 +428,7 @@ fn rows(panel: Panel, screen: Screen, tuned: [bool; 4], fits: bool) -> Vec<Row> 
             }
             rows.push(Row::Action("BACK", Action::Back));
         }
-        Panel::Controls | Panel::Starmap | Panel::Ship | Panel::Contracts => rows.push(Row::Action("BACK", Action::Back)),
+        Panel::Controls | Panel::Starmap | Panel::Ship | Panel::Contracts | Panel::Standing => rows.push(Row::Action("BACK", Action::Back)),
         Panel::Maps => {
             rows.extend((0..MAPS.len()).map(Row::Map));
             rows.push(Row::Action("BACK", Action::Back));
@@ -463,6 +467,7 @@ fn main_cursor(panel: Panel) -> usize {
         Panel::Starmap => 5,
         Panel::Ship => 6,
         Panel::Contracts => 7,
+        Panel::Standing => 8,
         Panel::Main | Panel::Quartermaster => 0,
     }
 }
@@ -508,7 +513,7 @@ impl Plugin for MenuPlugin {
 /// Boot to the title, unless a screenshot run asks for the game or a particular screen.
 fn initial() -> Screen {
     match std::env::var("RUST_REGIME_MENU").as_deref() {
-        Ok("pause" | "settings" | "controls" | "maps" | "quartermaster" | "wardrobe" | "starmap" | "ship" | "contracts") => Screen::Paused,
+        Ok("pause" | "settings" | "controls" | "maps" | "quartermaster" | "wardrobe" | "starmap" | "ship" | "contracts" | "standing") => Screen::Paused,
         Ok("play") => Screen::Playing,
         Ok(_) => Screen::Title,
         Err(_) if std::env::var_os("RUST_REGIME_SCREENSHOT").is_some() => Screen::Playing,
@@ -549,6 +554,7 @@ fn enter_menu(mut menu: ResMut<Menu>, mut counter: ResMut<Counter>, cursor: Opti
             Ok("starmap") => Panel::Starmap,
             Ok("ship") => Panel::Ship,
             Ok("contracts") => Panel::Contracts,
+            Ok("standing") => Panel::Standing,
             _ => Panel::Main,
         } };
     }
@@ -780,6 +786,7 @@ fn act(
                     Action::Starmap => open(&mut menu, Panel::Starmap),
                     Action::Ship => open(&mut menu, Panel::Ship),
                     Action::Contracts => open(&mut menu, Panel::Contracts),
+                    Action::Standing => open(&mut menu, Panel::Standing),
                 }
             }
         }
@@ -980,6 +987,7 @@ mod tests {
             assert_eq!(at(5), Some(Row::Action("STARMAP", Action::Starmap)));
             assert_eq!(at(6), Some(Row::Action("SHIP", Action::Ship)));
             assert_eq!(at(7), Some(Row::Action("CONTRACTS", Action::Contracts)));
+            assert_eq!(at(8), Some(Row::Action("STANDING", Action::Standing)));
         }
         assert!(matches!(selectable(&paused).last(), Some(Row::Action("QUIT", _))));
     }
@@ -1031,8 +1039,8 @@ mod tests {
 
     #[test]
     fn every_panel_has_rows_and_back_lands_on_its_opener() {
-        for panel in [Panel::Main, Panel::Maps, Panel::Settings, Panel::Controls, Panel::Quartermaster, Panel::Wardrobe, Panel::Starmap, Panel::Ship, Panel::Contracts] {
-            if matches!(panel, Panel::Starmap | Panel::Ship | Panel::Contracts) && !space_level() {
+        for panel in [Panel::Main, Panel::Maps, Panel::Settings, Panel::Controls, Panel::Quartermaster, Panel::Wardrobe, Panel::Starmap, Panel::Ship, Panel::Contracts, Panel::Standing] {
+            if matches!(panel, Panel::Starmap | Panel::Ship | Panel::Contracts | Panel::Standing) && !space_level() {
                 continue;
             }
             let panel_rows = rows(panel, Screen::Paused, [true; 4], true);
