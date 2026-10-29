@@ -1,8 +1,7 @@
 #!/usr/bin/env sh
-# Build the base glbs with headless Blender. Needs Python 3.11 for the bpy wheel; shares the weapons' venv.
+# Build the base glbs with headless Blender (which one: ../blender.sh); shares the weapons' venv fallback.
 set -e
 cd "$(dirname "$0")"
-PY=${PYTHON311:-python3.11}
 VENV=../weapons/.venv
-[ -d "$VENV" ] || { "$PY" -m venv "$VENV" && "$VENV/bin/pip" install --quiet bpy; }
-"$VENV/bin/python" build.py "$@"
+. ../blender.sh
+run build.py "$@"

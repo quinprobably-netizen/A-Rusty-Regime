@@ -14,6 +14,8 @@ import importlib
 import os
 import sys
 
+if "--" in sys.argv:  # under `blender --python build.py -- args` our args follow the "--"
+    sys.argv = sys.argv[:1] + sys.argv[sys.argv.index("--") + 1:]
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
