@@ -308,18 +308,35 @@ Each faction has a base on its world, from `assets/bases.toml` and
 `assets/models/bases/<id>.glb` (built like the ships: `tools/bases/build.sh [ids]
 [--no-bake] [--preview] [--check] [--toml]`, each under 115 k triangles with one 2048² baked
 texture, and `--toml` rewrites `bases.toml` from the SPEC in `tools/bases/bases/<id>.py`,
-which is the single source of truth for a base's site and collision boxes). The Deserters'
-**Roost** stands on the flat south-east of Haven's apron past the course: a two-storey hangar
-with a mezzanine catwalk, a roof deck with a sandbag nest and an outside switchback stair.
-The Regime's **Reliquary** on Bastion is a slate basilica up a flight of steps: nave, side
-chapels, bell tower and spire, pews and an altar inside. The Scrappers' **Yard** on Cinder
-is a fort of welded containers round a workshop shed, with a gantry crane and a lookout
-derrick. The PMC's **Site Vantage** on Frost is three white hab modules on jacks joined by
-link corridors, with an airlock, a radar dish and floodlights. Every base is hollow and
+which is the single source of truth for a base's site and collision boxes). Each is built
+for its world (2026-10-29, "living bases"). The Deserters' **Roost** beside Haven's apron is a
+lived-in rebel camp round a painted hangar: a cook fire under a shade sail, laundry lines,
+veg beds, a greenhouse, string lights and a timber lookout on the roof. The Regime's
+**Reliquary** on Bastion is a low fortress-cathedral cut into a rock terrace for the 12.5 g,
+with a squat bell tower and a data fortress worked through it: black vaults with red data
+seams, cable trunks, server stacks kept like relics and a sealed archive core behind the
+altar. The Scrappers' **Yard** on Cinder is a container fort half-buried in dunes under a
+tower crane, with a glowing smelter, wind turbines and a welding shop. The PMC's **Site
+Vantage** on Frost is three sealed modules sunk in ice berms, with a sweeping radar, an
+ice-core drill and strobes, and no sound outside, since Frost has no air. Every base is hollow and
 walkable (floors, walls, roofs and stairs are collision boxes; the fittings are not), lit
 inside by its own lamps, and stands on a buried foundation slab with a landing pad in front
 of its door (the Roost uses the apron). Only the world you are on has its base spawned; the
-flight readout names it and how far it is.
+flight readout names it and how far it is. A base standing high over a slope gets a ramp
+down from its door.
+**The bases are alive** (`src/solar/life.rs`): each is staffed by its own faction's people, a
+keeper at every station who turns to face you and others walking their rounds; a faction
+transport lands on its pad every few minutes, sits and leaves (it passes over the Roost); and
+named nodes in each model turn (radars, turbines, the crane, the bell, fans), blink, strobe,
+flicker as fire or welding arcs, puff smoke and sparks, and play looping sounds (generators,
+radios, fires, an organ and a tolling bell, grinders, wind, hum, air handling).
+**Posts** (`src/solar/post.rs`, `assets/posts.toml`, built by `tools/bases/posts.sh`) are small
+outposts of each world's faction scattered from its seed: 6 to 12 a world, on flat ground,
+400 m from the base and 600 m from each other (on Haven, on the home continent outside the
+island region). A Deserter watchtower, a Regime data relay, a Scrapper wreck camp and a PMC
+sensor pod, each with two of its people and a supply cache at the door that patches you up and
+rearms you for free. Coming within 150 m of one marks it found (saved), and from then on it
+has a waypoint.
 **Waypoints** mark them from anywhere: a diamond in the faction's colour (Deserters green,
 Regime red, Scrappers yellow, PMC blue; your parked Kestrel white) with the name and the
 distance, clamped to the screen edge when it is off-screen or behind you, and a tall beam of

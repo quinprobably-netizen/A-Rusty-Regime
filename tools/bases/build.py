@@ -35,7 +35,7 @@ def spec(bid):
 
 
 def main():
-    from basekit import check, preview, write_toml
+    from basekit import check, check_spec, preview, write_toml
 
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     ids = args or [b for b in ORDER if os.path.exists(os.path.join(HERE, "bases", f"{b}.py"))]
@@ -44,6 +44,7 @@ def main():
         for bid in ids:
             path = os.path.join(OUT, f"{bid}.glb")
             problems, stats = check(path, spec(bid)) if os.path.exists(path) else (["not built"], {})
+            problems += check_spec(spec(bid))
             print(f"{bid}: {'ok' if not problems else '; '.join(problems)} {stats}")
             bad += bool(problems)
         sys.exit(1 if bad else 0)
@@ -58,7 +59,14 @@ def main():
                 for key, suffix in (("inside", "-inside"), ("annex", "-annex"), ("annex_out", "-annex-out")):
                     if key in s:
                         preview(os.path.join(SHOTS, f"{bid}{suffix}.png"), **s[key])
-    write_toml(TOML, [(bid, spec(bid)) for bid in ORDER if os.path.exists(os.path.join(HERE, "bases", f"{bid}.py"))])
+    specs = []
+    for bid in ORDER:
+        try:
+            specs.append((bid, spec(bid)))
+        except Exception as e:  # another base half-edited: leave the toml for the next build
+            print(f"not writing {TOML}: {bid} does not load ({e})")
+            return
+    write_toml(TOML, specs)
 
 
 if __name__ == "__main__":
