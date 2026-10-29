@@ -27,10 +27,13 @@ to confirm; stage 2 does not depend on it.
   i32>` with serde defaults so an old `save.toml` still loads. The factions are Regime,
   Scrappers and PMC (the three with patrols and a base). The Deserters are your own side: their
   standing is fixed at 50 and cannot move. Raiders have no standing: they always attack.
-- Starting values (decision 1, stranger): **-20** with each of the three. At -20 patrols are
-  hostile, as they are now.
+- Starting values: **-20** with the Regime and the PMC, which are hostile as they are now, and
+  **0** with the Scrappers. Q's call on 2026-10-29: the Scrappers and the Deserters are almost
+  allies, so Scrapper patrols let you pass until you shoot one (then they drop to -25 like any
+  other).
 - Rivalries, from the setting: the Regime hates the Deserters and the Scrappers; the Scrappers
-  and the PMC distrust each other; the PMC sells to everyone and holds no grudge. Used only to
+  distrust the Regime and the PMC but are friendly with the Deserters; the PMC sells to everyone
+  and holds no grudge. Used only to
   decide who is pleased when you shoot someone.
 
 ### What moves it
