@@ -210,6 +210,23 @@ pub fn price(cost: u32, faction: Faction, save: &Save, t: &ShipCombat) -> u32 {
     (cost as f32 * k).round() as u32
 }
 
+/// What a base of `faction` pays for something worth `value`: more to a friend, less to someone
+/// it is wary of, rounded (the other side of `price`).
+pub fn buys(value: u32, faction: Faction, save: &Save, t: &ShipCombat) -> u32 {
+    if !moves(faction) {
+        return value;
+    }
+    let v = get(save, faction, t);
+    let k = if v >= t.standing_friendly {
+        1.0 + t.standing_discount
+    } else if v < t.standing_wary {
+        1.0 - t.standing_markup
+    } else {
+        1.0
+    };
+    (value as f32 * k).round() as u32
+}
+
 /// What a price at a base of `faction` has on it, for the prompt: ` (15% off)`, ` (15% on)` or
 /// nothing.
 pub fn price_note(faction: Faction, save: &Save, t: &ShipCombat) -> String {

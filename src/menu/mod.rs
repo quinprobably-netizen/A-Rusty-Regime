@@ -356,6 +356,8 @@ enum Row {
     Tune(usize),
     /// A ship part on the parts rack (an entry of `salvage::Part::ALL`).
     Part(usize),
+    /// Sell the hold's scrap, on the parts rack.
+    Sell,
     /// One of the Kestrel's two module slots, on the Ship screen.
     Fit(usize),
     /// The wardrobe's preset picker.
@@ -463,6 +465,7 @@ fn rows(panel: Panel, screen: Screen, tuned: [bool; 4], fits: bool) -> Vec<Row> 
         }
         Panel::Parts => {
             rows.extend((0..crate::solar::salvage::Part::ALL.len()).map(Row::Part));
+            rows.push(Row::Sell);
             rows.push(Row::Action("BACK", Action::Back));
         }
         Panel::Wardrobe => {
@@ -886,6 +889,16 @@ fn act(
                     Sale::Short(short) => format!("{} Mk{}: {short} scrap short", part.name(), level + 1),
                     Sale::Top => format!("{} is at Mk3, as far as it goes", part.name()),
                     Sale::Refused => crate::solar::standing::refusal(menu.rack),
+                };
+                file.write(&save);
+            }
+        }
+        Row::Sell => {
+            if select && let (Some(mut save), Some(file)) = (save, file) {
+                let scrap = save.scrap;
+                menu.note = match crate::solar::economy::sell_scrap(&mut save, menu.rack, &tuning.economy, &tuning.ship_combat) {
+                    0 => "The hold is empty".to_string(),
+                    money => format!("Sold {scrap} scrap: +${money}"),
                 };
                 file.write(&save);
             }

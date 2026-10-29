@@ -234,6 +234,13 @@ pub(super) fn rebuild(
                         value_row(list, &t, &value.0, &value.1, Some(fill), Some(&note), index, index == menu.cursor, false);
                         index += 1;
                     }
+                    Row::Sell => {
+                        let scrap = save.as_ref().map_or(0, |s| s.scrap);
+                        let each = save.as_deref().map_or(tuning.economy.scrap_value, |s| crate::solar::standing::buys(tuning.economy.scrap_value, menu.rack, s, &tuning.ship_combat));
+                        let value = format!("{scrap} x ${each} = ${}", scrap * each);
+                        value_row(list, &t, "SELL SCRAP", &value, None, Some("for money, into the bank"), index, index == menu.cursor, false);
+                        index += 1;
+                    }
                     Row::Fit(slot) => {
                         let (value, note) = super::space::fit_row(slot, &space, save.as_deref());
                         value_row(list, &t, &format!("SLOT {}", slot + 1), &value, None, Some(&note), index, index == menu.cursor, true);
@@ -295,7 +302,7 @@ pub(super) fn rebuild(
 
         // The hint strip along the bottom, with the bank on the main menu and at the counter, and
         // your scrap on the main menu, at the parts rack and on the Ship screen.
-        let money = matches!(menu.panel, Panel::Main | Panel::Quartermaster).then_some(banked);
+        let money = matches!(menu.panel, Panel::Main | Panel::Quartermaster | Panel::Parts).then_some(banked);
         let scrap = matches!(menu.panel, Panel::Main | Panel::Parts | Panel::Ship).then_some(scrap);
         let labels = hint_labels(menu.panel, screen, pad);
         let pairs: Vec<(&str, &str)> = labels.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();

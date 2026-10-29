@@ -11,6 +11,7 @@
 pub mod ai;
 pub mod base;
 pub mod cockpit;
+pub mod economy;
 pub mod combat;
 pub mod contacts;
 pub mod enemy;
@@ -136,6 +137,7 @@ impl Plugin for SolarPlugin {
         ai::build(app);
         enemy::build(app);
         loss::build(app);
+        economy::build(app);
         cockpit::build(app);
         base::build(app);
         standing::build(app);

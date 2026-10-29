@@ -91,7 +91,7 @@ pub struct Prompt {
 }
 
 impl Prompt {
-    fn say(&mut self, text: impl Into<String>) {
+    pub fn say(&mut self, text: impl Into<String>) {
         self.note = text.into();
         self.note_left = NOTE_SECS;
     }
@@ -236,7 +236,7 @@ fn use_station(
 
 /// Walk up to the destination's doorway with the parcel and it pays out, more to a friend.
 #[allow(clippy::too_many_arguments)]
-fn deliver(
+pub(super) fn deliver(
     time: Res<Time>,
     bases: Res<Bases>,
     tuning: Res<Tuning>,
