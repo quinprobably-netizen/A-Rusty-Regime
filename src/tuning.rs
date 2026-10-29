@@ -95,6 +95,7 @@ pub struct Tuning {
     pub sound: Sound,
     pub terrain: TerrainTuning,
     pub ship_combat: ShipCombat,
+    pub economy: Economy,
 
     // Look
     pub mouse_sensitivity: f32,
@@ -305,6 +306,7 @@ impl Default for Tuning {
 
             terrain: TerrainTuning::default(),
             ship_combat: ShipCombat::default(),
+            economy: Economy::default(),
             player: PlayerTuning::default(),
             grapple: GrappleTuning::default(),
             graphics: Graphics::default(),
@@ -562,9 +564,8 @@ pub struct ShipCombat {
     /// What shooting down each enemy hull pays into the bank, by ship id; a hull not listed pays
     /// nothing (`solar::loss`).
     pub bounty: std::collections::BTreeMap<String, u32>,
-    /// When your own ship is shot down: the share of the bank you lose (rounded down), seconds
-    /// before you are back at the Roost, and seconds the card stays up after that.
-    pub bank_loss: f32,
+    /// When your own ship is shot down: seconds before you are back at the Roost, and seconds
+    /// the card stays up after that (what it costs is in `[economy]`).
     pub downed: f32,
     pub loss_card: f32,
     /// Seconds the `+$120 BOUNTY` line stays over the HUD after a kill.
@@ -696,7 +697,6 @@ impl Default for ShipCombat {
             missile_damage: 80.0,
             ai_missile_gap: 8.0,
             bounty: [("jackal", 60), ("sentry", 120), ("censer", 150), ("welder", 200)].into_iter().map(|(id, pay)| (id.to_string(), pay)).collect(),
-            bank_loss: 0.25,
             downed: 3.0,
             loss_card: 4.0,
             bounty_line: 3.0,
@@ -745,6 +745,64 @@ impl Default for ShipCombat {
             spire_heat: 0.2,
             ram_damage: 30.0,
             ram_thrust: 0.1,
+        }
+    }
+}
+
+/// Money (table `[economy]`, `solar::economy`): every price in the game, what scrap is worth, the
+/// hold, the rebuy fee for a ship shot down, and repairs. Prices at a faction's base go through
+/// `solar::standing::price`; the Roost's are these.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct Economy {
+    /// The Roost's counter: each gun by id (`WeaponKind::id`); a gun not listed is not for sale.
+    pub guns: std::collections::BTreeMap<String, u32>,
+    /// Attachments by gunsmith slot, then part (`gunsmith::PARTS` order); the bare part is free.
+    pub attachments: [[u32; 3]; 4],
+    /// The Yard's engine tune, a level each, and the Reliquary's tithe.
+    pub tune: [u32; 3],
+    pub tithe: u32,
+    /// The courier desk: a parcel pays `courier_base`, `courier_step` more for each of the next
+    /// two, then round again.
+    pub courier_base: u32,
+    pub courier_step: u32,
+    /// What a scrap is worth in money: what the Yard pays for it, and what a part's scrap counts
+    /// for in the ship's value.
+    pub scrap_value: u32,
+    /// The hold: `hold_base` scrap, and `hold_per_plating` more a level of hull plating.
+    pub hold_base: u32,
+    pub hold_per_plating: u32,
+    /// Shot down, a fresh Kestrel costs `rebuy_share` of what the tune and parts on it are worth,
+    /// at least `rebuy_min` and at most `rebuy_max`, from the bank (never more than is there).
+    pub rebuy_share: f32,
+    pub rebuy_min: u32,
+    pub rebuy_max: u32,
+    /// Reaching a base's door repairs the ship you landed, if it is parked within `repair_reach`
+    /// metres, at `repair_per_hp` a point of hull.
+    pub repair_per_hp: f32,
+    pub repair_reach: f32,
+}
+
+impl Default for Economy {
+    fn default() -> Self {
+        Self {
+            guns: [("pistol", 300), ("revolver", 500), ("harpoon", 400), ("smg", 600), ("fist", 600), ("shotgun", 700), ("rifle", 900), ("grenade", 1000), ("dmr", 1100), ("rocket", 1500)]
+                .into_iter()
+                .map(|(id, p)| (id.to_string(), p))
+                .collect(),
+            attachments: [[0, 200, 400], [0, 200, 350], [0, 150, 150], [0, 200, 250]],
+            tune: [300, 700, 1400],
+            tithe: 150,
+            courier_base: 250,
+            courier_step: 150,
+            scrap_value: 6,
+            hold_base: 60,
+            hold_per_plating: 20,
+            rebuy_share: 0.1,
+            rebuy_min: 100,
+            rebuy_max: 1500,
+            repair_per_hp: 1.0,
+            repair_reach: 400.0,
         }
     }
 }

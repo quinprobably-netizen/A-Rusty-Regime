@@ -162,7 +162,7 @@ fn shot_down(
         if ship.pilot.is_none() || downed.wreck.is_some() {
             continue;
         }
-        let lost = save.as_mut().map_or_else(Loss::default, |s| lose(s, t.bank_loss));
+        let lost = save.as_mut().map_or_else(Loss::default, |s| lose(s, 0.25));
         if let Some(s) = &save {
             file.write(s);
         }

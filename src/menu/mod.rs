@@ -848,7 +848,7 @@ fn act(
             let kind = arsenal.kind();
             if select && !quartermaster::owns_weapon(save.as_deref(), kind) {
                 if let (Some(mut save), Some(file)) = (save, file) {
-                    let sale = quartermaster::buy_weapon(&mut save, kind);
+                    let sale = quartermaster::buy_weapon(&mut save, kind, &tuning.economy);
                     menu.note = sold(sale, kind.name());
                     file.write(&save);
                 }
@@ -861,7 +861,7 @@ fn act(
             let part = loadout.part(kind, slot);
             if row == Row::Slot(slot) && select && !quartermaster::owns_part(save.as_deref(), slot, part) {
                 if let (Some(mut save), Some(file)) = (save, file) {
-                    let sale = quartermaster::buy_part(&mut save, slot, part);
+                    let sale = quartermaster::buy_part(&mut save, slot, part, &tuning.economy);
                     menu.note = sold(sale, PARTS[slot][part].name);
                     gunsmith::persist(&loadout, &mut save, &file);
                 }
@@ -967,7 +967,7 @@ fn switch_weapon(arsenal: &mut Arsenal, dir: i32) {
     let mut i = arsenal.current as i32;
     for _ in 0..WEAPONS.len() {
         i = (i + dir.signum()).rem_euclid(WEAPONS.len() as i32);
-        if quartermaster::price(WEAPONS[i as usize]).is_some() {
+        if WEAPONS[i as usize] != crate::weapon::WeaponKind::Knife {
             break;
         }
     }

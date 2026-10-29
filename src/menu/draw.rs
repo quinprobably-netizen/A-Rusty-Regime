@@ -263,7 +263,7 @@ pub(super) fn rebuild(
         }
 
         if menu.panel == Panel::Quartermaster {
-            bench(p, &t, &rows, menu.cursor, kind, &loadout, save.as_deref(), &menu.note, screen_px);
+            bench(p, &t, &rows, menu.cursor, kind, &loadout, save.as_deref(), &menu.note, screen_px, &tuning.economy);
         }
         if menu.panel == Panel::Parts {
             super::space::refit_card(p, &t, &space, save.as_deref(), LEFT + 600.0);
@@ -400,7 +400,7 @@ const CALLOUT_W: f32 = 230.0;
 /// callout per slot on an ink leader line, the weapon list down the left, and the selected slot's
 /// parts as cards along the bottom.
 #[allow(clippy::too_many_arguments)]
-fn bench(p: &mut ChildSpawnerCommands, t: &ComicTheme, rows: &[Row], cursor: usize, kind: crate::weapon::WeaponKind, loadout: &Loadout, save: Option<&Save>, note: &str, screen: Vec2) {
+fn bench(p: &mut ChildSpawnerCommands, t: &ComicTheme, rows: &[Row], cursor: usize, kind: crate::weapon::WeaponKind, loadout: &Loadout, save: Option<&Save>, note: &str, screen: Vec2, e: &crate::tuning::Economy) {
     let money = crate::comic::widgets::money;
     let mut index_of = std::collections::HashMap::new();
     for (i, row) in selectable(rows).enumerate() {
@@ -421,7 +421,7 @@ fn bench(p: &mut ChildSpawnerCommands, t: &ComicTheme, rows: &[Row], cursor: usi
         list.spawn(Node { height: Val::Px(8.0), ..default() });
         for w in crate::weapon::WEAPONS {
             let owned = quartermaster::owns_weapon(save, w);
-            let Some(cost) = quartermaster::price(w).or(owned.then_some(0)) else { continue };
+            let Some(cost) = quartermaster::price(w, e).or(owned.then_some(0)) else { continue };
             let here = w == kind;
             list.spawn((Node { justify_content: JustifyContent::SpaceBetween, padding: UiRect::axes(Val::Px(10.0), Val::Px(1.0)), border: UiRect::all(Val::Px(if here { 2.0 } else { 0.0 })), ..default() }, BorderColor::all(t.ink), BackgroundColor(if here { t.yellow } else { t.paper.with_alpha(0.85) })))
                 .with_children(|r| {
@@ -487,7 +487,7 @@ fn bench(p: &mut ChildSpawnerCommands, t: &ComicTheme, rows: &[Row], cursor: usi
                 r.spawn(display_text(part.name, 22.0, t2.ink, &t2));
                 arrow(r, &t2, i, 1);
             });
-            c.spawn(body_text(if owned { "OWNED".to_string() } else { money(quartermaster::PART_PRICES[slot][fitted]) }, 14.0, if owned { t2.muted } else { t2.red }, true, &t2));
+            c.spawn(body_text(if owned { "OWNED".to_string() } else { money(e.attachments[slot][fitted]) }, 14.0, if owned { t2.muted } else { t2.red }, true, &t2));
             if let Some((ti, v)) = tune {
                 let (l, r) = TUNES[slot];
                 let fill = (v + TUNE_MAX) as f32 / (2 * TUNE_MAX) as f32;
@@ -515,7 +515,7 @@ fn bench(p: &mut ChildSpawnerCommands, t: &ComicTheme, rows: &[Row], cursor: usi
             row.spawn(Node { width: Val::Px(220.0), ..default() }).with_children(|w| {
                 panel(w, t, if n == fitted { t.yellow } else { t.paper }, if n == fitted { -1.5 } else { 0.0 }, move |c| {
                     c.spawn(display_text(part.name, 20.0, t2.ink, &t2));
-                    c.spawn(body_text(if owned { "OWNED".to_string() } else { money(quartermaster::PART_PRICES[slot][n]) }, 14.0, if owned { t2.muted } else { t2.red }, true, &t2));
+                    c.spawn(body_text(if owned { "OWNED".to_string() } else { money(e.attachments[slot][n]) }, 14.0, if owned { t2.muted } else { t2.red }, true, &t2));
                     c.spawn(body_text(part.desc, 14.0, t2.ink, false, &t2));
                 });
             });
@@ -636,7 +636,7 @@ mod tests {
         let rows = rows(Panel::Quartermaster, Screen::Paused, [true, false, false, false], gunsmith::customizable(kind));
         let root = app.world_mut().spawn(Node::default()).id();
         let loadout = Loadout::default();
-        app.world_mut().commands().entity(root).with_children(|p| bench(p, &t, &rows, 0, kind, &loadout, None, "", Vec2::new(1280.0, 720.0)));
+        app.world_mut().commands().entity(root).with_children(|p| bench(p, &t, &rows, 0, kind, &loadout, None, "", Vec2::new(1280.0, 720.0), &crate::tuning::Economy::default()));
         app.world_mut().flush();
         let w = app.world_mut();
         let mut ids: Vec<usize> = w.query_filtered::<&RowId, With<Button>>().iter(w).map(|r| r.0).collect();

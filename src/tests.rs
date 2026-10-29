@@ -2314,7 +2314,19 @@ fn every_base_and_the_ship_get_a_waypoint_in_the_faction_colour() {
 
 // ---------------------------------------------------------------------------- base stations
 
-use solar::station::{Blessing, Contract, Station, StationKind, BLESSING_HP, TITHE, UPGRADE_COST};
+use solar::station::{Blessing, Contract, Station, StationKind, BLESSING_HP};
+
+const UPGRADE_COST: [u32; 3] = [300, 700, 1400];
+const TITHE: u32 = 150;
+
+#[test]
+fn the_economy_section_in_tuning_toml_matches_the_defaults() {
+    let text = std::fs::read_to_string("tuning.toml").unwrap();
+    let parsed: Tuning = toml::from_str(&text).unwrap();
+    let e = Tuning::default().economy;
+    assert_eq!(parsed.economy, e);
+    assert_eq!((e.guns["rocket"], e.tune, e.tithe), (1500, UPGRADE_COST, TITHE));
+}
 
 #[test]
 fn every_base_has_its_station_on_a_floor_clear_of_the_furniture() {
