@@ -212,9 +212,9 @@ proportional navigation a moment behind (0.4 s) and never faster than 1.4 rad/s,
 break can shake it; it loses a target more than 60° off its nose, bursts on the ground or
 anything it touches, within 8 m of its target or after 8 s, and does 80 damage, shield first,
 never to its own side. The Sentry (`ai = { missiles = true }`) flies with them: while it has one
-it holds its nose on you and fires once locked. `RUST_REGIME_SCREENSHOT_MISSILE=1` presses the
-missile trigger once a lock is complete, e.g. with `RUST_REGIME_AT=home,600
-RUST_REGIME_FIGHTER=welder,900`.
+it holds its nose on you and fires once locked. `RUST_REGIME_SCREENSHOT_MISSILE=<seconds>` presses the
+missile trigger once a lock is complete and that many seconds of the run have gone, e.g. with
+`RUST_REGIME_AT=home,600 RUST_REGIME_FIGHTER=welder,900`.
 **Enemies** hunt ships, never you on foot. While you fly, **raiders** come in packs of two to
 four Jackals every minute and a half or so (sooner the longer you go without a fight), 1.5 to
 3 km off to one side and never ahead of your nose, but not in the first minute after you board

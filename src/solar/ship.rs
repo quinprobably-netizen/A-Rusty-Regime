@@ -558,15 +558,16 @@ fn controls(
 /// the aim button (right mouse) the missile trigger: each is taken off the input as soon as it is
 /// read, before any fixed tick could fire or aim the hand gun with it.
 /// Dev aids: `RUST_REGIME_SCREENSHOT_FIRE` holds the gun trigger, and
-/// `RUST_REGIME_SCREENSHOT_MISSILE` presses the missile trigger once a lock is complete, for
-/// screenshots of the guns and missiles.
+/// `RUST_REGIME_SCREENSHOT_MISSILE=<seconds>` presses the missile trigger once a lock is complete
+/// and that many seconds of the run have gone (0 if not given), for screenshots of the guns and
+/// missiles.
 #[allow(clippy::type_complexity)]
-fn trigger(mut input: ResMut<PlayerInput>, flying: Query<Entity, (With<Player>, With<Driving>)>, mut ships: Query<(&Ship, &mut ShipControls, Option<&super::missile::Missiles>)>) {
+fn trigger(time: Res<Time>, mut input: ResMut<PlayerInput>, flying: Query<Entity, (With<Player>, With<Driving>)>, mut ships: Query<(&Ship, &mut ShipControls, Option<&super::missile::Missiles>)>) {
     let Ok(player) = flying.single() else { return };
     let Some((_, mut controls, missiles)) = ships.iter_mut().find(|(s, ..)| s.pilot == Some(player)) else { return };
     controls.fire = std::mem::take(&mut input.fire_held) || std::env::var_os("RUST_REGIME_SCREENSHOT_FIRE").is_some();
     input.fire_pressed = false;
-    let dev = std::env::var_os("RUST_REGIME_SCREENSHOT_MISSILE").is_some() && missiles.is_some_and(|m| m.locked().is_some());
+    let dev = std::env::var("RUST_REGIME_SCREENSHOT_MISSILE").is_ok_and(|v| time.elapsed_secs() >= v.trim().parse().unwrap_or(0.0)) && missiles.is_some_and(|m| m.locked().is_some());
     controls.missile = std::mem::take(&mut input.aim_held) || dev;
 }
 

@@ -193,6 +193,7 @@ fn launch(
         }
         m.count -= 1;
         m.since = 0.0;
+        debug!("{} fires a missile{}", specs.ship[ship.spec].name, if m.locked().is_some() { " with a lock" } else { "" });
         // Under the nose, between the guns.
         let guns = &specs.ship[ship.spec].guns;
         let rail = guns.iter().map(|g| Vec3::from(*g)).sum::<Vec3>() / guns.len().max(1) as f32 + Vec3::NEG_Y * 0.6;
