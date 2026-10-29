@@ -42,7 +42,8 @@ pub(super) fn hints(panel: Panel, screen: Screen) -> &'static [(&'static str, &'
         Panel::Quartermaster => &[("LB RB", "Q E", "WEAPON"), ("L R", "A D", "PART / TUNE"), ("A", "ENTER", "BUY"), ("B", "ESC", "BACK")],
         Panel::Parts => &[("UP DN", "W S", "PART"), ("A", "ENTER", "BUY"), ("B", "ESC", "BACK")],
         Panel::Wardrobe => &[("UP DN", "W S", "SLOT"), ("L R", "A D", "CHANGE"), ("B", "ESC", "BACK")],
-        Panel::Controls | Panel::Starmap | Panel::Ship | Panel::Contracts | Panel::Standing => &[("B", "ESC", "BACK")],
+        Panel::Ship => &[("UP DN", "W S", "SLOT"), ("L R", "A D", "FIT MODULE"), ("B", "ESC", "BACK")],
+        Panel::Controls | Panel::Starmap | Panel::Contracts | Panel::Standing => &[("B", "ESC", "BACK")],
         Panel::Maps => &[("A", "ENTER", "PLAY"), ("B", "ESC", "BACK")],
     }
 }
@@ -114,7 +115,7 @@ pub(super) fn rebuild(
     *was_pad = Some(pad);
     let wardrobe_changed = closet.wardrobe.as_ref().is_some_and(|w| w.is_changed());
     let gun_changed = menu.panel == Panel::Quartermaster && (arsenal.is_changed() || save.as_ref().is_some_and(|s| s.is_changed()));
-    let salvage_changed = menu.panel == Panel::Parts && save.as_ref().is_some_and(|s| s.is_changed());
+    let salvage_changed = matches!(menu.panel, Panel::Parts | Panel::Ship) && save.as_ref().is_some_and(|s| s.is_changed());
     if !(device_changed || menu.is_changed() || screen.is_changed() || settings.is_changed() || loadout.is_changed() || gun_changed || salvage_changed || wardrobe_changed) {
         return;
     }
@@ -136,7 +137,8 @@ pub(super) fn rebuild(
     let width = match menu.panel {
         Panel::Main => 360.0,
         Panel::Wardrobe => 620.0,
-        Panel::Starmap | Panel::Ship | Panel::Contracts | Panel::Standing => 300.0,
+        Panel::Ship => 420.0,
+        Panel::Starmap | Panel::Contracts | Panel::Standing => 300.0,
         _ => 560.0,
     };
     let mut halftones = halftones;
@@ -230,6 +232,11 @@ pub(super) fn rebuild(
                     Row::Part(i) => {
                         let (value, fill, note) = super::space::part_row(i, menu.rack, &space, save.as_deref());
                         value_row(list, &t, &value.0, &value.1, Some(fill), Some(&note), index, index == menu.cursor, false);
+                        index += 1;
+                    }
+                    Row::Fit(slot) => {
+                        let (value, note) = super::space::fit_row(slot, &space, save.as_deref());
+                        value_row(list, &t, &format!("SLOT {}", slot + 1), &value, None, Some(&note), index, index == menu.cursor, true);
                         index += 1;
                     }
                     Row::Weapon | Row::Slot(_) | Row::Tune(_) | Row::Preset | Row::Look(_) => {}

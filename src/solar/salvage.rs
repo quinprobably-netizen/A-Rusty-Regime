@@ -486,7 +486,10 @@ fn dev_salvage(save: Option<ResMut<Save>>) {
     if let Ok(spec) = std::env::var("RUST_REGIME_MODULES") {
         let found = modules_from_env(&spec);
         save.modules = found.iter().map(|m| m.id().to_string()).collect();
-        save.fitted = found.iter().take(SLOTS).map(|m| m.id().to_string()).collect();
+        save.fitted.clear();
+        for m in found {
+            fit(&mut save, m);
+        }
     }
 }
 

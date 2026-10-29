@@ -3826,7 +3826,7 @@ fn a_parcel_to_a_friends_base_pays_a_fifth_more_and_raises_your_standing_there()
 
 // ------------------------------------------------------------------------------------ salvage
 
-use solar::salvage::{Loot, Pickup, SalvageLine};
+use solar::salvage::{self as salvage, Loot, Module, Pickup, SalvageLine};
 
 /// Every pickup: its entity, what it holds and where it is in the world frame.
 fn pickups(app: &mut App) -> Vec<(Entity, Loot, Vec3)> {
@@ -4014,4 +4014,192 @@ fn parts_land_on_a_fresh_kestrel_and_are_kept_after_being_shot_down() {
     let h = *app.world().get::<Hull>(kestrel).unwrap();
     assert_eq!((h.hp, h.shield), (175.0, 90.0));
     assert_eq!(missiles(&app, kestrel).count, t.missiles + 1);
+}
+
+#[test]
+fn a_wreck_drops_its_module_beside_its_scrap_and_a_spare_turns_into_scrap() {
+    let (mut app, jackal) = gunnery_range(30.0);
+    // Every wreck drops its module here (the rate itself is the seeded roll's, in `salvage`).
+    app.world_mut().resource_mut::<Tuning>().ship_combat.module_chance = 1.0;
+    let at = app.world().get::<Transform>(jackal).unwrap();
+    let (at, facing) = (at.translation, at.rotation);
+    let kill = |app: &mut App, target: Entity| -> Vec<Cue> {
+        app.world_mut().get_mut::<Hull>(target).unwrap().hp = 0.0;
+        listen(app, 1.0, |_| {})
+    };
+    let heard = kill(&mut app, jackal);
+    let save = app.world().resource::<Save>().clone();
+    assert_eq!((save.scrap, save.modules.clone()), (2, vec!["afterburner".to_string()]), "a Jackal's two scrap and its afterburner, both pulled in from 30 m");
+    assert!(pickups(&mut app).is_empty());
+    assert_eq!(app.world().resource::<SalvageLine>().text(), "+2 SCRAP  MODULE FOUND  AFTERBURNER");
+    assert_eq!(of(&heard, Sfx::Module).len(), 1, "the module's chime");
+    // A second Jackal's afterburner, once the line has gone, is a spare: ten scrap instead.
+    run(&mut app, Tuning::default().ship_combat.scrap_line);
+    let spec = spec_of(&app, "jackal");
+    let again = solar::ship::spawn(app.world_mut(), spec, Transform::from_translation(at).with_rotation(facing));
+    app.world_mut().entity_mut(again).insert((RigidBody::Static, Position(at), Rotation(facing)));
+    run(&mut app, 0.1);
+    kill(&mut app, again);
+    let save = app.world().resource::<Save>().clone();
+    assert_eq!((save.scrap, save.modules.len()), (2 + 2 + 10, 1), "a spare turns into scrap");
+    assert_eq!(app.world().resource::<SalvageLine>().text(), "+12 SCRAP  SPARE AFTERBURNER");
+}
+
+#[test]
+fn modules_fit_two_at_a_time_from_the_ship_screen() {
+    use crate::menu::{Menu, Panel, Screen};
+    let mut app = counter_app();
+    app.world_mut().resource_mut::<Save>().modules = ["afterburner", "spire", "ram"].map(String::from).to_vec();
+    tap(&mut app, KeyCode::Escape);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Paused);
+    app.world_mut().resource_mut::<Menu>().panel = Panel::Ship;
+    app.update();
+    let fitted = |app: &App| salvage::fitted(app.world().resource::<Save>());
+    // Slot 1: right fits the first you own. Slot 2 steps past it, then round to empty.
+    tap(&mut app, KeyCode::KeyD);
+    assert_eq!(fitted(&app), [Module::Afterburner]);
+    tap(&mut app, KeyCode::KeyS);
+    for want in [vec![Module::Afterburner, Module::Spire], vec![Module::Afterburner, Module::Ram], vec![Module::Afterburner]] {
+        tap(&mut app, KeyCode::KeyD);
+        assert_eq!(fitted(&app), want);
+    }
+    tap(&mut app, KeyCode::KeyA);
+    assert_eq!(fitted(&app), [Module::Afterburner, Module::Ram]);
+    assert_eq!(app.world().resource::<Save>().fitted.len(), 2, "never more than two");
+    // On the Kestrel at once.
+    let ship = ship_entity(&mut app);
+    tap(&mut app, KeyCode::Escape);
+    tap(&mut app, KeyCode::Escape);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Playing);
+    run(&mut app, 0.1);
+    let refit = *app.world().get::<salvage::Refit>(ship).unwrap();
+    assert_eq!((refit.boost_refill > 1.0, refit.ram), (true, 30.0), "the afterburner and the ram plate are on");
+}
+
+/// The Kestrel 600 m up with `modules` fitted.
+fn fitted_aloft(modules: &[&str]) -> App {
+    let mut app = aloft(600.0);
+    {
+        let mut save = app.world_mut().resource_mut::<Save>();
+        save.modules = modules.iter().map(|m| m.to_string()).collect();
+        save.fitted = save.modules.clone();
+    }
+    run(&mut app, 0.1);
+    app
+}
+
+#[test]
+fn the_afterburner_refills_the_boost_faster_for_less_shield() {
+    let refilled = |modules: &[&str]| -> (f32, f32) {
+        let mut app = fitted_aloft(modules);
+        let ship = ship_entity(&mut app);
+        let mut s = app.world_mut().get_mut::<Ship>(ship).unwrap();
+        (s.boost_used, s.boost_idle) = (1.0, 2.0);
+        run(&mut app, 1.0);
+        (1.0 - app.world().get::<Ship>(ship).unwrap().boost_used, app.world().get::<Hull>(ship).unwrap().max_shield)
+    };
+    let ((stock, shield), (burner, less)) = (refilled(&[]), refilled(&["afterburner"]));
+    assert!((burner / stock - 1.4).abs() < 0.05, "refills {burner} a second against {stock}");
+    assert_eq!((shield, less), (60.0, 54.0), "for a tenth of the shield");
+}
+
+#[test]
+fn the_targeting_array_locks_in_0_8_s_in_a_tighter_cone() {
+    let lock = |modules: &[&str], degrees: f32| -> (bool, bool) {
+        let (mut app, jackal) = gunnery_range(800.0);
+        {
+            let mut save = app.world_mut().resource_mut::<Save>();
+            save.modules = modules.iter().map(|m| m.to_string()).collect();
+            save.fitted = save.modules.clone();
+        }
+        off_nose(&mut app, jackal, 800.0, degrees);
+        let ship = ship_entity(&mut app);
+        run(&mut app, 0.85);
+        let early = missiles(&app, ship).locked() == Some(jackal);
+        run(&mut app, 0.5);
+        (early, missiles(&app, ship).locked() == Some(jackal))
+    };
+    assert_eq!(lock(&[], 1.0), (false, true), "stock: not at 0.85 s, locked by 1.35");
+    assert_eq!(lock(&["targeting"], 1.0), (true, true), "the array locks by 0.85 s");
+    assert_eq!(lock(&[], 3.0), (false, true), "3 degrees off is inside the stock cone");
+    assert_eq!(lock(&["targeting"], 3.0), (false, false), "and outside the array's, 4 degrees tighter");
+}
+
+#[test]
+fn the_spire_coil_fires_faster_harder_shots_that_heat_the_guns_faster() {
+    let t = Tuning::default().ship_combat;
+    let shoot = |modules: &[&str]| -> (f32, f32, f32) {
+        let (mut app, jackal) = gunnery_range(300.0);
+        app.world_mut().entity_mut(jackal).insert(Hull::new(10_000.0, 0.0));
+        {
+            let mut save = app.world_mut().resource_mut::<Save>();
+            save.modules = modules.iter().map(|m| m.to_string()).collect();
+            save.fitted = save.modules.clone();
+        }
+        run(&mut app, 0.1);
+        hold_fire(&mut app, 1.0 / 66.0);
+        let ship = ship_entity(&mut app);
+        let heat = app.world().get::<Gun>(ship).unwrap().heat;
+        let speed = app.world_mut().query::<&solar::combat::Projectile>().iter(app.world()).map(|p| p.velocity.length()).fold(0.0, f32::max);
+        hold_fire(&mut app, 0.3);
+        run(&mut app, 0.5);
+        (heat, speed, 10_000.0 - app.world().get::<Hull>(jackal).unwrap().hp)
+    };
+    let ((heat, speed, hurt), (hot, fast, harder)) = (shoot(&[]), shoot(&["spire"]));
+    assert!((heat - t.heat_per_shot).abs() < 1e-5 && (hot - t.heat_per_shot * 1.2).abs() < 1e-5, "a shot's heat: {heat}, with the coil {hot}");
+    // A shot loses a little to the air in its first tick.
+    assert!((speed / t.gun_speed - 1.0).abs() < 0.01 && (fast / speed - 1.25).abs() < 0.01, "muzzle speed {speed}, with the coil {fast}");
+    let hits = |hurt: f32, each: f32| (hurt / each).round();
+    assert!(hurt > 0.0 && (hurt / t.gun_damage - hits(hurt, t.gun_damage)).abs() < 1e-3, "12 a hit: {hurt}");
+    assert!(harder > 0.0 && (harder / (t.gun_damage * 1.15) - hits(harder, t.gun_damage * 1.15)).abs() < 1e-3, "13.8 a hit: {harder}");
+}
+
+#[test]
+fn the_ram_plate_hurts_what_you_ram_for_30_and_costs_a_tenth_of_the_thrust() {
+    let pushed = |modules: &[&str]| -> f32 {
+        let mut app = fitted_aloft(modules);
+        input(&mut app).thrust = 1.0;
+        run(&mut app, 0.5);
+        ship_state(&mut app).1.length()
+    };
+    let (stock, rammer) = (pushed(&[]), pushed(&["ram"]));
+    assert!((rammer / stock - 0.9).abs() < 0.03, "half a second of thrust: {rammer} m/s against {stock}");
+    // Fly into a parked Jackal 25 m ahead.
+    let (mut app, jackal) = gunnery_range(25.0);
+    {
+        let mut save = app.world_mut().resource_mut::<Save>();
+        save.modules = vec!["ram".into()];
+        save.fitted = vec!["ram".into()];
+    }
+    run(&mut app, 0.1);
+    app.world_mut().entity_mut(jackal).insert(Hull::new(1000.0, 30.0));
+    for _ in 0..(2.0 / DT) as usize {
+        input(&mut app).thrust = 1.0;
+        app.update();
+    }
+    let ship = ship_entity(&mut app);
+    let h = *app.world().get::<Hull>(jackal).unwrap();
+    assert_eq!((h.shield, h.hp, h.last_hit_by), (0.0, 1000.0, Some(ship)), "rammed once for 30, the shield first");
+    // Without the plate a bump does nothing.
+    let (mut app, jackal) = gunnery_range(25.0);
+    app.world_mut().entity_mut(jackal).insert(Hull::new(1000.0, 30.0));
+    for _ in 0..(2.0 / DT) as usize {
+        input(&mut app).thrust = 1.0;
+        app.update();
+    }
+    let h = *app.world().get::<Hull>(jackal).unwrap();
+    assert_eq!((h.shield, h.hp), (30.0, 1000.0), "no plate, no harm");
+}
+
+#[test]
+fn fitted_modules_are_kept_through_being_shot_down() {
+    let mut app = fitted_aloft(&["spire", "afterburner"]);
+    let wreck = shoot_down(&mut app);
+    run(&mut app, 0.2);
+    back_at_the_roost(&mut app, wreck);
+    let save = app.world().resource::<Save>().clone();
+    assert_eq!(salvage::fitted(&save), [Module::Spire, Module::Afterburner], "kept");
+    let kestrel = ship_entity(&mut app);
+    assert_eq!(*app.world().get::<salvage::Refit>(kestrel).unwrap(), salvage::Refit::of(&save, &Tuning::default().ship_combat), "on the fresh Kestrel");
+    assert_eq!(app.world().get::<Hull>(kestrel).unwrap().max_shield, 54.0, "the afterburner's cost too");
 }

@@ -115,11 +115,64 @@ fn starmap(p: &mut ChildSpawnerCommands, t: &ComicTheme, space: &Space) {
     });
 }
 
+/// A Ship screen row for module slot `slot`: what is fitted there, and what it does and costs.
+pub(super) fn fit_row(slot: usize, space: &Space, save: Option<&Save>) -> (String, String) {
+    let blank = Save::default();
+    let save = save.unwrap_or(&blank);
+    match (salvage::fitted(save).get(slot), &space.tuning) {
+        (Some(m), Some(tuning)) => (m.name().to_uppercase(), format!("{}; {}", m.effect(&tuning.ship_combat), m.cost(&tuning.ship_combat).to_lowercase())),
+        (Some(m), None) => (m.name().to_uppercase(), String::new()),
+        (None, _) if salvage::owned(save).is_empty() => ("EMPTY".into(), "No modules yet: wrecks drop them now and then".into()),
+        (None, _) => ("EMPTY".into(), "Left or right to fit one you own".into()),
+    }
+}
+
+/// The Kestrel's refit on the Ship screen: each part's level and what it gives, then every
+/// module you own, what it does and what it costs, and whether it is fitted.
+fn kestrel_card(p: &mut ChildSpawnerCommands, t: &ComicTheme, space: &Space, save: Option<&Save>) {
+    let Some(tuning) = &space.tuning else { return };
+    let sc = tuning.ship_combat.clone();
+    let blank = Save::default();
+    let save = save.unwrap_or(&blank).clone();
+    let t2 = t.clone();
+    p.spawn(Node { width: Val::Px(400.0), ..default() }).with_children(|w| {
+        panel(w, t, t.paper, 1.0, move |c| {
+            c.spawn(display_text("KESTREL REFIT", 30.0, t2.ink, &t2));
+            c.spawn(body_text(format!("{} scrap to spend at the Yard's parts rack", save.scrap), 14.0, t2.muted, false, &t2));
+            for (i, part) in Part::ALL.into_iter().enumerate() {
+                let level = save.ship_parts[i].min(3);
+                c.spawn(Node { justify_content: JustifyContent::SpaceBetween, margin: UiRect::top(Val::Px(4.0)), ..default() }).with_children(|row| {
+                    row.spawn(body_text(part.name().to_uppercase(), 15.0, t2.ink, true, &t2));
+                    row.spawn(body_text(format!("MK{level}"), 15.0, if level > 0 { t2.red } else { t2.muted }, true, &t2));
+                });
+                segment_bar(c, &t2, level as f32, 3.0, 3);
+                c.spawn(body_text(format!("{} a level", part.gives(&sc)), 13.0, t2.muted, false, &t2));
+            }
+            c.spawn((display_text("MODULES", 22.0, t2.ink, &t2), Node { margin: UiRect::top(Val::Px(10.0)), ..default() }));
+            let fitted = salvage::fitted(&save);
+            let owned = salvage::owned(&save);
+            if owned.is_empty() {
+                c.spawn(body_text(format!("None yet. A wreck drops its hull's own module {:.0}% of the time.", sc.module_chance * 100.0), 14.0, t2.muted, false, &t2));
+            }
+            for m in owned {
+                let on = fitted.contains(&m);
+                c.spawn(Node { justify_content: JustifyContent::SpaceBetween, margin: UiRect::top(Val::Px(2.0)), ..default() }).with_children(|row| {
+                    row.spawn(body_text(m.name().to_uppercase(), 15.0, t2.ink, true, &t2));
+                    row.spawn(body_text(if on { "FITTED" } else { "IN THE HOLD" }, 14.0, if on { t2.red } else { t2.muted }, true, &t2));
+                });
+                c.spawn(body_text(format!("+ {}", m.effect(&sc)), 13.0, t2.ink, false, &t2));
+                c.spawn(body_text(format!("- {}", m.cost(&sc)), 13.0, t2.muted, false, &t2));
+            }
+        });
+    });
+}
+
 fn ships(p: &mut ChildSpawnerCommands, t: &ComicTheme, space: &Space, save: Option<&Save>) {
     let (Some(specs), Some(solar)) = (&space.ships, &space.solar) else { return };
     let level = save.map_or(0, |s| s.ship_level);
     let world = solar.anchor_body().name.to_uppercase();
-    p.spawn(Node { position_type: PositionType::Absolute, left: Val::Px(LEFT + 380.0), right: Val::Px(LEFT), top: Val::Px(120.0), flex_wrap: FlexWrap::Wrap, column_gap: Val::Px(18.0), row_gap: Val::Px(18.0), ..default() }).with_children(|grid| {
+    p.spawn(Node { position_type: PositionType::Absolute, left: Val::Px(LEFT + 460.0), right: Val::Px(LEFT), top: Val::Px(120.0), flex_wrap: FlexWrap::Wrap, column_gap: Val::Px(18.0), row_gap: Val::Px(18.0), align_items: AlignItems::FlexStart, ..default() }).with_children(|grid| {
+        kestrel_card(grid, t, space, save);
         let mut list: Vec<&Ship> = space.parked.iter().collect();
         list.sort_by_key(|s| s.spec);
         for ship in list {

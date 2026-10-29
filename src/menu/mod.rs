@@ -356,6 +356,8 @@ enum Row {
     Tune(usize),
     /// A ship part on the parts rack (an entry of `salvage::Part::ALL`).
     Part(usize),
+    /// One of the Kestrel's two module slots, on the Ship screen.
+    Fit(usize),
     /// The wardrobe's preset picker.
     Preset,
     /// A wardrobe slot (an entry of `wardrobe::SLOTS`).
@@ -440,7 +442,11 @@ fn rows(panel: Panel, screen: Screen, tuned: [bool; 4], fits: bool) -> Vec<Row> 
             }
             rows.push(Row::Action("BACK", Action::Back));
         }
-        Panel::Controls | Panel::Starmap | Panel::Ship | Panel::Contracts | Panel::Standing => rows.push(Row::Action("BACK", Action::Back)),
+        Panel::Controls | Panel::Starmap | Panel::Contracts | Panel::Standing => rows.push(Row::Action("BACK", Action::Back)),
+        Panel::Ship => {
+            rows.extend((0..crate::solar::salvage::SLOTS).map(Row::Fit));
+            rows.push(Row::Action("BACK", Action::Back));
+        }
         Panel::Maps => {
             rows.extend((0..MAPS.len()).map(Row::Map));
             rows.push(Row::Action("BACK", Action::Back));
@@ -881,6 +887,14 @@ fn act(
                     Sale::Top => format!("{} is at Mk3, as far as it goes", part.name()),
                     Sale::Refused => crate::solar::standing::refusal(menu.rack),
                 };
+                file.write(&save);
+            }
+        }
+        Row::Fit(slot) => {
+            if step != 0
+                && let (Some(mut save), Some(file)) = (save, file)
+            {
+                crate::solar::salvage::cycle(&mut save, slot, step);
                 file.write(&save);
             }
         }
