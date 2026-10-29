@@ -1,6 +1,6 @@
 //! What persists between sessions, in `save.toml` next to `tuning.toml`: banked money, the outfit, the
 //! loadout, the weapons and parts you own, the ship's tune, the courier parcel, the ships you
-//! have shot down and lost, and where you stand with each faction.
+//! have shot down and lost, where you stand with each faction, and your salvage.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -86,4 +86,11 @@ pub struct Save {
     /// game time toward the next day's slow recovery, s.
     pub standing: BTreeMap<String, i32>,
     pub standing_clock: f32,
+    /// Salvage (`solar::salvage`): scrap picked up from wrecks and not yet spent, the level of
+    /// each ship part bought with it (hull plating, shield cell, gun capacitor, missile rack), the
+    /// modules found, by id, and the ones fitted (at most two).
+    pub scrap: u32,
+    pub ship_parts: [u8; 4],
+    pub modules: Vec<String>,
+    pub fitted: Vec<String>,
 }

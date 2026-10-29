@@ -59,6 +59,9 @@ pub struct Sounds {
     lock_beep: Handle<AudioSource>,
     lock_tone: Handle<AudioSource>,
     warning: Handle<AudioSource>,
+    /// Salvage: scrap clinking aboard, and the chime of a module found.
+    scrap: Handle<AudioSource>,
+    module: Handle<AudioSource>,
 }
 
 const RATE: u32 = 22050;
@@ -341,6 +344,20 @@ fn chirp() -> Vec<f32> {
     mix(&[(0.0, one(0.06)), (0.09, one(0.06))])
 }
 
+/// Scrap pulled aboard: a metal clink under two quick rising notes.
+fn clink(seed: u64) -> Vec<f32> {
+    mix(&[(0.0, clack(0.12, 2400.0, 0.02, seed)), (0.01, tone(0.06, 1320.0, 0.35, 0.004)), (0.06, tone(0.1, 1980.0, 0.35, 0.01))])
+}
+
+/// A module found: three notes climbing, the last held and shimmering.
+fn chime() -> Vec<f32> {
+    let held: Vec<f32> = tone(0.5, 1320.0, 0.4, 0.01).into_iter().enumerate().map(|(i, x)| {
+        let t = i as f32 / RATE as f32;
+        x * (-t / 0.25).exp() * (0.8 + 0.2 * (TAU * 9.0 * t).sin())
+    }).collect();
+    mix(&[(0.0, tone(0.1, 660.0, 0.4, 0.008)), (0.09, tone(0.1, 880.0, 0.4, 0.008)), (0.18, held)])
+}
+
 fn thud(seconds: f32, cutoff: f32, tau: f32, hz: f32, amount: f32, seed: u64) -> Vec<f32> {
     let mut rng = Rng(seed);
     let mut lp = LowPass::new(cutoff);
@@ -451,6 +468,8 @@ fn load(mut commands: Commands, tuning: Res<Tuning>, server: Res<AssetServer>, m
         lock_beep: clip("lock_beep", tone(0.07, 1000.0, 0.5, 0.008)),
         lock_tone: clip("lock_tone", tone(1.0, 1250.0, 0.4, 0.0)),
         warning: clip("missile_warning", chirp()),
+        scrap: clip("salvage_scrap", clink(441)),
+        module: clip("salvage_module", chime()),
     };
     commands.insert_resource(GlobalVolume { volume: Volume::Linear(tuning.sound.master) });
     commands.insert_resource(sounds);
@@ -574,6 +593,8 @@ fn fight(mut commands: Commands, s: Res<Sounds>, tuning: Res<Tuning>, mut cues: 
             Sfx::HullHit => (&s.hull_hit, effects),
             Sfx::LockBeep => (&s.lock_beep, effects * 0.5),
             Sfx::Warning => (&s.warning, effects * 0.7),
+            Sfx::Scrap => (&s.scrap, effects * 0.7),
+            Sfx::Module => (&s.module, effects * 0.8),
         };
         oneshot(&mut commands, clip, level * cue.volume, cue.pitch);
     }
@@ -685,7 +706,7 @@ mod tests {
     #[test]
     fn shots_and_foley_are_bounded() {
         let v = Voice { crack: 0.012, body: 0.05, cutoff: 7000.0, sub_hz: 110.0, sub: 0.5, tail: 0.16, click: 0.4 };
-        for clip in [shot(&v, 0, 1), shot(&v, 2, 2), clack(0.1, 900.0, 0.015, 3), scrape(0.1, 4), whizz(5), mix(&[(0.0, scrape(0.1, 6)), (0.1, clack(0.1, 900.0, 0.02, 7))]), chirp(), tone(0.07, 1000.0, 0.5, 0.008)] {
+        for clip in [shot(&v, 0, 1), shot(&v, 2, 2), clack(0.1, 900.0, 0.015, 3), scrape(0.1, 4), whizz(5), mix(&[(0.0, scrape(0.1, 6)), (0.1, clack(0.1, 900.0, 0.02, 7))]), chirp(), tone(0.07, 1000.0, 0.5, 0.008), clink(5), chime()] {
             assert!(clip.len() > 100 && clip.iter().all(|x| x.is_finite() && x.abs() <= 1.01 * 2.0), "clip stays in range");
         }
         assert!(shot(&v, 0, 1) != shot(&v, 2, 1), "takes differ");

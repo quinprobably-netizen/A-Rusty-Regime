@@ -663,7 +663,7 @@ pub(super) fn fly(
     spatial: Option<SpatialQuery>,
     mut input: ResMut<PlayerInput>,
     mut hud: ResMut<crate::hud::FlightHud>,
-    mut ships: Query<(Entity, &mut Ship, &mut ShipControls, &mut ChaseCam, Forces, Has<Autopilot>)>,
+    mut ships: Query<(Entity, &mut Ship, &mut ShipControls, &mut ChaseCam, Forces, Has<Autopilot>, Option<&super::salvage::Refit>)>,
     mut players: Query<(&mut Player, &mut Transform), With<Driving>>,
 ) {
     let dt = time.delta_secs();
@@ -675,7 +675,9 @@ pub(super) fn fly(
     // The Yard's tuning rig: more thrust and speed, a little sharper turning, on the player's ship.
     let tuned = super::station::tune(save.map_or(0, |s| s.ship_level));
     let mut flown = false;
-    for (entity, mut ship, mut controls, mut chase, mut forces, autopilot) in &mut ships {
+    for (entity, mut ship, mut controls, mut chase, mut forces, autopilot, refit) in &mut ships {
+        // The Kestrel's afterburner refills its boost tank faster, and its ram plate costs thrust.
+        let (refill, shove) = refit.map_or((1.0, 1.0), |r| (r.boost_refill, r.thrust));
         // The mouse as a stick: how fast it moved against how fast makes full stick, eased over a
         // few ticks, so the same flick turns the ship the same at any frame or tick rate.
         let mouse = std::mem::take(&mut controls.mouse);
@@ -685,7 +687,7 @@ pub(super) fn fly(
         if pilot.is_none() && !autopilot {
             ship.burn = 0.0;
             ship.heat *= (-0.5 * dt).exp();
-            ship.boost_used = (ship.boost_used - dt / BOOST_REFILL).max(0.0);
+            ship.boost_used = (ship.boost_used - dt * refill / BOOST_REFILL).max(0.0);
             continue;
         }
         flown |= pilot.is_some();
@@ -719,7 +721,7 @@ pub(super) fn fly(
         } else {
             ship.boost_idle += dt;
             if ship.boost_idle > 1.5 {
-                ship.boost_used = (ship.boost_used - dt / BOOST_REFILL).max(0.0);
+                ship.boost_used = (ship.boost_used - dt * refill / BOOST_REFILL).max(0.0);
             }
         }
 
@@ -740,10 +742,10 @@ pub(super) fn fly(
 
         // Thrust, then assist: drift sideways bleeds off, gravity is held near the ground, and
         // the speed cap pulls back anything over it.
-        let mut a = fwd * controls.thrust * spec.thrust * power + ship_up * controls.lift * spec.lift * power;
+        let mut a = fwd * controls.thrust * spec.thrust * power * shove + ship_up * controls.lift * spec.lift * power;
         let cap = spec.speed_cap(clearance, boosting) * power;
         if boosting {
-            a += fwd * (cap * 0.25).clamp(spec.thrust * power * 2.0, 400.0 * power);
+            a += fwd * (cap * 0.25).clamp(spec.thrust * power * 2.0, 400.0 * power) * shove;
         }
         let along = fwd * v.dot(fwd);
         // Sideways drift bleeds off, and up-and-down drift too unless the lift engines are on.

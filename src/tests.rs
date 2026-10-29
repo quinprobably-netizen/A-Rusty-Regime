@@ -3822,3 +3822,115 @@ fn a_parcel_to_a_friends_base_pays_a_fifth_more_and_raises_your_standing_there()
     assert_eq!((paid, after), (300, 50), "a friend is paid 20% more");
     assert!(said.contains("$50 for your standing"), "{said}");
 }
+
+// ------------------------------------------------------------------------------------ salvage
+
+use solar::salvage::{Loot, Pickup, SalvageLine};
+
+/// Every pickup: its entity, what it holds and where it is in the world frame.
+fn pickups(app: &mut App) -> Vec<(Entity, Loot, Vec3)> {
+    app.world_mut().query::<(Entity, &Pickup, &Transform)>().iter(app.world()).map(|(e, p, tf)| (e, p.loot, tf.translation)).collect()
+}
+
+/// Puts salvage holding `loot` at `offset` (world frame) from the player, at rest.
+fn salvage_near(app: &mut App, loot: Loot, offset: Vec3) -> Entity {
+    let at = player(app).0 + offset;
+    let pickup = Pickup::new(loot, Vec3::ZERO, &Tuning::default().ship_combat);
+    app.world_mut().spawn((pickup, Transform::from_translation(at))).id()
+}
+
+#[test]
+fn a_wreck_drops_its_scrap_where_it_died_drifting_with_it_until_it_times_out() {
+    let t = Tuning::default().ship_combat;
+    let (mut app, jackal) = gunnery_range(300.0);
+    // Modules come later: here every wreck drops only its scrap.
+    app.world_mut().resource_mut::<Tuning>().ship_combat.module_chance = 0.0;
+    let at = app.world().get::<Transform>(jackal).unwrap().translation;
+    app.world_mut().get_mut::<Hull>(jackal).unwrap().hp = 0.0;
+    run(&mut app, 0.1);
+    assert!(app.world().get_entity(jackal).is_err(), "shot down");
+    let dropped = pickups(&mut app);
+    assert_eq!(dropped.len(), 1, "a Jackal's scrap");
+    assert_eq!(dropped[0].1, Loot::Scrap(2));
+    assert!(dropped[0].2.distance(at) < 0.5, "where it blew apart: {} m off", dropped[0].2.distance(at));
+    // 300 m off is out of the Kestrel's reach: it hangs there.
+    run(&mut app, 1.0);
+    assert_eq!((pickups(&mut app).len(), app.world().resource::<Save>().scrap), (1, 0));
+    // A wreck that was moving (a Welder another ship shot down, 300 m off) carries its scrap on,
+    // slowing in the air.
+    let welder = spec_of(&app, "welder");
+    let v = Vec3::new(0.0, 0.0, -50.0);
+    app.world_mut().write_message(solar::combat::ShipDestroyed { ship: Entity::PLACEHOLDER, spec: welder, faction: Faction::Scrappers, killer: None, at: at + Vec3::X * 40.0, velocity: v });
+    run(&mut app, 1.0);
+    let (moving, loot, p) = pickups(&mut app).into_iter().find(|(_, l, _)| *l == Loot::Scrap(8)).expect("the Welder's scrap");
+    let gone = (p - (at + Vec3::X * 40.0)).dot(v.normalize());
+    assert!(loot == Loot::Scrap(8) && gone > 40.0 && gone < 50.0, "drifted {gone} m on in a second");
+    let speed = app.world().get::<Pickup>(moving).unwrap().velocity.length();
+    assert!(speed < 50.0 && speed > 40.0, "slowed by the air: {speed}");
+    assert_eq!(app.world().get::<Pickup>(moving).unwrap().life.round(), t.scrap_life - 1.0, "90 s to live");
+    // And once that is up it is gone.
+    app.world_mut().get_mut::<Pickup>(moving).unwrap().life = 0.5;
+    run(&mut app, 1.0);
+    assert!(app.world().get_entity(moving).is_err(), "timed out");
+    assert_eq!(pickups(&mut app).len(), 1, "the Jackal's scrap is still there");
+}
+
+#[test]
+fn salvage_is_pulled_in_from_40_m_by_the_ship_you_fly_and_never_on_foot() {
+    let mut app = aloft(600.0);
+    let near = salvage_near(&mut app, Loot::Scrap(4), Vec3::X * 30.0);
+    let far = salvage_near(&mut app, Loot::Scrap(5), Vec3::X * -50.0);
+    let cues = listen(&mut app, 1.0, |_| {});
+    assert!(app.world().get_entity(near).is_err(), "30 m off: pulled in and aboard");
+    assert!(app.world().get_entity(far).is_ok(), "50 m off: out of reach");
+    assert_eq!(app.world().resource::<Save>().scrap, 4);
+    let line = app.world().resource::<SalvageLine>();
+    assert_eq!(line.text(), "+4 SCRAP");
+    assert!(line.left > 0.0, "the line is up");
+    assert_eq!(of(&cues, Sfx::Scrap).len(), 1, "a clink as it comes aboard");
+    run(&mut app, Tuning::default().ship_combat.scrap_line);
+    assert_eq!(app.world().resource::<SalvageLine>().left, 0.0, "and gone a few seconds later");
+    // On foot beside the parked Kestrel nothing pulls it in, the ship included.
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    let ship = ship_entity(&mut app);
+    let beside = (app.world().get::<Transform>(ship).unwrap().translation - player(&mut app).0) * 0.5;
+    let lying = salvage_near(&mut app, Loot::Scrap(4), beside + Vec3::Y * 3.0);
+    run(&mut app, 1.0);
+    assert!(app.world().get_entity(lying).is_ok(), "on foot it stays where it is");
+    assert_eq!(app.world().resource::<Save>().scrap, 0);
+}
+
+#[test]
+fn a_wreck_of_your_own_ship_drops_nothing() {
+    let mut app = aloft(600.0);
+    let wreck = shoot_down(&mut app);
+    run(&mut app, 0.2);
+    assert_eq!(app.world().resource::<Downed>().wreck, Some(wreck), "shot down");
+    assert!(pickups(&mut app).is_empty(), "no scrap from your own ship");
+}
+
+#[test]
+fn salvage_left_behind_at_a_handoff_is_gone() {
+    let mut app = aloft(600.0);
+    let left = salvage_near(&mut app, Loot::Scrap(4), Vec3::X * 2000.0);
+    run(&mut app, 0.2);
+    assert!(app.world().get_entity(left).is_ok());
+    let (ground, up) = reliquary(&app);
+    fly_to(&mut app, "bastion", ground + up * 3000.0);
+    assert!(app.world().get_entity(left).is_err(), "dropped with the old world's frame");
+}
+
+#[test]
+fn an_old_save_without_salvage_still_loads() {
+    let path = std::env::temp_dir().join(format!("rust-regime-old-salvage-{}.toml", std::process::id()));
+    std::fs::write(&path, "banked = 500\nship_level = 2\nkills = 2\n\n[standing]\nregime = 10\n").unwrap();
+    let file = SaveFile(Some(path.clone()));
+    let save = file.load();
+    assert_eq!((save.banked, save.ship_level, save.kills, save.standing["regime"]), (500, 2, 2, 10), "the old fields are kept");
+    assert_eq!((save.scrap, save.ship_parts, save.modules.len(), save.fitted.len()), (0, [0; 4], 0, 0), "and it starts with no salvage");
+    let salvaged = Save { scrap: 37, ship_parts: [1, 0, 3, 2], modules: vec!["ram".into(), "spire".into()], fitted: vec!["spire".into()], ..save };
+    file.write(&salvaged);
+    assert_eq!(file.load(), salvaged, "salvage round-trips");
+    std::fs::remove_file(&path).ok();
+}
