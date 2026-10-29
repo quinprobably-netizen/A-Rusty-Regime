@@ -202,8 +202,9 @@ pub struct Ship {
     before: (Vec3, Quat),
 }
 
-/// The stick, filled from the keyboard and mouse each frame while flying. Tests write it.
-#[derive(Resource, Default, Debug, Clone, Copy)]
+/// Each ship's own stick. The player's input fills the one of the ship they fly each frame; an
+/// AI can fill another's, and `fly` reads every ship's from its own.
+#[derive(Component, Default, Debug, Clone, Copy)]
 pub struct ShipControls {
     /// Forward thrust, -1 to 1.
     pub thrust: f32,
@@ -264,8 +265,7 @@ struct ShipMeshes {
 }
 
 pub fn build(app: &mut App) {
-    app.init_resource::<ShipControls>()
-        .init_resource::<crate::hud::FlightHud>()
+    app.init_resource::<crate::hud::FlightHud>()
         .insert_resource(Ships::load())
         .add_systems(Startup, spawn_fleet.after(crate::planet::seed_ground))
         .add_systems(Update, (controls, glow, stream, swing))
@@ -299,6 +299,7 @@ pub fn spawn(world: &mut World, spec: usize, transform: Transform) -> Entity {
         .spawn((
             Name::new(s.name.clone()),
             Ship { spec, ..default() },
+            ShipControls::default(),
             ChaseCam { dist: s.cam[0], height: s.cam[1], eye: Vec3::from(s.seat) + Vec3::Y * 0.72, ..default() },
             RigidBody::Dynamic,
             s.collider(),
@@ -404,20 +405,22 @@ fn swing(time: Res<Time>, ships: Query<&Ship>, mut ramps: Query<(&Ramp, &mut Tra
     }
 }
 
-/// Fills the stick from the keyboard, the mouse and the pad while the player flies, and keeps
-/// the view angles at rest so the mouse (and right stick) is read afresh each frame.
+/// Fills the stick of the ship the player flies from the keyboard, the mouse and the pad, and
+/// keeps the view angles at rest so the mouse (and right stick) is read afresh each frame.
 fn controls(
     time: Res<Time>,
     input: Res<PlayerInput>,
-    mut controls: ResMut<ShipControls>,
     mut view: ResMut<ViewAngles>,
-    flying: Query<(), (With<Player>, With<Driving>)>,
-    mut ships: Query<(&Ship, &mut ChaseCam)>,
+    flying: Query<Entity, (With<Player>, With<Driving>)>,
+    mut ships: Query<(&Ship, &mut ShipControls, &mut ChaseCam)>,
 ) {
-    if flying.is_empty() || ships.iter().all(|(s, _)| s.pilot.is_none()) {
-        controls.look = Vec2::ZERO;
+    let player = flying.single().ok();
+    let Some((_, mut controls, mut chase)) = ships.iter_mut().find(|(s, ..)| s.pilot.is_some() && s.pilot == player) else {
+        for (_, mut controls, _) in &mut ships {
+            controls.look = Vec2::ZERO;
+        }
         return;
-    }
+    };
     let turned = Vec2::new(view.yaw, view.pitch);
     view.yaw = 0.0;
     view.pitch = 0.0;
@@ -428,11 +431,7 @@ fn controls(
         controls.mouse += turned;
         controls.look *= (-8.0 * time.delta_secs()).exp();
     }
-    for (ship, mut chase) in &mut ships {
-        if ship.pilot.is_some() {
-            chase.look = controls.look;
-        }
-    }
+    chase.look = controls.look;
     // The stick comes from the bindings (see `controls`): keys, triggers, the left stick and the
     // bumpers. The left stick gets a gentle curve so small lift corrections are easy.
     controls.thrust = input.thrust;
@@ -509,7 +508,7 @@ const CAP_BRAKE: f32 = 600.0;
 /// Past this deceleration needed to stop short of the ground, assist pulls the ship out of a dive.
 const PULL_OUT: f32 = 50.0;
 
-/// One tick of flight for the ship being flown, and the pilot carried in its seat.
+/// One tick of flight for each ship being flown, on its own stick, and the pilot carried in its seat.
 #[allow(clippy::too_many_arguments)]
 fn fly(
     time: Res<Time>,
@@ -520,27 +519,26 @@ fn fly(
     specs: Res<Ships>,
     save: Option<Res<crate::save::Save>>,
     spatial: Option<SpatialQuery>,
-    mut controls: ResMut<ShipControls>,
     mut input: ResMut<PlayerInput>,
     mut hud: ResMut<crate::hud::FlightHud>,
-    mut ships: Query<(Entity, &mut Ship, &mut ChaseCam, Forces)>,
+    mut ships: Query<(Entity, &mut Ship, &mut ShipControls, &mut ChaseCam, Forces)>,
     mut players: Query<(&mut Player, &mut Transform), With<Driving>>,
 ) {
     let dt = time.delta_secs();
     if dt <= 0.0 {
         return;
     }
-    // The mouse as a stick: how fast it moved against how fast makes full stick, eased over a few
-    // ticks, so the same flick turns the ship the same at any frame or tick rate.
-    let mouse = std::mem::take(&mut controls.mouse);
-    let raw = (Vec2::new(mouse.y, mouse.x) / (MOUSE_RATE * dt) * tuning.flight_mouse).clamp(Vec2::NEG_ONE, Vec2::ONE);
-    controls.mouse_stick = controls.mouse_stick.lerp(raw, 1.0 - (-30.0 * dt).exp());
     hud.too_fast = (hud.too_fast - dt).max(0.0);
     hud.active = false;
     // The Yard's tuning rig: more thrust and speed, a little sharper turning.
     let (power, agility) = super::station::tune(save.map_or(0, |s| s.ship_level));
     let mut flown = false;
-    for (entity, mut ship, mut chase, mut forces) in &mut ships {
+    for (entity, mut ship, mut controls, mut chase, mut forces) in &mut ships {
+        // The mouse as a stick: how fast it moved against how fast makes full stick, eased over a
+        // few ticks, so the same flick turns the ship the same at any frame or tick rate.
+        let mouse = std::mem::take(&mut controls.mouse);
+        let raw = (Vec2::new(mouse.y, mouse.x) / (MOUSE_RATE * dt) * tuning.flight_mouse).clamp(Vec2::NEG_ONE, Vec2::ONE);
+        controls.mouse_stick = controls.mouse_stick.lerp(raw, 1.0 - (-30.0 * dt).exp());
         let Some(pilot) = ship.pilot else {
             ship.burn = 0.0;
             ship.heat *= (-0.5 * dt).exp();

@@ -1625,7 +1625,8 @@ fn the_ship_takes_its_stick_from_the_input() {
     i.roll = -0.5;
     i.boost = true;
     app.update();
-    let c = app.world().resource::<ShipControls>();
+    let ship = ship_entity(&mut app);
+    let c = app.world().get::<ShipControls>(ship).unwrap();
     assert!((c.thrust - 0.6).abs() < 1e-5, "thrust: {}", c.thrust);
     assert!((c.lift - 1.0).abs() < 1e-5, "lift: {}", c.lift);
     assert!((c.turn.z + 0.5).abs() < 1e-5, "roll: {}", c.turn.z);
