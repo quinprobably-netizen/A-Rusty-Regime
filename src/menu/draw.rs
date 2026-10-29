@@ -237,8 +237,8 @@ pub(super) fn rebuild(
                     Row::Sell => {
                         let scrap = save.as_ref().map_or(0, |s| s.scrap);
                         let each = save.as_deref().map_or(tuning.economy.scrap_value, |s| crate::solar::standing::buys(tuning.economy.scrap_value, menu.rack, s, &tuning.ship_combat));
-                        let value = format!("{scrap} x ${each} = ${}", scrap * each);
-                        value_row(list, &t, "SELL SCRAP", &value, None, Some("for money, into the bank"), index, index == menu.cursor, false);
+                        let note = format!("${each} a scrap, into the bank");
+                        value_row(list, &t, &format!("SELL {scrap} SCRAP"), &format!("${}", scrap * each), None, Some(&note), index, index == menu.cursor, false);
                         index += 1;
                     }
                     Row::Fit(slot) => {
