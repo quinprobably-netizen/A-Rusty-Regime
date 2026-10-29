@@ -87,8 +87,7 @@ A/D, Enter picks, Esc backs out; the d-pad, A and B do the same on a pad; the mo
 You start with one sidearm, bare, and a knife: the **Warden** revolver or the **Smite** pistol, whichever
 your character carries (`start` in `assets/characters.toml`). The **Talon** knife is on X (R3 held on a pad;
 the same key puts it away) and cuts what is within arm's reach. Every other gun and every attachment is
-bought from the Roost's **quartermaster** with banked money (the courier contracts at Site Vantage are the
-income): walk up and press E, which also tops up your health and ammunition. At the counter Q / E (LB / RB)
+bought from the Roost's **quartermaster** with banked money (see Money for how you earn it): walk up and press E, which also tops up your health and ammunition. At the counter Q / E (LB / RB)
 step through the guns and A / D through each gun's four attachment slots (parts change spread, recoil, rate,
 velocity and damage and show on the viewmodel; stat bars compare the bare gun). Trying a part on is free;
 Enter buys it, once, for every gun. Whatever is not bought comes off again when you leave. Prices live in
@@ -108,8 +107,9 @@ comes on and close into a solid ring once it is locked. Four white ticks flash r
 when your shots land, wider and red on a kill, and MISSILE LOCK / MISSILE! shows under the
 compass while a Sentry has you locked or its missile is in the air. When your standing with a
 faction changes, a short line under the bounty line says so (`REGIME -25  SCRAPPERS +5`), and
-salvage taken aboard gets one under that (`+4 SCRAP`, `MODULE FOUND  AFTERBURNER`). Your scrap
-shows beside the bank top right (`BANK 750   SCRAP 12`) and in the flight readout.
+salvage taken aboard gets one under that (`+4 SCRAP`, `MODULE FOUND  AFTERBURNER`, `HOLD FULL`).
+The bank, your unbanked pocket and the hold show top right (`BANK 750 +120   SCRAP 12/60`) and in
+the flight readout.
 
 ## Movement
 - **Source/TF2 core** at 66 ticks/s: ground friction and acceleration, air strafing (30u air cap), bunny hopping (jump on the landing tick to skip friction), crouch-jumping (legs tuck up in the air), ramp sliding and surfing on steep slopes, stair stepping.
@@ -175,7 +175,7 @@ zooms in and tightens the spread.
 
 ## Survival and the world
 - **Health**: heavy hits make you bleed until a medkit. Health regenerates only up to 60% and not while bleeding.
-- **Save**: banked money, what you own, ships shot down (by faction), times you were shot down, your standing with each faction and your salvage (scrap, the Kestrel's part levels, the modules you own and the two fitted) persist in `save.toml` next to the binary (`RUST_REGIME_SAVE` overrides the path).
+- **Save**: banked money and your unbanked pocket, what you own, ships shot down (by faction), times you were shot down, your standing with each faction and your salvage (scrap, the Kestrel's part levels, the modules you own and the two fitted) persist in `save.toml` next to the binary (`RUST_REGIME_SAVE` overrides the path).
 - **Sound** is synthesized at startup. Put a CC0 `.ogg` with the same name in
   `assets/sounds/` (rifle, shotgun, pistol, rocket, explosion, hit, hurt, jump, land,
   wind, ship_gun_0..2, missile_launch, shield_hit, hull_hit, lock_beep, lock_tone,
@@ -252,14 +252,14 @@ strafing passes and wide turns, the Welder closes right in); the rest is in `[sh
 `RUST_REGIME_RAIDERS=1` sends a pack at once, and `RUST_REGIME_SCREENSHOT_LOOK=<yaw>,<pitch>`
 (degrees, or `enemy` for the nearest enemy) holds the flight view looking round, e.g.
 `RUST_REGIME_AT=home,1500 RUST_REGIME_RAIDERS=1 RUST_REGIME_SCREENSHOT_LOOK=100,10`.
-**Bounty and loss:** an enemy you shoot down pays a bounty into the bank (Jackal $60, Sentry
+**Bounty and loss:** an enemy you shoot down pays a bounty into your pocket (Jackal $60, Sentry
 $120, Censer $150, Welder $200) with a `+$60 BOUNTY` line over the HUD, and counts in the save's
 `kills` and its faction's tally; a kill by anyone else pays nothing. If your own ship is shot
 down, the camera holds on the blast for three seconds under a SHOT DOWN card, then you are back
 on the Roost's apron at Haven, from anywhere in the system, in a fresh Kestrel on the pad. It
-costs the courier parcel and a quarter of the bank (rounded down; nothing if both are empty) and
-counts in `deaths`; your guns, parts and engine tune are kept. The numbers are in
-`[ship_combat]`. `RUST_REGIME_DIE=<seconds>` shoots down the ship you fly after that long, for
+costs what was aboard (the unbanked pocket, the hold's scrap and the courier parcel) and a rebuy
+fee from the bank (see Money), and counts in `deaths`; your guns, parts, modules and engine tune
+are kept. The timings are in `[ship_combat]`. `RUST_REGIME_DIE=<seconds>` shoots down the ship you fly after that long, for
 screenshots of the card.
 **Faction standing** (stage 2, `docs/superpowers/specs/2026-10-29-ship-combat-stages-2-3-design.md`,
 `solar::standing`): the Regime, the Scrappers and the PMC each think of you from -100 to 100,
@@ -281,6 +281,17 @@ pays 20% more. The Roost is never affected. Pause > **Standing** shows where you
 numbers and the grudges are in `[ship_combat]`. `RUST_REGIME_STANDING=regime:50,pmc:-70` sets
 standing at startup for screenshots (it is saved with the next save, so pair it with
 `RUST_REGIME_SAVE`).
+**Money** (`docs/superpowers/specs/2026-10-29-economy-design.md`, stage A, `solar::economy`):
+what you earn in the field is at risk until you walk it into a base. Bounties go into your
+**pocket**; walk up to the door of any base that will serve you and it banks (`Banked $120`).
+Scrap rides in the **hold**: 60, and 20 more a level of hull plating; once it is full, scrap in
+reach stays out there. Shot down, you lose the pocket, the hold and the parcel, but never the
+bank: a fresh Kestrel costs a **rebuy fee** of a tenth of what the engine tune and parts on it
+are worth (parts count their scrap at $6), at least $100 and at most $1500, and never more than
+the bank holds. Reaching a base's door also **repairs** the hull of the ship you landed, if it is
+parked within 400 m, at $1 a point (priced by your standing there) as far as the bank goes. The
+Yard's parts rack **buys scrap** at $6 each ($7 to a friend, $5 below -40). Every price in the
+game is in `[economy]` in `tuning.toml`.
 **Salvage** (stage 3, the same spec, `solar::salvage`): an enemy ship shot down, by you or by
 anyone else, drops **scrap** where it blew apart (Jackal 2, Sentry 4, Censer 5, Welder 8): a few
 glowing orange chunks that drift on with the wreck's velocity, slowing in air and coming to rest
@@ -330,11 +341,12 @@ world's centre. Markers hide within 30 m and under the menus. `RUST_REGIME_AT=<b
 from the banked money in `save.toml`): the Roost's quartermaster resupplies health and ammunition
 for free and its hangar locker opens the wardrobe; the Yard's tuning rig upgrades the Kestrel's
 engines (three levels, $300 / $700 / $1400: more thrust and top speed, a little sharper
-turning) and its parts rack sells the Kestrel's parts for scrap (see Salvage); Site Vantage's courier desk hands out parcels to the other bases (the only income in
-the system: deliver by walking up to the destination's door, which is marked DELIVER HERE;
+turning) and its parts rack sells the Kestrel's parts for scrap and buys your scrap (see Salvage
+and Money); Site Vantage's courier desk hands out parcels to the other bases (deliver by walking
+up to the destination's door, which is marked DELIVER HERE;
 $250 / $400 / $550); the Reliquary's shrine sells a blessing for a $150 tithe (+50 health for
 five minutes). Those prices move with your standing with the base's faction, which may also
-refuse you (see Faction standing). The flight readout shows what is in reach, your bank and scrap, and the parcel you carry.
+refuse you (see Faction standing). Every base's door banks your pocket and repairs your ship. The flight readout shows what is in reach, your bank and scrap, and the parcel you carry.
 
 Everything is in `assets/system.toml`: a star, Haven and its low-gravity moon Ash, and
 the three faction worlds, Bastion (Regime: heavy, slate, thin pale air), Cinder

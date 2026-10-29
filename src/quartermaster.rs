@@ -10,27 +10,17 @@ use crate::abilities::Class;
 use crate::character::Characters;
 use crate::gunsmith::{Loadout, PARTS, SLOTS};
 use crate::save::{Save, SaveFile};
+use crate::tuning::Economy;
 use crate::weapon::{Arsenal, KNIFE, WEAPONS, WeaponKind};
 
-/// What a weapon costs, banked money. `None`: not for sale (the knife comes with you).
-pub fn price(kind: WeaponKind) -> Option<u32> {
-    Some(match kind {
-        WeaponKind::Pistol => 300,
-        WeaponKind::Revolver => 500,
-        WeaponKind::Harpoon => 400,
-        WeaponKind::Smg => 600,
-        WeaponKind::Fist => 600,
-        WeaponKind::Shotgun => 700,
-        WeaponKind::Rifle => 900,
-        WeaponKind::Grenade => 1000,
-        WeaponKind::Dmr => 1100,
-        WeaponKind::RocketLauncher => 1500,
-        WeaponKind::Knife => return None,
-    })
+/// What a weapon costs, banked money (`[economy] guns`). `None`: not for sale (the knife comes
+/// with you).
+pub fn price(kind: WeaponKind, e: &Economy) -> Option<u32> {
+    if kind == WeaponKind::Knife {
+        return None;
+    }
+    e.guns.get(kind.id()).copied()
 }
-
-/// What each attachment costs, by slot then part (`gunsmith::PARTS` order); the bare part is free.
-pub const PART_PRICES: [[u32; 3]; 4] = [[0, 200, 400], [0, 200, 350], [0, 150, 150], [0, 200, 250]];
 
 /// Whether `kind` is yours. With no save, or an empty one, everything is.
 pub fn owns_weapon(save: Option<&Save>, kind: WeaponKind) -> bool {
@@ -52,11 +42,11 @@ pub enum Sale {
     NotForSale,
 }
 
-pub fn buy_weapon(save: &mut Save, kind: WeaponKind) -> Sale {
+pub fn buy_weapon(save: &mut Save, kind: WeaponKind, e: &Economy) -> Sale {
     if owns_weapon(Some(save), kind) {
         return Sale::Owned;
     }
-    let Some(cost) = price(kind) else { return Sale::NotForSale };
+    let Some(cost) = price(kind, e) else { return Sale::NotForSale };
     if save.banked < cost {
         return Sale::Poor(cost - save.banked);
     }
@@ -65,11 +55,11 @@ pub fn buy_weapon(save: &mut Save, kind: WeaponKind) -> Sale {
     Sale::Bought(cost)
 }
 
-pub fn buy_part(save: &mut Save, slot: usize, part: usize) -> Sale {
+pub fn buy_part(save: &mut Save, slot: usize, part: usize, e: &Economy) -> Sale {
     if owns_part(Some(save), slot, part) {
         return Sale::Owned;
     }
-    let cost = PART_PRICES[slot][part];
+    let cost = e.attachments[slot][part];
     if save.banked < cost {
         return Sale::Poor(cost - save.banked);
     }
@@ -163,29 +153,31 @@ mod tests {
 
     #[test]
     fn buying_takes_banked_money_once() {
+        let e = Economy::default();
         let mut save = Save::default();
         grant(&mut save, WeaponKind::Pistol);
         save.banked = 700;
-        assert_eq!(buy_weapon(&mut save, WeaponKind::Smg), Sale::Bought(600));
+        assert_eq!(buy_weapon(&mut save, WeaponKind::Smg, &e), Sale::Bought(600));
         assert_eq!((save.banked, owns_weapon(Some(&save), WeaponKind::Smg)), (100, true));
-        assert_eq!(buy_weapon(&mut save, WeaponKind::Smg), Sale::Owned);
-        assert_eq!(buy_weapon(&mut save, WeaponKind::Dmr), Sale::Poor(1000));
-        assert_eq!(buy_weapon(&mut save, WeaponKind::Knife), Sale::Owned);
-        assert_eq!(buy_part(&mut save, 1, 2), Sale::Poor(250));
+        assert_eq!(buy_weapon(&mut save, WeaponKind::Smg, &e), Sale::Owned);
+        assert_eq!(buy_weapon(&mut save, WeaponKind::Dmr, &e), Sale::Poor(1000));
+        assert_eq!(buy_weapon(&mut save, WeaponKind::Knife, &e), Sale::Owned);
+        assert_eq!(buy_part(&mut save, 1, 2, &e), Sale::Poor(250));
         save.banked = 500;
-        assert_eq!(buy_part(&mut save, 1, 2), Sale::Bought(350));
+        assert_eq!(buy_part(&mut save, 1, 2, &e), Sale::Bought(350));
         assert!(owns_part(Some(&save), 1, 2) && !owns_part(Some(&save), 1, 1) && !owns_part(Some(&save), 0, 2));
         assert_eq!(save.banked, 150);
     }
 
     #[test]
     fn everything_but_the_knife_has_a_price_and_every_part_too() {
+        let e = Economy::default();
         for kind in WEAPONS {
-            assert_eq!(price(kind).is_none(), kind == WeaponKind::Knife, "{kind:?}");
+            assert_eq!(price(kind, &e).is_none(), kind == WeaponKind::Knife, "{kind:?}");
         }
         for slot in 0..SLOTS.len() {
-            assert_eq!(PART_PRICES[slot][0], 0);
-            assert!(PART_PRICES[slot][1..].iter().all(|p| *p > 0));
+            assert_eq!(e.attachments[slot][0], 0);
+            assert!(e.attachments[slot][1..].iter().all(|p| *p > 0));
         }
     }
 

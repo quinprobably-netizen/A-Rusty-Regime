@@ -267,6 +267,8 @@ pub struct Gain {
 pub struct SalvageLine {
     pub scrap: u32,
     pub module: Option<(Module, bool)>,
+    /// Scrap in reach that the hold has no room for.
+    pub full: bool,
     /// Seconds it stays up.
     pub left: f32,
 }
@@ -274,18 +276,30 @@ pub struct SalvageLine {
 impl SalvageLine {
     fn add(&mut self, gain: Gain, t: &ShipCombat) {
         if self.left <= 0.0 {
-            (self.scrap, self.module) = (0, None);
+            (self.scrap, self.module, self.full) = (0, None, false);
         }
         self.scrap += gain.scrap;
         self.module = gain.module.or(self.module);
         self.left = t.scrap_line;
     }
 
-    /// `+4 SCRAP`, `MODULE FOUND  AFTERBURNER`, `+10 SCRAP  SPARE AFTERBURNER`.
+    /// The hold is full and scrap is in reach: the line says so for a moment.
+    fn full(&mut self, t: &ShipCombat) {
+        if self.left <= 0.0 {
+            (self.scrap, self.module) = (0, None);
+        }
+        self.full = true;
+        self.left = t.scrap_line;
+    }
+
+    /// `+4 SCRAP`, `MODULE FOUND  AFTERBURNER`, `+10 SCRAP  SPARE AFTERBURNER`, `HOLD FULL`.
     pub fn text(&self) -> String {
         let mut out: Vec<String> = Vec::new();
         if self.scrap > 0 {
             out.push(format!("+{} SCRAP", self.scrap));
+        }
+        if self.full && self.scrap == 0 && self.module.is_none() {
+            out.push("HOLD FULL".to_string());
         }
         match self.module {
             Some((m, true)) => out.push(format!("MODULE FOUND  {}", m.name().to_uppercase())),
@@ -323,20 +337,25 @@ pub fn loot(id: &str, roll: f32, t: &ShipCombat) -> Vec<Loot> {
     out
 }
 
-/// Takes `loot` aboard into `save`: scrap adds up, a new module is yours, a spare is scrap.
-pub fn collect(save: &mut Save, loot: Loot, t: &ShipCombat) -> Gain {
+/// Takes `loot` aboard into `save`, a hold of `cap` scrap: scrap adds up as far as the hold
+/// goes, a new module is yours, a spare is scrap (what does not fit of it is lost). Returns what
+/// came aboard, and the scrap that did not fit, still out there.
+pub fn collect(save: &mut Save, loot: Loot, t: &ShipCombat, cap: u32) -> (Gain, Option<Loot>) {
+    let room = cap.saturating_sub(save.scrap);
     match loot {
         Loot::Scrap(n) => {
-            save.scrap = save.scrap.saturating_add(n);
-            Gain { scrap: n, module: None }
+            let took = n.min(room);
+            save.scrap += took;
+            (Gain { scrap: took, module: None }, (took < n).then_some(Loot::Scrap(n - took)))
         }
         Loot::Module(m) if owns(save, m) => {
-            save.scrap = save.scrap.saturating_add(t.module_scrap);
-            Gain { scrap: t.module_scrap, module: Some((m, false)) }
+            let took = t.module_scrap.min(room);
+            save.scrap += took;
+            (Gain { scrap: took, module: Some((m, false)) }, None)
         }
         Loot::Module(m) => {
             save.modules.push(m.id().to_string());
-            Gain { scrap: 0, module: Some((m, true)) }
+            (Gain { scrap: 0, module: Some((m, true)) }, None)
         }
     }
 }
@@ -620,6 +639,7 @@ fn gather(
     mut anchor: Local<String>,
 ) {
     let t = &tuning.ship_combat;
+    let cap = save.as_deref().map_or(u32::MAX, |s| super::economy::hold_cap(s, &tuning.economy));
     let dt = time.delta_secs();
     let handoff = *anchor != solar.anchor;
     anchor.clone_from(&solar.anchor);
@@ -633,7 +653,15 @@ fn gather(
             continue;
         }
         if flown.is_some_and(|(at, _)| at.distance(tf.translation) < t.scrap_pull) {
-            p.pulled = true;
+            // Scrap only comes while there is room in the hold.
+            if matches!(p.loot, Loot::Scrap(_)) && save.as_deref().is_some_and(|s| s.scrap >= cap) {
+                if !p.pulled && !line.full {
+                    line.full(t);
+                }
+                p.pulled = false;
+            } else {
+                p.pulled = true;
+            }
         }
         match flown.filter(|_| p.pulled) {
             Some((at, v)) => {
@@ -643,12 +671,19 @@ fn gather(
                 let closing = (d * 4.0).max(PULL_SPEED);
                 if d - closing * dt <= ABOARD {
                     if let Some(save) = save.as_deref_mut() {
-                        let gain = collect(save, p.loot, t);
+                        let (gain, rest) = collect(save, p.loot, t, cap);
                         file.write(save);
                         info!("salvage aboard: {gain:?}, {} scrap", save.scrap);
                         line.add(gain, t);
                         let sfx = if matches!(gain.module, Some((_, true))) { Sfx::Module } else { Sfx::Scrap };
                         cues.write(Cue { sfx, volume: 1.0, pitch: 1.0 });
+                        // What did not fit stays out there, no longer pulled.
+                        if let Some(rest) = rest {
+                            p.loot = rest;
+                            p.pulled = false;
+                            line.full(t);
+                            continue;
+                        }
                     }
                     commands.entity(e).despawn();
                     continue;
@@ -725,13 +760,28 @@ mod tests {
     }
 
     #[test]
+    fn a_pickup_that_does_not_fit_leaves_the_rest_and_a_spare_fills_only_to_the_top() {
+        let t = ShipCombat::default();
+        let mut save = Save { scrap: 58, ..default() };
+        assert_eq!(collect(&mut save, Loot::Scrap(8), &t, 60), (Gain { scrap: 2, module: None }, Some(Loot::Scrap(6))));
+        assert_eq!(collect(&mut save, Loot::Scrap(4), &t, 60), (Gain { scrap: 0, module: None }, Some(Loot::Scrap(4))));
+        assert_eq!(save.scrap, 60);
+        let mut save = Save { scrap: 55, modules: vec!["ram".into()], ..default() };
+        assert_eq!(collect(&mut save, Loot::Module(Module::Ram), &t, 60), (Gain { scrap: 5, module: Some((Module::Ram, false)) }, None));
+        assert_eq!(save.scrap, 60);
+        let mut line = SalvageLine::default();
+        line.full(&t);
+        assert_eq!(line.text(), "HOLD FULL");
+    }
+
+    #[test]
     fn a_spare_module_turns_into_scrap() {
         let t = ShipCombat::default();
         let mut save = Save::default();
-        assert_eq!(collect(&mut save, Loot::Scrap(4), &t), Gain { scrap: 4, module: None });
-        assert_eq!(collect(&mut save, Loot::Module(Module::Spire), &t), Gain { scrap: 0, module: Some((Module::Spire, true)) });
+        assert_eq!(collect(&mut save, Loot::Scrap(4), &t, 60).0, Gain { scrap: 4, module: None });
+        assert_eq!(collect(&mut save, Loot::Module(Module::Spire), &t, 60).0, Gain { scrap: 0, module: Some((Module::Spire, true)) });
         assert_eq!((save.scrap, save.modules.clone()), (4, vec!["spire".to_string()]));
-        assert_eq!(collect(&mut save, Loot::Module(Module::Spire), &t), Gain { scrap: 10, module: Some((Module::Spire, false)) });
+        assert_eq!(collect(&mut save, Loot::Module(Module::Spire), &t, 60).0, Gain { scrap: 10, module: Some((Module::Spire, false)) });
         assert_eq!((save.scrap, save.modules.len()), (14, 1), "a spare is scrap, not a second one");
     }
 

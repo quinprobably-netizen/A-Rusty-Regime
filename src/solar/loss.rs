@@ -3,16 +3,17 @@
 //! `ShipDestroyed` messages.
 //!
 //! **Bounty:** an enemy ship shot down by the ship the player flies pays its `[ship_combat]
-//! bounty` into the bank, counts in `Save::kills` and its faction's tally, and puts a
+//! bounty` into the pocket (banked at a base's door, `economy`), counts in `Save::kills` and its faction's tally, and puts a
 //! `+$120 BOUNTY` line over the HUD for a few seconds. A kill by anyone else pays nothing.
 //!
 //! **The loss rule:** when the ship the player flies is shot down, it blows apart and the camera
-//! hangs where it was for `downed` seconds while a SHOT DOWN card says what it cost: the courier
-//! parcel and a quarter of the bank (rounded down; nothing at all when both are empty). Then the
+//! hangs where it was for `downed` seconds while a SHOT DOWN card says what it cost: what was
+//! aboard (the unbanked pocket, the hold's scrap and the courier parcel) and the rebuy fee for a
+//! fresh Kestrel, from the bank (`economy::rebuy_fee`, never more than is there). Then the
 //! wreck is gone and the player is back on the Roost's apron at Haven, from anywhere in the
 //! system, on the cabin floor of a fresh Kestrel on the pad (and a fresh copy of the ship lost, on
-//! its own berth, if it was another of the apron's). Guns, parts and the Yard's engine tune are in
-//! the save and are not touched.
+//! its own berth, if it was another of the apron's). Guns, parts, modules and the Yard's engine
+//! tune are in the save and are not touched.
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -28,7 +29,7 @@ use crate::input::{PlayerInput, ViewAngles};
 use crate::planet::bubble::KeepAwake;
 use crate::save::{Save, SaveFile};
 use crate::surface::Origin;
-use crate::tuning::{ShipCombat, Tuning};
+use crate::tuning::{Economy, ShipCombat, Tuning};
 use crate::vehicle::Driving;
 
 /// Shot down further than this from the pad, even on Haven, the respawn restarts the origin and
@@ -38,10 +39,14 @@ const FAR: f32 = 20_000.0;
 /// What being shot down cost.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Loss {
-    /// Money taken from the bank.
-    pub bank: u32,
+    /// Unbanked money lost with the ship.
+    pub pocket: u32,
+    /// Scrap lost from the hold.
+    pub scrap: u32,
     /// The parcel lost, if one was aboard.
     pub parcel: Option<super::station::Contract>,
+    /// The rebuy fee taken from the bank for a fresh Kestrel.
+    pub fee: u32,
 }
 
 /// The player's ship shot down: the wreck they are still aboard while the camera watches it burn,
@@ -99,19 +104,21 @@ pub fn build(app: &mut App) {
         );
 }
 
-/// Takes what being shot down costs from `save`: the parcel, and `share` of the bank rounded down.
-/// The guns, parts and engine tune stay. Counts the death.
-pub fn lose(save: &mut Save, share: f32) -> Loss {
-    let bank = ((save.banked as f64 * share.clamp(0.0, 1.0) as f64).floor() as u32).min(save.banked);
-    save.banked -= bank;
+/// Takes what being shot down costs from `save`: the pocket, the hold and the parcel, and the
+/// rebuy fee from the bank (as much of it as is there). The guns, parts, modules and engine tune
+/// stay. Counts the death.
+pub fn lose(save: &mut Save, e: &Economy, t: &ShipCombat) -> Loss {
+    let fee = super::economy::rebuy_fee(save, e, t).min(save.banked);
+    save.banked -= fee;
     save.deaths += 1;
-    Loss { bank, parcel: save.contract.take() }
+    Loss { pocket: std::mem::take(&mut save.pocket), scrap: std::mem::take(&mut save.scrap), parcel: save.contract.take(), fee }
 }
 
-/// Pays the bounty on ship `id` of `faction` into `save`, counting the kill; returns the pay.
+/// Pays the bounty on ship `id` of `faction` into the pocket in `save`, counting the kill; returns
+/// the pay.
 pub fn pay(save: &mut Save, id: &str, faction: Faction, t: &ShipCombat) -> u32 {
     let pay = t.bounty.get(id).copied().unwrap_or(0);
-    save.banked = save.banked.saturating_add(pay);
+    save.pocket = save.pocket.saturating_add(pay);
     save.kills += 1;
     *save.faction_kills.entry(faction.id().to_string()).or_default() += 1;
     pay
@@ -162,11 +169,11 @@ fn shot_down(
         if ship.pilot.is_none() || downed.wreck.is_some() {
             continue;
         }
-        let lost = save.as_mut().map_or_else(Loss::default, |s| lose(s, t.bank_loss));
+        let lost = save.as_mut().map_or_else(Loss::default, |s| lose(s, &tuning.economy, t));
         if let Some(s) = &save {
             file.write(s);
         }
-        info!("shot down: lost ${} and {}", lost.bank, if lost.parcel.is_some() { "the parcel" } else { "no parcel" });
+        info!("shot down: {lost:?}");
         *downed = Downed { wreck: Some(kill.ship), spec: kill.spec, left: t.downed, card: 0.0, lost };
         // Held still where it blew up, so the chase camera holds on the blast.
         (chase.step, chase.turn) = (Vec3::ZERO, Quat::IDENTITY);
@@ -267,15 +274,25 @@ fn spawn_card(mut commands: Commands, theme: Res<ComicTheme>) {
     });
 }
 
-/// What the card says.
+/// What the card says: what was aboard, then the rebuy.
 pub fn card_text(lost: &Loss, bases: &Bases) -> String {
-    let parcel = lost.parcel.as_ref().map(|c| format!("the parcel for {}", bases.base.iter().find(|b| b.id == c.to).map_or(c.to.as_str(), |b| b.name.as_str())));
-    match (parcel, lost.bank) {
-        (None, 0) => "Nothing lost: no parcel aboard, nothing in the bank".into(),
-        (None, bank) => format!("Lost ${bank} of the bank"),
-        (Some(parcel), 0) => format!("Lost {parcel}"),
-        (Some(parcel), bank) => format!("Lost {parcel} and ${bank} of the bank"),
+    let mut aboard = Vec::new();
+    if lost.pocket > 0 {
+        aboard.push(format!("${} unbanked", lost.pocket));
     }
+    if lost.scrap > 0 {
+        aboard.push(format!("{} scrap", lost.scrap));
+    }
+    if let Some(c) = &lost.parcel {
+        aboard.push(format!("the parcel for {}", bases.base.iter().find(|b| b.id == c.to).map_or(c.to.as_str(), |b| b.name.as_str())));
+    }
+    let aboard = match aboard.len() {
+        0 => "Nothing aboard lost".to_string(),
+        1 => format!("Lost {}", aboard[0]),
+        n => format!("Lost {} and {}", aboard[..n - 1].join(", "), aboard[n - 1]),
+    };
+    let rebuy = if lost.fee > 0 { format!("Rebuy ${}", lost.fee) } else { "Rebuy free: the bank is empty".to_string() };
+    format!("{aboard}. {rebuy}")
 }
 
 #[allow(clippy::type_complexity)]
@@ -303,7 +320,7 @@ fn show(
         }
         let back = if downed.wreck.is_some() { format!("Back to the Roost in {:.0}...", downed.left.max(0.0).ceil()) } else { "Back at the Roost in a fresh Kestrel".into() };
         for mut text in &mut footer {
-            set(&mut text, format!("Guns, parts and engine tune kept. {back}"));
+            set(&mut text, format!("Guns, parts, modules and engine tune kept. {back}"));
         }
     }
     for (mut text, mut v) in &mut bounty {
