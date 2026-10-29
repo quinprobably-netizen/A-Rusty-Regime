@@ -3,7 +3,11 @@
 //! left (segments, grapple meter under the crosshair), a movement readout bottom centre (speedo
 //! while driving), an ink weapon card bottom right with slot pips, ammo pips, fitted parts and the
 //! heat bar, an ink-outlined crosshair that opens with spread, a halftone hit vignette and comic
-//! pops on hits. Everything hangs off `HudRoot` so the menus can hide it.
+//! pops on hits. Flying, the flight dials take the bottom centre, and a paper ship card (hull and
+//! shield) and an ink guns card (heat, missiles) take the places of the health and weapon cards,
+//! with a hit marker round the nose and a warning when an enemy missile is on you; the on-foot
+//! cards stay hidden until you are on your feet again, through the SHOT DOWN pause and card.
+//! Everything hangs off `HudRoot` so the menus can hide it.
 
 use bevy::prelude::*;
 
@@ -25,7 +29,7 @@ impl Plugin for HudPlugin {
             .init_resource::<ComicTheme>()
             .init_resource::<FlightHud>()
             .add_systems(Startup, spawn_hud)
-            .add_systems(Update, (update_speed, update_weapon, update_crosshair, update_health, update_haul, update_compass, update_grapple, update_hint, update_reticle));
+            .add_systems(Update, (update_speed, update_weapon, update_crosshair, update_health, update_haul, update_compass, update_grapple, update_hint, update_reticle, update_ship_cards, update_hit_mark, update_threat));
     }
 }
 
@@ -56,6 +60,41 @@ pub struct FlightHud {
     pub nose: Vec3,
     /// Straight up from the ground below, world space.
     pub up: Vec3,
+    /// The ship's side of a fight (`solar::cockpit` fills it).
+    pub fight: Fight,
+}
+
+/// The flown ship's hull, guns and missiles, and what the fight around it is doing.
+#[derive(Default, Debug, Clone, PartialEq)]
+pub struct Fight {
+    /// Hull points and shield left, and what each is when whole.
+    pub hull: f32,
+    pub max_hull: f32,
+    pub shield: f32,
+    pub max_shield: f32,
+    /// Nose gun heat, 0 to 1, and whether they have overheated and are cooling off.
+    pub heat: f32,
+    pub overheated: bool,
+    /// Missiles on the rails, the most it carries, and how far the next one is back, 0 to 1.
+    pub missiles: u32,
+    pub max_missiles: u32,
+    pub reload: f32,
+    /// How far the lock on the ship in the nose has come, 0 to 1 (0 with nothing there).
+    pub lock: f32,
+    /// Seconds left of the hit marker, and whether it marks a kill.
+    pub hit: f32,
+    pub kill: bool,
+    /// An enemy missile coming for this ship.
+    pub threat: Threat,
+}
+
+/// How close an enemy's missile is to the ship: a Sentry holding a lock, or one in the air.
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Threat {
+    #[default]
+    None,
+    Locked,
+    Missile,
 }
 
 /// Every HUD element hangs off this, so menus can hide it in one go. Other modules put it on
@@ -90,10 +129,10 @@ struct HeatFill;
 #[derive(Component)]
 struct CrosshairLine(Vec2);
 #[derive(Component)]
-struct CrosshairDot;
+pub(crate) struct CrosshairDot;
 /// The weapon card, hidden while flying.
 #[derive(Component)]
-struct WeaponPlate;
+pub(crate) struct WeaponPlate;
 /// Flight reticle: where the ship is going, where its nose points, and a horizon line.
 #[derive(Component)]
 struct VelocityMark;
@@ -121,10 +160,48 @@ struct GrappleFill;
 struct CompassTick(f32);
 #[derive(Component)]
 struct HintText;
+/// The on-foot health card, and the flying ship's cards in its and the weapon card's places.
+#[derive(Component)]
+pub(crate) struct HealthCard;
+#[derive(Component)]
+pub(crate) struct ShipCard;
+#[derive(Component)]
+struct GunsCard;
+#[derive(Component)]
+struct HullSeg(usize);
+#[derive(Component)]
+struct HullText;
+#[derive(Component)]
+struct ShieldFill;
+#[derive(Component)]
+struct GunText;
+#[derive(Component)]
+struct GunHeatFill;
+#[derive(Component)]
+struct MissileText;
+#[derive(Component)]
+struct MissilePip(u32);
+#[derive(Component)]
+struct ReloadFill;
+/// Four ticks round the nose that flash when your shots land; bigger and red on a kill.
+#[derive(Component)]
+struct HitMark;
+#[derive(Component)]
+struct HitTick(Vec2);
+#[derive(Component)]
+struct ThreatText;
 
 const TAPE_PX: f32 = 2.4;
 const TAPE_HALF: f32 = 70.0;
 const HEALTH_SEGMENTS: usize = 10;
+/// Most missile pips the guns card draws.
+const MISSILE_PIPS: u32 = 8;
+
+/// Whether the on-foot cards (health, weapon, crosshair) show: not while flying, nor while the
+/// SHOT DOWN card is up, though nobody is flying then.
+pub fn on_foot(flight: &FlightHud, downed: Option<&crate::solar::loss::Downed>) -> bool {
+    !flight.active && !downed.is_some_and(|d| d.showing())
+}
 
 fn abs_node(left: Option<f32>, right: Option<f32>, top: Option<f32>, bottom: Option<f32>, width: f32) -> Node {
     let v = |o: Option<f32>| o.map_or(Val::Auto, Val::Px);
@@ -209,7 +286,7 @@ fn spawn_hud(mut commands: Commands, theme: Res<ComicTheme>, halftones: Option<R
         });
 
         // Bottom left: health card.
-        p.spawn(abs_node(Some(24.0), None, None, Some(24.0), 300.0)).with_children(|b| {
+        p.spawn((HealthCard, abs_node(Some(24.0), None, None, Some(24.0), 300.0))).with_children(|b| {
             let t2 = t.clone();
             panel(b, &t, t.paper, -1.5, move |c| {
                 c.spawn(Node { justify_content: JustifyContent::SpaceBetween, align_items: AlignItems::Center, ..default() }).with_children(|r| {
@@ -260,6 +337,56 @@ fn spawn_hud(mut commands: Commands, theme: Res<ComicTheme>, halftones: Option<R
                 ink_bar(c, &t2, Val::Percent(100.0), 8.0, t2.orange, HeatFill);
             });
         });
+
+        // Flying, bottom left: the ship card, hull in segments like health and the shield bar.
+        let mut card = abs_node(Some(24.0), None, None, Some(24.0), 300.0);
+        card.display = Display::None;
+        p.spawn((ShipCard, card)).with_children(|b| {
+            let t2 = t.clone();
+            panel(b, &t, t.paper, -1.5, move |c| {
+                c.spawn(Node { justify_content: JustifyContent::SpaceBetween, align_items: AlignItems::Center, ..default() }).with_children(|r| {
+                    r.spawn(display_text("HULL", 22.0, t2.ink, &t2));
+                    r.spawn((HullText, display_text("", 40.0, t2.red, &t2)));
+                });
+                c.spawn(Node { column_gap: Val::Px(4.0), ..default() }).with_children(|r| {
+                    for i in 0..HEALTH_SEGMENTS {
+                        r.spawn((HullSeg(i), Node { flex_grow: 1.0, height: Val::Px(16.0), border: UiRect::all(Val::Px(2.0)), ..default() }, BackgroundColor(t2.red), BorderColor::all(t2.ink)));
+                    }
+                });
+                c.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(8.0), ..default() }).with_children(|r| {
+                    r.spawn(body_text("SHIELD", 14.0, t2.ink, true, &t2));
+                    r.spawn(Node { flex_grow: 1.0, ..default() }).with_children(|g| ink_bar(g, &t2, Val::Percent(100.0), 12.0, t2.blue, ShieldFill));
+                });
+            });
+        });
+        // Flying, bottom right: the guns card, nose gun heat and the missiles on the rails.
+        let mut card = abs_node(None, Some(24.0), None, Some(24.0), 300.0);
+        card.display = Display::None;
+        p.spawn((GunsCard, card)).with_children(|b| {
+            let t2 = t.clone();
+            panel(b, &t, t.ink, 1.5, move |c| {
+                c.spawn((GunText, display_text("NOSE GUNS", 26.0, t2.yellow, &t2)));
+                ink_bar(c, &t2, Val::Percent(100.0), 8.0, t2.orange, GunHeatFill);
+                c.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(8.0), ..default() }).with_children(|r| {
+                    r.spawn((MissileText, display_text("", 40.0, t2.paper, &t2)));
+                    r.spawn(body_text("MISSILES", 16.0, t2.paper, true, &t2));
+                    r.spawn(Node { column_gap: Val::Px(5.0), ..default() }).with_children(|r| {
+                        for i in 0..MISSILE_PIPS {
+                            r.spawn((MissilePip(i), Node { width: Val::Px(10.0), height: Val::Px(18.0), border: UiRect::all(Val::Px(2.0)), display: Display::None, ..default() }, BackgroundColor(t2.yellow), BorderColor::all(t2.yellow)));
+                        }
+                    });
+                });
+                ink_bar(c, &t2, Val::Percent(100.0), 6.0, t2.blue, ReloadFill);
+            });
+        });
+        // Round the nose: the hit marker, four ticks on the diagonals pointing in.
+        p.spawn((HitMark, Node { position_type: PositionType::Absolute, width: Val::Px(0.0), height: Val::Px(0.0), ..default() }, Visibility::Hidden)).with_children(|h| {
+            for d in [Vec2::new(1.0, 1.0), Vec2::new(-1.0, 1.0), Vec2::new(1.0, -1.0), Vec2::new(-1.0, -1.0)] {
+                h.spawn((HitTick(d), Node { position_type: PositionType::Absolute, width: Val::Px(10.0), height: Val::Px(3.0), ..default() }, BackgroundColor(Color::WHITE), outline, UiTransform::from_rotation(Rot2::radians(d.y.atan2(d.x)))));
+            }
+        });
+        // Under the compass: an enemy missile on you.
+        p.spawn((ThreatText, display_text("", 34.0, t.red, &t), TextShadow { offset: Vec2::splat(3.0), color: t.ink }, Node { position_type: PositionType::Absolute, top: Val::Px(62.0), left: Val::Percent(50.0), width: Val::Px(400.0), margin: UiRect::left(Val::Px(-200.0)), justify_content: JustifyContent::Center, ..default() }, TextLayout::justify(Justify::Center), Visibility::Hidden));
     });
 }
 
@@ -312,6 +439,7 @@ fn update_speed(
 #[allow(clippy::too_many_arguments)]
 fn update_weapon(
     flight: Res<FlightHud>,
+    downed: Option<Res<crate::solar::loss::Downed>>,
     mut plate: Single<&mut Node, (With<WeaponPlate>, Without<HeatFill>, Without<AmmoPip>)>,
     arsenal: Res<Arsenal>,
     tuning: Res<Tuning>,
@@ -323,7 +451,7 @@ fn update_weapon(
     mut ammo: Query<(&AmmoPip, &mut Node, &mut BackgroundColor), Without<SlotPip>>,
     mut heat: Single<(&mut Node, &mut BackgroundColor), (With<HeatFill>, Without<SlotPip>, Without<AmmoPip>)>,
 ) {
-    plate.display = if flight.active { Display::None } else { Display::Flex };
+    plate.display = if on_foot(&flight, downed.as_deref()) { Display::Flex } else { Display::None };
     let kind = arsenal.kind();
     texts.p0().0 = kind.name().into();
     let rounds = arsenal.rounds(&tuning);
@@ -376,6 +504,7 @@ fn update_crosshair(
     aim: Option<Res<Aim>>,
     theme: Res<ComicTheme>,
     flight: Res<FlightHud>,
+    downed: Option<Res<crate::solar::loss::Downed>>,
     player: Single<(&Player, Has<crate::vehicle::Driving>)>,
     mut lines: Query<(&CrosshairLine, &mut Node, &mut BackgroundColor, Option<&mut Outline>)>,
     mut dot: Single<(&mut BackgroundColor, Option<&mut Outline>), (With<CrosshairDot>, Without<CrosshairLine>)>,
@@ -399,8 +528,8 @@ fn update_crosshair(
     if crate::gunsmith::customizable(kind) && loadout.part(kind, 0) > 0 {
         color.set_alpha(color.alpha() * (1.0 - ads));
     }
-    // Flying, the flight reticle takes over.
-    if flight.active {
+    // Flying, the flight reticle takes over; shot down, nothing.
+    if !on_foot(&flight, downed.as_deref()) {
         color = Color::NONE;
     }
     let ink = theme.ink.with_alpha(color.alpha());
@@ -443,16 +572,24 @@ fn update_compass(view: Res<ViewAngles>, flight: Res<FlightHud>, mut ticks: Quer
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn update_health(
     time: Res<Time>,
     health: Res<PlayerHealth>,
     theme: Res<ComicTheme>,
+    flight: Res<FlightHud>,
+    downed: Option<Res<crate::solar::loss::Downed>>,
+    mut card: Single<&mut Node, With<HealthCard>>,
     mut segments: Query<(&HealthSeg, &mut BackgroundColor)>,
     mut texts: ParamSet<(Single<&mut Text, With<HealthText>>, Single<(&mut Text, &mut TextColor), With<HealthTag>>)>,
     mut flash: Single<(&HitFlash, Option<&mut BackgroundColor>), Without<HealthSeg>>,
     mut halftones: Option<ResMut<Assets<Halftone>>>,
     mut level: Local<f32>,
 ) {
+    let shown = if on_foot(&flight, downed.as_deref()) { Display::Flex } else { Display::None };
+    if card.display != shown {
+        card.display = shown;
+    }
     let frac = (health.hp / health.max.max(1.0)).clamp(0.0, 1.0);
     let filled = filled_segments(health.hp, health.max, HEALTH_SEGMENTS);
     for (seg, mut color) in &mut segments {
@@ -563,6 +700,106 @@ fn update_reticle(
             vis.set_if_neq(Visibility::Hidden);
         }
     }
+}
+
+/// Flying, the ship card and the guns card in place of the health and weapon cards: hull in
+/// segments, the shield bar, gun heat (red and OVERHEATED while they cool off), the missiles on
+/// the rails and the next one coming back.
+#[allow(clippy::type_complexity)]
+fn update_ship_cards(
+    flight: Res<FlightHud>,
+    theme: Res<ComicTheme>,
+    mut texts: ParamSet<(Single<&mut Text, With<HullText>>, Single<(&mut Text, &mut TextColor), With<GunText>>, Single<&mut Text, With<MissileText>>)>,
+    mut segments: Query<(&HullSeg, &mut BackgroundColor), (Without<MissilePip>, Without<GunHeatFill>)>,
+    mut fills: ParamSet<(Single<&mut Node, With<ShieldFill>>, Single<(&mut Node, &mut BackgroundColor), With<GunHeatFill>>, Single<&mut Node, With<ReloadFill>>, Query<&mut Node, Or<(With<ShipCard>, With<GunsCard>)>>)>,
+    mut missile_pips: Query<(&MissilePip, &mut Node, &mut BackgroundColor), (Without<HullSeg>, Without<GunHeatFill>, Without<ShipCard>, Without<GunsCard>, Without<ShieldFill>, Without<ReloadFill>)>,
+) {
+    let shown = if flight.active { Display::Flex } else { Display::None };
+    for mut card in &mut fills.p3() {
+        if card.display != shown {
+            card.display = shown;
+        }
+    }
+    if !flight.active {
+        return;
+    }
+    let f = &flight.fight;
+    texts.p0().0 = format!("{:.0}", f.hull.max(0.0).ceil());
+    let filled = filled_segments(f.hull, f.max_hull, HEALTH_SEGMENTS);
+    for (seg, mut color) in &mut segments {
+        color.0 = if seg.0 < filled { theme.red } else { theme.paper };
+    }
+    fills.p0().width = Val::Percent((f.shield / f.max_shield.max(1.0)).clamp(0.0, 1.0) * 100.0);
+    {
+        let mut heat = fills.p1();
+        let (node, color) = &mut *heat;
+        node.width = Val::Percent(f.heat.clamp(0.0, 1.0) * 100.0);
+        color.0 = if f.overheated || f.heat > 0.7 { theme.red } else { theme.orange };
+    }
+    fills.p2().width = Val::Percent(f.reload.clamp(0.0, 1.0) * 100.0);
+    {
+        let mut gun = texts.p1();
+        let (text, color) = &mut *gun;
+        let (say, c) = if f.overheated { ("OVERHEATED", theme.red) } else { ("NOSE GUNS", theme.yellow) };
+        if text.0 != say {
+            text.0 = say.into();
+        }
+        color.0 = c;
+    }
+    texts.p2().0 = f.missiles.to_string();
+    for (pip, mut node, mut color) in &mut missile_pips {
+        node.display = if pip.0 < f.max_missiles.min(MISSILE_PIPS) { Display::Flex } else { Display::None };
+        color.0 = if pip.0 < f.missiles { theme.yellow } else { Color::NONE };
+    }
+}
+
+/// The hit marker round where the nose points: four white ticks for a hit, spread wider and red
+/// for a kill, fading as it runs out.
+#[allow(clippy::type_complexity)]
+fn update_hit_mark(
+    flight: Res<FlightHud>,
+    theme: Res<ComicTheme>,
+    camera: Option<Single<(&Camera, &GlobalTransform), With<crate::camera::PlayerCamera>>>,
+    mut mark: Single<(&mut Node, &mut Visibility), (With<HitMark>, Without<HitTick>)>,
+    mut ticks: Query<(&HitTick, &mut Node, &mut BackgroundColor, &mut Outline)>,
+) {
+    let f = &flight.fight;
+    let at = camera.filter(|_| flight.active && f.hit > 0.0).and_then(|c| c.0.world_to_viewport(c.1, c.1.translation() + flight.nose * 1000.0).ok());
+    let (node, vis) = &mut *mark;
+    let Some(at) = at else {
+        vis.set_if_neq(Visibility::Hidden);
+        return;
+    };
+    node.left = Val::Px(at.x);
+    node.top = Val::Px(at.y);
+    vis.set_if_neq(Visibility::Inherited);
+    let (gap, len, color, life) = if f.kill { (14.0, 16.0, theme.red, crate::solar::cockpit::KILL_MARK) } else { (9.0, 10.0, Color::WHITE, crate::solar::cockpit::HIT_MARK) };
+    let alpha = (f.hit / life * 2.0).clamp(0.0, 1.0);
+    for (tick, mut node, mut bg, mut outline) in &mut ticks {
+        // Each tick's middle sits `gap` px out along its diagonal.
+        let mid = tick.0.normalize() * (gap + len / 2.0);
+        node.width = Val::Px(len);
+        node.left = Val::Px(mid.x - len / 2.0);
+        node.top = Val::Px(mid.y - 1.5);
+        bg.0 = color.with_alpha(alpha);
+        outline.color = theme.ink.with_alpha(alpha);
+    }
+}
+
+/// MISSILE LOCK while an enemy holds a lock on you, a blinking MISSILE once one is in the air.
+fn update_threat(time: Res<Time>, flight: Res<FlightHud>, mut text: Single<(&mut Text, &mut Visibility), With<ThreatText>>) {
+    let (say, blink) = match flight.fight.threat {
+        _ if !flight.active => ("", false),
+        Threat::None => ("", false),
+        Threat::Locked => ("MISSILE LOCK", false),
+        Threat::Missile => ("MISSILE!", true),
+    };
+    let (t, vis) = &mut *text;
+    if t.0 != say {
+        t.0 = say.into();
+    }
+    let on = !say.is_empty() && (!blink || time.elapsed_secs().fract() < 0.6);
+    vis.set_if_neq(if on { Visibility::Inherited } else { Visibility::Hidden });
 }
 
 #[cfg(test)]

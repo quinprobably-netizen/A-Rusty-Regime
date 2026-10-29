@@ -10,7 +10,9 @@
 
 pub mod ai;
 pub mod base;
+pub mod cockpit;
 pub mod combat;
+pub mod contacts;
 pub mod enemy;
 pub mod missile;
 pub mod loss;
@@ -132,10 +134,12 @@ impl Plugin for SolarPlugin {
         ai::build(app);
         enemy::build(app);
         loss::build(app);
+        cockpit::build(app);
         base::build(app);
         station::build(app);
         app.add_systems(Startup, crate::quartermaster::start_kit.after(crate::gunsmith::restore));
         waypoint::build(app);
+        contacts::build(app);
         // The clock moves on with the physics step, so between steps every position and the epoch
         // agree: a handoff converts positions at the instant they hold.
         app.add_systems(FixedUpdate, gravitate.before(ControllerSet))
