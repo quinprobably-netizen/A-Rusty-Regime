@@ -13,6 +13,7 @@ pub mod base;
 pub mod board;
 pub mod cockpit;
 pub mod economy;
+pub mod hangar;
 pub mod combat;
 pub mod contacts;
 pub mod enemy;
@@ -142,6 +143,7 @@ impl Plugin for SolarPlugin {
         loss::build(app);
         economy::build(app);
         board::build(app);
+        hangar::build(app);
         cockpit::build(app);
         base::build(app);
         life::build(app);
@@ -261,6 +263,8 @@ fn spawn_fixtures(world: &mut World) {
             e.insert((Mesh3d(mesh), MeshMaterial3d(material)));
         }
     }
+    // The hangar row for fighters you own.
+    hangar::slabs(world);
     // A slab of its own for the fighter parked off the apron (`ship::FIGHTER_BERTH`).
     let [x, z] = ship::FIGHTER_BERTH;
     let size = Vec3::new(FIGHTER_PAD, size.y, FIGHTER_PAD);
@@ -291,7 +295,12 @@ pub fn berth_deck(sphere: &Sphere, pad: Vec3, x: f32) -> f32 {
 /// The deck height of the parked fighter's slab, in the pad's frame: just over the highest ground
 /// under it, wherever that is against the pad.
 pub fn fighter_deck(sphere: &Sphere, pad: Vec3) -> f32 {
-    rise_under(sphere, pad, Vec2::from(ship::FIGHTER_BERTH), Vec2::splat(FIGHTER_PAD / 2.0)) + 0.6
+    slab_deck(sphere, pad, Vec2::from(ship::FIGHTER_BERTH))
+}
+
+/// The deck height of a fighter's slab centred at `at` (x, z) in the pad's frame.
+pub fn slab_deck(sphere: &Sphere, pad: Vec3, at: Vec2) -> f32 {
+    rise_under(sphere, pad, at, Vec2::splat(FIGHTER_PAD / 2.0)) + 0.6
 }
 
 /// How far the ground rises, at most, over the pad's ground under a slab centred at `at` (x, z)

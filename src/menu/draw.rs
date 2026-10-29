@@ -246,13 +246,44 @@ pub(super) fn rebuild(
                         value_row(list, &t, &label, &value, None, Some(&note), index, index == menu.cursor, false);
                         index += 1;
                     }
+                    Row::Hull => {
+                        use crate::solar::hangar::{offer, title, Offer};
+                        let blank = Save::default();
+                        let s = save.as_deref().unwrap_or(&blank);
+                        let (label, value, note) = match offer(s, menu.board_faction, &tuning.economy, &tuning.ship_combat) {
+                            Offer::None => ("NO FIGHTERS".to_string(), String::new(), "This board sells none".to_string()),
+                            Offer::Price { ship, price } => (format!("BUY A {}", title(&ship).to_uppercase()), format!("${price}"), "Their own patrol fighter, flying as yours, with your parts and modules".to_string()),
+                            Offer::Allied { ship, price } => (format!("{} FIGHTER", title(&ship).to_uppercase()), format!("${price}"), format!("For sale once you are Allied with the {} (80)", menu.board_faction.name())),
+                            Offer::Owned { ship } => (format!("{} FIGHTER", title(&ship).to_uppercase()), "OWNED".to_string(), "In the hangar row at Haven".to_string()),
+                        };
+                        value_row(list, &t, &label, &value, None, Some(&note), index, index == menu.cursor, false);
+                        index += 1;
+                    }
                     Row::Sell => {
-                        let scrap = save.as_ref().map_or(0, |s| s.scrap);
-                        let (faction, share) = if menu.panel == Panel::Board { (menu.board_faction, tuning.economy.scrap_buyers.get(&menu.board).copied().unwrap_or(0.0)) } else { (menu.rack, 1.0) };
-                        let value = (tuning.economy.scrap_value as f32 * share).round() as u32;
-                        let each = save.as_deref().map_or(value, |s| crate::solar::standing::buys(value, faction, s, &tuning.ship_combat));
-                        let note = format!("${each} a scrap, into the bank");
-                        value_row(list, &t, &format!("SELL {scrap} SCRAP"), &format!("${}", scrap * each), None, Some(&note), index, index == menu.cursor, false);
+                        use crate::solar::economy::{sale, scrap_value_at, YARD};
+                        let blank = Save::default();
+                        let s = save.as_deref().unwrap_or(&blank);
+                        let (base, faction) = if menu.panel == Panel::Board { (menu.board.as_str(), menu.board_faction) } else { (YARD, menu.rack) };
+                        let (label, value, note) = match scrap_value_at(s, base, &tuning.economy) {
+                            None => ("SELL SCRAP".to_string(), String::new(), "This board buys no scrap".to_string()),
+                            Some(each) => {
+                                let each = crate::solar::standing::buys(each.round() as u32, faction, s, &tuning.ship_combat);
+                                let (n, money) = sale(s, base, faction, &tuning.economy, &tuning.ship_combat);
+                                let falls = if base == YARD { ", less as the Yard's stock fills" } else { "" };
+                                (format!("SELL {n} SCRAP"), format!("${money}"), format!("${each} a scrap{falls}, into the bank"))
+                            }
+                        };
+                        value_row(list, &t, &label, &value, None, Some(&note), index, index == menu.cursor, false);
+                        index += 1;
+                    }
+                    Row::Buy => {
+                        use crate::solar::economy::{hold_cap, scrap_cost};
+                        let blank = Save::default();
+                        let s = save.as_deref().unwrap_or(&blank);
+                        let each = scrap_cost(s, menu.rack, &tuning.economy, &tuning.ship_combat);
+                        let lot = tuning.economy.scrap_lot.min(hold_cap(s, &tuning.economy).saturating_sub(s.scrap));
+                        let (label, value, note) = if lot == 0 { ("BUY SCRAP".to_string(), String::new(), "The hold is full".to_string()) } else { (format!("BUY {lot} SCRAP"), format!("${}", lot * each), format!("${each} a scrap from the Yard's stock")) };
+                        value_row(list, &t, &label, &value, None, Some(&note), index, index == menu.cursor, false);
                         index += 1;
                     }
                     Row::Fit(slot) => {

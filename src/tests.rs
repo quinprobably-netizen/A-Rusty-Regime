@@ -2685,6 +2685,42 @@ fn a_raider_shot_down_by_your_ship_counts_toward_a_cull() {
 }
 
 #[test]
+fn a_fighter_you_own_parks_at_haven_flies_as_yours_with_your_kit_and_comes_back_when_lost() {
+    use solar::hangar::Owned;
+    let mut app = system_app();
+    {
+        let mut save = app.world_mut().resource_mut::<Save>();
+        save.hulls = vec!["sentry".into()];
+        save.ship_parts = [2, 0, 0, 0];
+    }
+    run(&mut app, 1.0);
+    let sentry = spec_of(&app, "sentry");
+    let owned: Vec<Entity> = app.world_mut().query_filtered::<(Entity, &Ship), With<Owned>>().iter(app.world()).filter(|(_, s)| s.spec == sentry).map(|(e, _)| e).collect();
+    assert_eq!(owned.len(), 1, "one Sentry in the hangar");
+    let ship = owned[0];
+    assert_eq!(*app.world().get::<Faction>(ship).unwrap(), Faction::Deserters, "flies as yours");
+    let spec = app.world().resource::<solar::ship::Ships>().ship[sentry].clone();
+    assert_eq!(app.world().get::<Hull>(ship).unwrap().max_hp, spec.hull + 50.0, "two levels of plating on it too");
+    // E beside it climbs in, and E again steps out beside its wing.
+    let at = app.world().get::<Transform>(ship).unwrap().translation;
+    let rot = app.world().get::<Transform>(ship).unwrap().rotation;
+    set_player(&mut app, at + rot * spec.exit_point(), Vec3::ZERO);
+    run(&mut app, 0.5);
+    press_use(&mut app);
+    let player_e = app.world_mut().query_filtered::<Entity, With<Player>>().single(app.world()).unwrap();
+    assert_eq!(app.world().get::<Driving>(player_e).map(|d| d.0), Some(ship), "aboard the Sentry");
+    // Shot down in it: back at the Roost in a Kestrel, and the Sentry back in its slot.
+    let wreck = shoot_down(&mut app);
+    assert_eq!(wreck, ship);
+    run(&mut app, 0.2);
+    back_at_the_roost(&mut app, wreck);
+    run(&mut app, 0.5);
+    let again: Vec<Entity> = app.world_mut().query_filtered::<(Entity, &Ship), With<Owned>>().iter(app.world()).filter(|(_, s)| s.spec == sentry).map(|(e, _)| e).collect();
+    assert_eq!(again.len(), 1, "a fresh Sentry in the hangar");
+    assert_ne!(again[0], ship);
+}
+
+#[test]
 fn the_space_screens_draw_with_and_without_the_solar_system() {
     use crate::menu::{Menu, MenuPlugin, Panel, Screen};
     let mut solar = counter_app();
@@ -4277,16 +4313,29 @@ fn the_yards_parts_rack_opens_its_menu_and_sells_for_scrap_at_the_scrappers_pric
     tap(&mut app, KeyCode::Enter);
     assert_eq!((app.world().resource::<Save>().scrap, app.world().resource::<Save>().ship_parts[3]), (87, 1), "Mk1 rack for 13");
     tap(&mut app, KeyCode::Escape);
-    // The row under the parts sells the hold: 87 scrap at a friend's $7.
+    // The row under the parts sells the hold: 87 scrap from a friend's $7, a little less as the
+    // Yard's stock fills.
     press_use(&mut app);
     run(&mut app, 0.2);
     let banked = app.world().resource::<Save>().banked;
+    let (_, worth) = solar::economy::sale(app.world().resource::<Save>(), "yard", Faction::Scrappers, &Tuning::default().economy, &Tuning::default().ship_combat);
+    assert!(worth < 87 * 7 && worth > 87 * 6, "{worth}");
     for _ in 0..4 {
         tap(&mut app, KeyCode::KeyS);
     }
     tap(&mut app, KeyCode::Enter);
-    assert_eq!((app.world().resource::<Save>().scrap, app.world().resource::<Save>().banked), (0, banked + 87 * 7), "sold to a friend at $7");
-    assert_eq!(app.world().resource::<Menu>().note, format!("Sold 87 scrap: +${}", 87 * 7));
+    assert_eq!((app.world().resource::<Save>().scrap, app.world().resource::<Save>().banked), (0, banked + worth), "sold to a friend");
+    assert_eq!(app.world().resource::<Menu>().note, format!("Sold 87 scrap: +${worth}"));
+    assert_eq!(app.world().resource::<Save>().yard_stock.map(|s| s.round()), Some(387.0), "on the Yard's stockpile");
+    // The row under that buys a lot back at half again over the Yard's price.
+    let banked = app.world().resource::<Save>().banked;
+    tap(&mut app, KeyCode::KeyS);
+    tap(&mut app, KeyCode::Enter);
+    let save = app.world().resource::<Save>().clone();
+    assert_eq!(save.scrap, 10);
+    assert!(banked - save.banked >= 10 * 5, "{} for 10", banked - save.banked);
+    tap(&mut app, KeyCode::KeyW);
+    app.world_mut().resource_mut::<Save>().scrap = 0;
     tap(&mut app, KeyCode::Enter);
     assert_eq!(app.world().resource::<Menu>().note, "The hold is empty");
     tap(&mut app, KeyCode::Escape);

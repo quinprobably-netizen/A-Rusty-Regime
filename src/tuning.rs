@@ -749,6 +749,13 @@ impl Default for ShipCombat {
     }
 }
 
+/// A fighter a faction sells: its ship id and list price.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+pub struct HullSale {
+    pub ship: String,
+    pub price: u32,
+}
+
 /// Money (table `[economy]`, `solar::economy`): every price in the game, what scrap is worth, the
 /// hold, the rebuy fee for a ship shot down, and repairs. Prices at a faction's base go through
 /// `solar::standing::price`; the Roost's are these.
@@ -779,8 +786,24 @@ pub struct Economy {
     pub jobs: usize,
     pub drop_standing: i32,
     pub day: f32,
-    /// Who buys scrap from their board, by base id, at this share of `scrap_value`.
+    /// Who buys scrap from their board, by base id, at this share of `scrap_value` (the Yard's
+    /// of its stockpile's price).
     pub scrap_buyers: std::collections::BTreeMap<String, f32>,
+    /// The Yard's stockpile: it pays `scrap_value` for scrap at `yard_target` in stock, more below
+    /// and less above (by the square root of target over stock), between `scrap_price_min` and
+    /// `scrap_price_max`; the stock moves `yard_recover` of the way back to target a game
+    /// minute. It sells scrap at `scrap_markup` over its price, `scrap_lot` at a time, and below
+    /// `yard_shortage` of target its board asks for supply runs paying `shortage_pay` more.
+    pub yard_target: f32,
+    pub yard_recover: f32,
+    pub scrap_price_min: f32,
+    pub scrap_price_max: f32,
+    pub scrap_markup: f32,
+    pub scrap_lot: u32,
+    pub yard_shortage: f32,
+    pub shortage_pay: f32,
+    /// The fighter each faction's board sells you at Allied standing, by faction id.
+    pub hulls: std::collections::BTreeMap<String, HullSale>,
     /// What a scrap is worth in money: what the Yard pays for it, and what a part's scrap counts
     /// for in the ship's value.
     pub scrap_value: u32,
@@ -820,6 +843,15 @@ impl Default for Economy {
             drop_standing: -5,
             day: 2880.0,
             scrap_buyers: [("yard", 1.0), ("outpost", 0.7)].into_iter().map(|(id, k)| (id.to_string(), k)).collect(),
+            yard_target: 300.0,
+            yard_recover: 0.05,
+            scrap_price_min: 3.0,
+            scrap_price_max: 12.0,
+            scrap_markup: 1.5,
+            scrap_lot: 10,
+            yard_shortage: 0.5,
+            shortage_pay: 1.6,
+            hulls: [("pmc", "sentry", 6000), ("scrappers", "welder", 8000), ("regime", "censer", 9000)].into_iter().map(|(f, ship, price)| (f.to_string(), HullSale { ship: ship.to_string(), price })).collect(),
             scrap_value: 6,
             hold_base: 60,
             hold_per_plating: 20,

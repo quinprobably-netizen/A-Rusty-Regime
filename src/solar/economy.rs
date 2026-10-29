@@ -31,7 +31,7 @@ use crate::tuning::{Economy, ShipCombat, Tuning};
 use crate::vehicle::Driving;
 
 pub fn build(app: &mut App) {
-    app.add_systems(FixedUpdate, at_the_door.after(super::station::deliver));
+    app.add_systems(FixedUpdate, (at_the_door.after(super::station::deliver), recover_stock));
 }
 
 /// Moves the pocket into the bank; returns how much.
@@ -95,13 +95,100 @@ pub fn repair(hull: &mut Hull, faction: Faction, save: &mut Save, e: &Economy, t
     Some((points, cost))
 }
 
-/// Sells the whole hold to a base of `faction` that pays `share` of `scrap_value` into the bank;
-/// returns the money.
-pub fn sell_scrap(save: &mut Save, faction: Faction, share: f32, e: &Economy, t: &ShipCombat) -> u32 {
-    let each = standing::buys((e.scrap_value as f32 * share).round() as u32, faction, save, t);
-    let money = std::mem::take(&mut save.scrap).saturating_mul(each);
+/// The Yard's scrap stockpile.
+pub fn yard_stock(save: &Save, e: &Economy) -> f32 {
+    save.yard_stock.unwrap_or(e.yard_target)
+}
+
+/// What the Yard pays for a scrap with `stock` in its stockpile, before standing.
+pub fn yard_price(stock: f32, e: &Economy) -> f32 {
+    (e.scrap_value as f32 * (e.yard_target / stock.max(1.0)).sqrt()).clamp(e.scrap_price_min, e.scrap_price_max)
+}
+
+/// What base `base` pays for a scrap before standing, if it buys scrap at all.
+pub fn scrap_value_at(save: &Save, base: &str, e: &Economy) -> Option<f32> {
+    let share = *e.scrap_buyers.get(base)?;
+    Some(share * if base == YARD { yard_price(yard_stock(save, e), e) } else { e.scrap_value as f32 })
+}
+
+/// The Yard's base id.
+pub const YARD: &str = "yard";
+
+/// What selling the whole hold to base `base` (of `faction`) would come to: the scrap and the
+/// money. Each scrap goes at the price it meets, so the Yard pays less as its stock fills.
+pub fn sale(save: &Save, base: &str, faction: Faction, e: &Economy, t: &ShipCombat) -> (u32, u32) {
+    let mut probe = save.clone();
+    let mut money = 0u32;
+    for _ in 0..save.scrap {
+        let Some(value) = scrap_value_at(&probe, base, e) else { return (0, 0) };
+        money = money.saturating_add(standing::buys(value.round() as u32, faction, save, t));
+        if base == YARD {
+            probe.yard_stock = Some(yard_stock(&probe, e) + 1.0);
+        }
+    }
+    (save.scrap, money)
+}
+
+/// Sells the whole hold to base `base` (of `faction`) into the bank, the Yard's stock taking it
+/// in; returns the money, or `None` if that base buys no scrap.
+pub fn sell_scrap(save: &mut Save, base: &str, faction: Faction, e: &Economy, t: &ShipCombat) -> Option<u32> {
+    scrap_value_at(save, base, e)?;
+    let (scrap, money) = sale(save, base, faction, e, t);
+    save.scrap -= scrap;
     save.banked = save.banked.saturating_add(money);
-    money
+    if base == YARD {
+        save.yard_stock = Some(yard_stock(save, e) + scrap as f32);
+    }
+    Some(money)
+}
+
+/// What the Yard (of `faction`) charges for a scrap.
+pub fn scrap_cost(save: &Save, faction: Faction, e: &Economy, t: &ShipCombat) -> u32 {
+    standing::price((yard_price(yard_stock(save, e), e) * e.scrap_markup).round() as u32, faction, save, t).max(1)
+}
+
+/// Why no scrap was bought.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Short {
+    /// The hold is full.
+    Hold,
+    /// Not enough money for one.
+    Money(u32),
+}
+
+/// Buys up to `scrap_lot` scrap from the Yard, as much as the hold and the bank allow, out of
+/// its stock: (scrap, money).
+pub fn buy_scrap(save: &mut Save, faction: Faction, e: &Economy, t: &ShipCombat) -> Result<(u32, u32), Short> {
+    let each = scrap_cost(save, faction, e, t);
+    let room = hold_cap(save, e).saturating_sub(save.scrap);
+    if room == 0 {
+        return Err(Short::Hold);
+    }
+    let n = e.scrap_lot.min(room).min(save.banked / each);
+    if n == 0 {
+        return Err(Short::Money(each));
+    }
+    save.banked -= n * each;
+    save.scrap += n;
+    save.yard_stock = Some((yard_stock(save, e) - n as f32).max(0.0));
+    Ok((n, n * each))
+}
+
+/// Where the Yard's stock is `dt` seconds of game time after `stock`: `yard_recover` of the way
+/// back to target a minute.
+pub fn recovered(stock: f32, dt: f32, e: &Economy) -> f32 {
+    let k = 1.0 - (1.0 - e.yard_recover.clamp(0.0, 1.0)).powf(dt / 60.0);
+    stock + (e.yard_target - stock) * k
+}
+
+/// The Yard's stock drifts back to its target with game time.
+fn recover_stock(time: Res<Time>, tuning: Res<Tuning>, save: Option<ResMut<Save>>) {
+    let Some(mut save) = save else { return };
+    let e = &tuning.economy;
+    let Some(stock) = save.yard_stock else { return };
+    let next = recovered(stock, time.delta_secs(), e);
+    // Close enough is full, and the save stops changing.
+    save.yard_stock = if (next - e.yard_target).abs() < 0.5 { None } else { Some(next) };
 }
 
 /// On foot in the doorway of a base that serves you: the pocket banks, and on the way in, the
@@ -232,12 +319,61 @@ mod tests {
     }
 
     #[test]
+    fn the_yards_price_follows_its_stock() {
+        let (e, _) = tuned();
+        assert_eq!(yard_price(300.0, &e), 6.0);
+        assert!((yard_price(150.0, &e) - 8.485).abs() < 0.01);
+        assert_eq!((yard_price(1200.0, &e), yard_price(0.0, &e), yard_price(5000.0, &e)), (3.0, 12.0, 3.0), "floor and cap");
+        assert_eq!(yard_stock(&Save::default(), &e), 300.0, "an old save starts full");
+    }
+
+    #[test]
+    fn a_big_sale_drives_the_yards_price_down_as_it_goes() {
+        let (e, t) = tuned();
+        let mut save = Save { scrap: 60, ..default() };
+        let money = sell_scrap(&mut save, YARD, Faction::Scrappers, &e, &t).unwrap();
+        assert!(money < 360 && money > 300, "{money}");
+        assert_eq!((save.scrap, save.banked, save.yard_stock), (0, money, Some(360.0)));
+        // Vantage pays its flat 70% whatever the Yard's stock.
+        save.scrap = 30;
+        save.yard_stock = Some(5000.0);
+        assert_eq!(sell_scrap(&mut save, "outpost", Faction::Pmc, &e, &t), Some(120));
+        assert_eq!(sell_scrap(&mut save, "roost", Faction::Deserters, &e, &t), None, "the Roost buys none");
+    }
+
+    #[test]
+    fn the_yards_stock_drifts_back_over_a_day() {
+        let (e, _) = tuned();
+        assert!((recovered(600.0, 60.0, &e) - 585.0).abs() < 0.01, "5% of the gap in a minute");
+        assert!((recovered(100.0, 60.0, &e) - 110.0).abs() < 0.01, "from below too");
+        let day = recovered(600.0, e.day, &e);
+        assert!(day - 300.0 < 30.0, "within 10% after a day: {day}");
+        let steps = (0..2880).fold(600.0, |s, _| recovered(s, 1.0, &e));
+        assert!((steps - day).abs() < 0.5, "the same in small steps: {steps} vs {day}");
+    }
+
+    #[test]
+    fn the_yard_sells_scrap_by_the_lot_as_far_as_room_and_money_go() {
+        let (e, t) = tuned();
+        let mut save = Save { banked: 1000, ..default() };
+        assert_eq!(buy_scrap(&mut save, Faction::Scrappers, &e, &t), Ok((10, 90)), "$9 each at full stock");
+        assert_eq!((save.scrap, save.banked, save.yard_stock), (10, 910, Some(290.0)));
+        save.scrap = 56;
+        assert_eq!(buy_scrap(&mut save, Faction::Scrappers, &e, &t).map(|(n, _)| n), Ok(4), "only 4 fit");
+        assert_eq!(buy_scrap(&mut save, Faction::Scrappers, &e, &t), Err(Short::Hold));
+        let mut poor = Save { banked: 20, ..default() };
+        assert_eq!(buy_scrap(&mut poor, Faction::Scrappers, &e, &t), Ok((2, 18)));
+        assert_eq!(buy_scrap(&mut poor, Faction::Scrappers, &e, &t), Err(Short::Money(9)));
+    }
+
+    #[test]
     fn selling_empties_the_hold_into_the_bank_and_a_friend_pays_more() {
         let (e, t) = tuned();
         let mut save = Save { scrap: 12, banked: 5, ..default() };
-        assert_eq!(sell_scrap(&mut save, Faction::Scrappers, 1.0, &e, &t), 72);
-        assert_eq!((save.scrap, save.banked), (0, 77));
-        assert_eq!(sell_scrap(&mut save, Faction::Scrappers, 1.0, &e, &t), 0, "nothing left");
+        let money = sell_scrap(&mut save, YARD, Faction::Scrappers, &e, &t).unwrap();
+        assert_eq!((save.scrap, save.banked), (0, 5 + money));
+        assert_eq!(money, 72, "12 scrap barely move a 300 stock: $6 each");
+        assert_eq!(sell_scrap(&mut save, YARD, Faction::Scrappers, &e, &t), Some(0), "nothing left");
         for (v, each) in [(0, 6), (40, 7), (-41, 5)] {
             save.standing.insert("scrappers".into(), v);
             assert_eq!(standing::buys(6, Faction::Scrappers, &save, &t), each, "at {v}");

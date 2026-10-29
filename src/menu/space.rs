@@ -148,6 +148,9 @@ fn kestrel_card(p: &mut ChildSpawnerCommands, t: &ComicTheme, space: &Space, sav
                 segment_bar(c, &t2, level as f32, 3.0, 3);
                 c.spawn(body_text(format!("{} a level", part.gives(&sc)), 13.0, t2.muted, false, &t2));
             }
+            let hangar = if save.hulls.is_empty() { "Empty: at Allied, a faction's board sells you its fighter".to_string() } else { save.hulls.iter().map(|h| crate::solar::hangar::title(h)).collect::<Vec<_>>().join(", ") };
+            c.spawn((display_text("HANGAR", 22.0, t2.ink, &t2), Node { margin: UiRect::top(Val::Px(10.0)), ..default() }));
+            c.spawn(body_text(format!("{hangar}. Parts and modules fit whichever you fly."), 14.0, t2.muted, false, &t2));
             c.spawn((display_text("MODULES", 22.0, t2.ink, &t2), Node { margin: UiRect::top(Val::Px(10.0)), ..default() }));
             let fitted = salvage::fitted(&save);
             let owned = salvage::owned(&save);

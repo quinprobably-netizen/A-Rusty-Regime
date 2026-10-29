@@ -116,7 +116,15 @@ pub fn offers(base: usize, bases: &Bases, day: u32, seed: u64, km: impl Fn(&str,
     let need = rng.range(e.cull_kills[0] as usize, e.cull_kills[1].max(e.cull_kills[0]) as usize) as u32;
     out.push(Contract { job: Job::Cull { need, got: 0 }, from: here.id.clone(), pay: e.cull_per_kill * need, due });
     let roll = rng.next();
-    if here.id != "yard" && roll < e.supply_chance {
+    let stock = super::economy::yard_stock(save, e);
+    if here.id == super::economy::YARD {
+        // The Yard asks for scrap only when its stockpile runs low, and pays for the hurry.
+        if stock < e.yard_shortage * e.yard_target {
+            let need = rng.range(e.supply_scrap[0] as usize, e.supply_scrap[1].max(e.supply_scrap[0]) as usize) as u32;
+            let pay = (super::economy::yard_price(stock, e) * e.supply_markup * e.shortage_pay * need as f32).round() as u32;
+            out.push(Contract { job: Job::Supply { need }, from: here.id.clone(), pay, due });
+        }
+    } else if roll < e.supply_chance {
         let need = rng.range(e.supply_scrap[0] as usize, e.supply_scrap[1].max(e.supply_scrap[0]) as usize) as u32;
         let pay = (e.scrap_value as f32 * 0.7 * e.supply_markup * need as f32).round() as u32;
         out.push(Contract { job: Job::Supply { need }, from: here.id.clone(), pay, due });
@@ -147,12 +155,16 @@ pub fn take(save: &mut Save, base: &str, i: usize, e: &Economy) -> Result<Contra
 
 /// Hands in the first supply run given by base `base` if the hold has enough scrap: the scrap
 /// goes, the pay is banked. Returns (scrap, pay).
-pub fn hand_in(save: &mut Save, base: &str) -> Option<(u32, u32)> {
+pub fn hand_in(save: &mut Save, base: &str, e: &Economy) -> Option<(u32, u32)> {
     let i = save.contracts.iter().position(|c| c.from == base && matches!(c.job, Job::Supply { need } if save.scrap >= need))?;
     let c = save.contracts.remove(i);
     let Job::Supply { need } = c.job else { unreachable!() };
     save.scrap -= need;
     save.banked = save.banked.saturating_add(c.pay);
+    // Scrap brought to the Yard goes on its stockpile.
+    if base == super::economy::YARD {
+        save.yard_stock = Some(super::economy::yard_stock(save, e) + need as f32);
+    }
     Some((need, c.pay))
 }
 
@@ -314,7 +326,7 @@ mod tests {
                 let Job::Cull { need, got: 0 } = o[1].job else { panic!("a cull second") };
                 assert!((4..=8).contains(&need) && o[1].pay == 50 * need);
                 if let Some(c) = o.get(2) {
-                    assert_ne!(base, yard, "the Yard has its own stock");
+                    assert_ne!(base, yard, "the Yard, full, asks for none");
                     let Job::Supply { need } = c.job else { panic!() };
                     assert!((20..=40).contains(&need));
                     assert_eq!(c.pay, (6.0 * 0.7 * 1.3 * need as f32).round() as u32);
@@ -353,14 +365,30 @@ mod tests {
     }
 
     #[test]
+    fn the_yard_asks_for_scrap_only_when_its_stock_runs_low() {
+        let (bases, e, t) = setup();
+        let yard = bases.base.iter().position(|b| b.id == "yard").unwrap();
+        let full = Save::default();
+        assert!((0..20).all(|d| offers(yard, &bases, d, 1, km, &full, &e, &t).len() == 2), "none at full stock");
+        let low = Save { yard_stock: Some(100.0), ..default() };
+        let o = offers(yard, &bases, 4, 1, km, &low, &e, &t);
+        let Job::Supply { need } = o[2].job else { panic!("a supply run") };
+        let price = crate::solar::economy::yard_price(100.0, &e);
+        assert_eq!(o[2].pay, (price * 1.3 * 1.6 * need as f32).round() as u32, "at the premium");
+        let mut save = Save { scrap: need, yard_stock: Some(100.0), contracts: vec![o[2].clone()], ..default() };
+        assert!(hand_in(&mut save, "yard", &e).is_some());
+        assert_eq!(save.yard_stock, Some(100.0 + need as f32), "the scrap goes on the stockpile");
+    }
+
+    #[test]
     fn a_supply_run_hands_in_only_with_the_scrap_aboard() {
         let mut save = Save { scrap: 20, banked: 1, ..default() };
         save.contracts.push(Contract { job: Job::Supply { need: 30 }, from: "outpost".into(), pay: 160, due: Some(1) });
-        assert_eq!(hand_in(&mut save, "outpost"), None);
+        assert_eq!(hand_in(&mut save, "outpost", &Economy::default()), None);
         assert_eq!((save.scrap, save.contracts.len()), (20, 1), "nothing taken");
         save.scrap = 35;
-        assert_eq!(hand_in(&mut save, "roost"), None, "only at its own board");
-        assert_eq!(hand_in(&mut save, "outpost"), Some((30, 160)));
+        assert_eq!(hand_in(&mut save, "roost", &Economy::default()), None, "only at its own board");
+        assert_eq!(hand_in(&mut save, "outpost", &Economy::default()), Some((30, 160)));
         assert_eq!((save.scrap, save.banked, save.contracts.len()), (5, 161, 0));
     }
 
