@@ -1670,7 +1670,8 @@ fn the_ship_takes_its_stick_from_the_input() {
     i.roll = -0.5;
     i.boost = true;
     app.update();
-    let c = app.world().resource::<ShipControls>();
+    let ship = ship_entity(&mut app);
+    let c = app.world().get::<ShipControls>(ship).unwrap();
     assert!((c.thrust - 0.6).abs() < 1e-5, "thrust: {}", c.thrust);
     assert!((c.lift - 1.0).abs() < 1e-5, "lift: {}", c.lift);
     assert!((c.turn.z + 0.5).abs() < 1e-5, "roll: {}", c.turn.z);
@@ -1852,7 +1853,7 @@ fn boosting_is_capped_by_height_over_the_ground() {
 #[test]
 fn ships_toml_lists_four_ships_with_models_and_matching_rest_heights() {
     let ships = solar::ship::Ships::load();
-    assert_eq!(ships.ship.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["kestrel", "litany", "mule", "vantage"]);
+    assert_eq!(ships.ship.iter().filter(|s| s.boardable()).map(|s| s.id.as_str()).collect::<Vec<_>>(), ["kestrel", "litany", "mule", "vantage"]);
     for s in &ships.ship {
         assert!(std::path::Path::new(&format!("assets/models/ships/{}.glb", s.id)).exists(), "{} has a model", s.id);
         assert!((s.bottom() + s.rest).abs() < 0.05, "{}: collider bottom {} vs rest {}", s.id, s.bottom(), s.rest);
@@ -1922,7 +1923,7 @@ fn four_ships_rest_in_a_row_on_the_apron_without_touching() {
     let mut app = system_app();
     run(&mut app, 1.0);
     let ships = app.world().resource::<solar::ship::Ships>().clone();
-    let mut parked: Vec<(usize, Vec3)> = app.world_mut().query::<(&Ship, &Transform)>().iter(app.world()).map(|(s, tf)| (s.spec, tf.translation)).collect();
+    let mut parked: Vec<(usize, Vec3)> = app.world_mut().query::<(&Ship, &Transform)>().iter(app.world()).filter(|(s, _)| ships.ship[s.spec].boardable()).map(|(s, tf)| (s.spec, tf.translation)).collect();
     parked.sort_by_key(|p| p.0);
     assert_eq!(parked.len(), 4);
     let origin = *app.world().resource::<Origin>();
@@ -1975,7 +1976,7 @@ fn respawn_follows_the_last_flown_ship() {
 #[test]
 fn every_cabin_fits_a_standing_player_and_its_ramp_reaches_the_ground() {
     let ships = solar::ship::Ships::load();
-    for spec in &ships.ship {
+    for spec in ships.ship.iter().filter(|s| s.boardable()) {
         let exit = Vec3::from(spec.exit);
         // A 1.8 m, 0.4 m radius capsule standing on the cabin floor: bottom and top sphere centres.
         for p in [exit + Vec3::Y * -0.45, exit, exit + Vec3::Y * 0.45] {
@@ -1996,6 +1997,61 @@ fn every_cabin_fits_a_standing_player_and_its_ramp_reaches_the_ground() {
 }
 
 #[test]
+fn the_four_fighters_are_solid_hulls_with_their_glbs_nodes() {
+    use solar::ship::ShipKind;
+    let ships = solar::ship::Ships::load();
+    let fighters: Vec<_> = ships.ship.iter().filter(|s| s.kind == ShipKind::Fighter).collect();
+    assert_eq!(fighters.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["jackal", "sentry", "censer", "welder"]);
+    for s in &fighters {
+        assert!(!s.boardable(), "{} cannot be boarded", s.id);
+        assert_eq!(s.collider.len(), 1, "{}: one box round the hull", s.id);
+        assert_eq!((s.ramp_len, s.cabin), (0.0, [0.0; 2]), "{}: no ramp or cabin", s.id);
+        // The glb's own nodes: an exhaust for the glow discs and the heat glow at the nose.
+        let glb = std::fs::read(format!("assets/models/ships/{}.glb", s.id)).unwrap();
+        let text = String::from_utf8_lossy(&glb);
+        for node in ["\"exhaust.0\"", "\"heat\"", "\"light.0\""] {
+            assert!(text.contains(node), "{} has a {node} node", s.id);
+        }
+    }
+    // `kind` defaults to a cabin ship, and a fighter needs none of the cabin's fields.
+    let parsed = solar::ship::Ships::parse(
+        "[[ship]]\nid = \"a\"\nname = \"A\"\nmass = 1\nthrust = 1\nlift = 1\nrates = [1, 1, 1]\ncruise = 1\nboost_max = 2\nrest = 1\nseat = [0, 0, 0]\nexit = [0, 0, 0]\ncam = [1, 1]\nengine_r = 1\ncabin = [0, 2]\nramp = [0, 0, 0]\nramp_len = 1\nramp_slope = 1\ncollider = []\n\
+         [[ship]]\nid = \"b\"\nname = \"B\"\nkind = \"fighter\"\nmass = 1\nthrust = 1\nlift = 1\nrates = [1, 1, 1]\ncruise = 1\nboost_max = 2\nrest = 1\ncam = [1, 1]\nengine_r = 1\ncollider = [{ center = [0, 0, 0], size = [1, 2, 1] }]\n",
+    )
+    .unwrap();
+    assert_eq!(parsed.ship.iter().map(|s| s.kind).collect::<Vec<_>>(), [ShipKind::Cabin, ShipKind::Fighter]);
+}
+
+#[test]
+fn a_jackal_is_parked_off_the_apron_and_cannot_be_boarded() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    let specs = app.world().resource::<solar::ship::Ships>().clone();
+    let fighters: Vec<(Entity, usize, Transform)> = app.world_mut().query::<(Entity, &Ship, &Transform)>().iter(app.world()).filter(|(_, s, _)| !specs.ship[s.spec].boardable()).map(|(e, s, tf)| (e, s.spec, *tf)).collect();
+    assert_eq!(fighters.len(), 1, "one parked fighter");
+    let (jackal, spec, tf) = fighters[0];
+    assert_eq!(specs.ship[spec].id, "jackal");
+    assert_eq!(*app.world().get::<RigidBody>(jackal).unwrap(), RigidBody::Static, "parked");
+    // Standing on its slab south of the apron, toward the Roost, above the ground.
+    let origin = *app.world().resource::<Origin>();
+    let Surface::Sphere(sphere) = app.world().resource::<Surface>().clone() else { panic!("round world") };
+    let p = origin.body(tf.translation);
+    let pad = app.world().resource::<Solar>().pad;
+    let local = app.world().resource::<Surface>().frame(pad).inverse() * (p - pad);
+    let deck = solar::fighter_deck(&sphere, pad) + specs.ship[spec].rest;
+    assert!((local.y - deck).abs() < 0.3, "rests on its slab at {} (want {deck})", local.y);
+    assert!(p.length() - sphere.sea_radius() - sphere.height(p.normalize()) > specs.ship[spec].rest, "above the ground");
+    assert!(local.z > 40.0, "south of the apron, toward the Roost: {local}");
+    // E beside it does nothing: a fighter has no cabin.
+    let player = app.world_mut().query_filtered::<Entity, With<Player>>().single(app.world()).unwrap();
+    set_player(&mut app, tf.translation + tf.rotation * Vec3::new(0.0, 0.0, 4.5), Vec3::ZERO);
+    run(&mut app, 0.5);
+    input(&mut app).interact_pressed = true;
+    run(&mut app, 0.2);
+    assert!(app.world().get::<Driving>(player).is_none(), "not boarded");
+}
+
+#[test]
 fn a_parked_ship_is_static_until_boarded() {
     let mut app = system_app();
     run(&mut app, 2.0);
@@ -2012,6 +2068,141 @@ fn a_parked_ship_is_static_until_boarded() {
     input(&mut app).interact_pressed = true;
     run(&mut app, 3.0);
     assert_eq!(*app.world().get::<RigidBody>(ship).unwrap(), RigidBody::Static, "parked again after landing");
+}
+
+// --------------------------------------------------------------------------- ship combat
+
+use crate::solar::combat::{Faction, Gun, Hull};
+
+#[test]
+fn the_shield_takes_damage_first_and_comes_back_after_five_quiet_seconds() {
+    let t = crate::tuning::ShipCombat::default();
+    let mut hull = Hull::new(100.0, 60.0);
+    for _ in 0..5 {
+        hull.hit(t.gun_damage, &t);
+    }
+    assert_eq!((hull.shield, hull.hp), (0.0, 100.0), "five shots take the shield and leave the hull");
+    hull.hit(t.gun_damage, &t);
+    assert_eq!(hull.hp, 88.0, "the sixth reaches the hull");
+    // A hit bigger than the shield left: the shield holds what it can, the hull takes the rest.
+    let mut part = Hull::new(40.0, 30.0);
+    part.hit(25.0, &t);
+    part.hit(25.0, &t);
+    assert_eq!((part.shield, part.hp), (0.0, 20.0));
+    // Nothing comes back for five seconds after a hit, then it does, up to full and no more.
+    for _ in 0..49 {
+        hull.tick(0.1, &t);
+    }
+    assert_eq!(hull.shield, 0.0, "still down 4.9 s after the hit");
+    for _ in 0..11 {
+        hull.tick(0.1, &t);
+    }
+    assert!(hull.shield > 0.0 && hull.shield < 60.0, "coming back at 6 s: {}", hull.shield);
+    hull.hit(t.gun_damage, &t);
+    hull.tick(1.0, &t);
+    assert_eq!(hull.shield, 0.0, "a new hit starts the wait again");
+    let hp = hull.hp;
+    for _ in 0..200 {
+        hull.tick(0.1, &t);
+    }
+    assert_eq!((hull.shield, hull.hp), (60.0, hp), "the shield refills; the hull does not");
+}
+
+#[test]
+fn every_ship_carries_its_shield_hull_and_faction_from_the_spec_table() {
+    let ships = solar::ship::Ships::load();
+    let get = |id: &str| ships.ship.iter().find(|s| s.id == id).unwrap();
+    for (id, shield, hull, faction) in [("kestrel", 60.0, 100.0, Faction::Deserters), ("jackal", 30.0, 40.0, Faction::Raiders), ("sentry", 50.0, 70.0, Faction::Pmc), ("censer", 50.0, 90.0, Faction::Regime), ("welder", 60.0, 200.0, Faction::Scrappers)] {
+        let s = get(id);
+        assert_eq!((s.shield, s.hull, s.faction), (shield, hull, faction), "{id}");
+        assert_eq!(s.guns.len(), 2, "{id} has two barrels");
+    }
+    let mut app = system_app();
+    run(&mut app, 0.2);
+    let kestrel = ship_entity(&mut app);
+    let h = *app.world().get::<Hull>(kestrel).unwrap();
+    assert_eq!((h.hp, h.shield), (100.0, 60.0));
+    assert!(app.world().get::<Gun>(kestrel).is_some(), "the Kestrel has nose guns");
+}
+
+/// The parked fighter, and the Kestrel boarded and hanging 600 m over the pad with that fighter
+/// `range` metres ahead of its nose.
+fn gunnery_range(range: f32) -> (App, Entity) {
+    let mut app = system_app();
+    run(&mut app, 0.5);
+    board(&mut app);
+    let (p, _) = ship_state(&mut app);
+    put_ship(&mut app, p + p.normalize() * 600.0, Vec3::ZERO);
+    run(&mut app, 0.2);
+    let specs = app.world().resource::<solar::ship::Ships>().clone();
+    let jackal = app.world_mut().query::<(Entity, &Ship)>().iter(app.world()).find(|(_, s)| !specs.ship[s.spec].boardable()).map(|(e, _)| e).unwrap();
+    let ship = ship_entity(&mut app);
+    let tf = *app.world().get::<Transform>(ship).unwrap();
+    let at = tf.translation + tf.rotation * Vec3::NEG_Z * range;
+    app.world_mut().entity_mut(jackal).insert((Transform::from_translation(at).with_rotation(tf.rotation), Position(at), Rotation(tf.rotation), RigidBody::Static));
+    (app, jackal)
+}
+
+/// Holds the left mouse button for `seconds`: the input is read afresh every frame, as in game.
+fn hold_fire(app: &mut App, seconds: f32) {
+    for _ in 0..(seconds / DT).round() as usize {
+        input(app).fire_held = true;
+        app.update();
+    }
+}
+
+#[test]
+fn the_fire_button_pulls_the_ships_trigger_not_the_hand_gun() {
+    let mut app = system_app();
+    run(&mut app, 0.5);
+    board(&mut app);
+    let shots = app.world().resource::<Arsenal>().shots;
+    hold_fire(&mut app, 0.3);
+    let ship = ship_entity(&mut app);
+    assert!(app.world().get::<ShipControls>(ship).unwrap().fire, "the ship's trigger is held");
+    assert_eq!(app.world().resource::<Arsenal>().shots, shots, "the gun in the pilot's hands stays quiet");
+    assert!(app.world().get::<Gun>(ship).unwrap().heat > 0.0, "the nose guns fired");
+    run(&mut app, 0.1);
+    assert!(!app.world().get::<ShipControls>(ship).unwrap().fire, "let go");
+}
+
+#[test]
+fn nose_guns_wear_down_a_ship_in_range_and_destroy_it() {
+    let (mut app, jackal) = gunnery_range(300.0);
+    hold_fire(&mut app, 1.0);
+    let h = *app.world().get::<Hull>(jackal).unwrap();
+    assert!(h.shield < 30.0, "hit: shield {} hull {}", h.shield, h.hp);
+    hold_fire(&mut app, 3.0);
+    run(&mut app, 0.2);
+    assert!(app.world().get_entity(jackal).is_err(), "the Jackal is destroyed");
+    // Its last shots fly on and are gone past their range.
+    run(&mut app, 2.0);
+    assert_eq!(app.world_mut().query::<&solar::combat::Projectile>().iter(app.world()).count(), 0);
+}
+
+#[test]
+fn nose_guns_spare_their_own_side_and_fall_short_past_their_range() {
+    let (mut app, jackal) = gunnery_range(300.0);
+    app.world_mut().entity_mut(jackal).insert(Faction::Deserters);
+    hold_fire(&mut app, 1.0);
+    let h = *app.world().get::<Hull>(jackal).unwrap();
+    assert_eq!((h.shield, h.hp), (30.0, 40.0), "no friendly fire");
+    let (mut app, jackal) = gunnery_range(2300.0);
+    hold_fire(&mut app, 1.0);
+    run(&mut app, 2.0);
+    let h = *app.world().get::<Hull>(jackal).unwrap();
+    assert_eq!((h.shield, h.hp), (30.0, 40.0), "2.3 km is out of range");
+}
+
+#[test]
+fn a_ship_whose_hull_is_gone_is_destroyed() {
+    let mut app = system_app();
+    run(&mut app, 0.5);
+    let specs = app.world().resource::<solar::ship::Ships>().clone();
+    let jackal = app.world_mut().query::<(Entity, &Ship)>().iter(app.world()).find(|(_, s)| !specs.ship[s.spec].boardable()).map(|(e, _)| e).unwrap();
+    app.world_mut().get_mut::<Hull>(jackal).unwrap().hp = 0.0;
+    run(&mut app, 0.1);
+    assert!(app.world().get_entity(jackal).is_err(), "gone");
 }
 
 // --------------------------------------------------------------------------- the faction bases
@@ -2371,3 +2562,4 @@ fn the_shrine_sells_a_blessing_that_lengthens_the_health_bar_for_a_while() {
     let health = app.world().resource::<PlayerHealth>().clone();
     assert!((health.max - plain).abs() < 0.01 && health.hp <= health.max, "back to normal: {} / {}", health.hp, health.max);
 }
+

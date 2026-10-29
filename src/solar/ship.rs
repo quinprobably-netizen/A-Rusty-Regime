@@ -1,6 +1,7 @@
 //! The ships: six-degree-of-freedom craft on Avian dynamic bodies, boarded like vehicles. Four of
 //! them stand on Haven's apron, one per faction, each with its own handling from
-//! `assets/ships.toml` and its own hull from `models/ships/<id>.glb` (built by `tools/ships`).
+//! `assets/ships.toml` and its own hull from `models/ships/<id>.glb` (built by `tools/ships`);
+//! a fighter, which has no cabin and cannot be boarded, is parked off it.
 //! The mouse pitches and yaws, A and D roll, W and S thrust along the nose, Space and Ctrl
 //! lift and sink, Shift boosts from a tank, X stops, held Alt looks round. On a pad the left
 //! stick is a flight joystick (pull back for nose up, sideways to roll), the bumpers yaw, the
@@ -15,6 +16,7 @@ use bevy::prelude::*;
 use bevy::world_serialization::{WorldAssetRoot, WorldInstanceReady};
 use serde::Deserialize;
 
+use super::combat::Faction;
 use super::Solar;
 use crate::camera::ChaseCam;
 use crate::controller::{carry, ControllerSet, MoveState, Player, WorldBounds};
@@ -45,6 +47,9 @@ const DRAG: f32 = 4.4e-5;
 const HOT: f32 = 1.5e8;
 /// Where the ships stand on the apron, metres west of the pad's centre, in spec order.
 pub const BERTHS: [f32; 4] = [-1.0, -19.0, -37.0, -55.0];
+/// Where the parked fighter stands, metres east and south of the pad's centre: off the apron on
+/// the way to the Roost, in sight of the spawn.
+pub const FIGHTER_BERTH: [f32; 2] = [0.0, 60.0];
 
 /// One collision box of a ship, in its frame.
 #[derive(Deserialize, Clone, Debug)]
@@ -70,11 +75,23 @@ impl ShipBox {
     }
 }
 
+/// What a hull is: a ship with a cabin you walk up the ramp into and fly, or a small solid
+/// fighter with no inside, which the player cannot board.
+#[derive(Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ShipKind {
+    #[default]
+    Cabin,
+    Fighter,
+}
+
 /// One ship's numbers from `assets/ships.toml`.
 #[derive(Deserialize, Clone, Debug)]
 pub struct ShipSpec {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub kind: ShipKind,
     pub mass: f32,
     /// Main engine, along the nose, m/s².
     pub thrust: f32,
@@ -93,8 +110,10 @@ pub struct ShipSpec {
     pub drag: f32,
     /// From the ship's centre down to the bottom of its landing gear.
     pub rest: f32,
-    /// Where the pilot sits, and where they step out, in the ship's frame.
+    /// Where the pilot sits, and where they step out, in the ship's frame (cabin ships only).
+    #[serde(default)]
     pub seat: [f32; 3],
+    #[serde(default)]
     pub exit: [f32; 3],
     /// Chase camera distance and height.
     pub cam: [f32; 2],
@@ -102,14 +121,29 @@ pub struct ShipSpec {
     pub engine_r: f32,
     /// Cabin floor and ceiling heights.
     #[cfg_attr(not(test), allow(dead_code))]
+    #[serde(default)]
     pub cabin: [f32; 2],
     /// The boarding ramp: its hinge, its length and how steeply it slopes when open, degrees.
     #[cfg_attr(not(test), allow(dead_code))]
+    #[serde(default)]
     pub ramp: [f32; 3],
     #[cfg_attr(not(test), allow(dead_code))]
+    #[serde(default)]
     pub ramp_len: f32,
+    #[serde(default)]
     pub ramp_slope: f32,
     pub collider: Vec<ShipBox>,
+    /// Whose ship it is (`combat`): its shots never hurt its own side.
+    #[serde(default)]
+    pub faction: Faction,
+    /// Shield and hull points (`combat`): the shield takes damage first and comes back.
+    #[serde(default = "default_shield")]
+    pub shield: f32,
+    #[serde(default = "default_hull")]
+    pub hull: f32,
+    /// The nose guns' muzzles, in the ship's frame; a ship with none has no guns.
+    #[serde(default)]
+    pub guns: Vec<[f32; 3]>,
 }
 
 /// Every ship in the game, in the order they stand on the apron. The first is the player's.
@@ -135,6 +169,12 @@ fn default_response() -> f32 {
 fn default_drag() -> f32 {
     1.0
 }
+fn default_shield() -> f32 {
+    60.0
+}
+fn default_hull() -> f32 {
+    100.0
+}
 
 /// How much flight assist holds the ship at `clearance` metres over the ground: fully below
 /// `ASSIST_HEIGHT - ASSIST_FADE`, not at all above `ASSIST_HEIGHT + ASSIST_FADE`.
@@ -143,6 +183,11 @@ pub fn assist(clearance: f32) -> f32 {
 }
 
 impl ShipSpec {
+    /// Whether the player can walk into this ship and fly it.
+    pub fn boardable(&self) -> bool {
+        self.kind == ShipKind::Cabin
+    }
+
     /// How fast flight assist lets the ship go at `clearance` metres over the ground: with the
     /// boost on, one and a half times the clearance a second, from twice cruising speed up to the
     /// deep-space limit; off it, cruising speed near the ground, then growing smoothly with height
@@ -202,8 +247,9 @@ pub struct Ship {
     before: (Vec3, Quat),
 }
 
-/// The stick, filled from the keyboard and mouse each frame while flying. Tests write it.
-#[derive(Resource, Default, Debug, Clone, Copy)]
+/// Each ship's own stick. The player's input fills the one of the ship they fly each frame; an
+/// AI can fill another's, and `fly` reads every ship's from its own.
+#[derive(Component, Default, Debug, Clone, Copy)]
 pub struct ShipControls {
     /// Forward thrust, -1 to 1.
     pub thrust: f32,
@@ -220,6 +266,8 @@ pub struct ShipControls {
     pub stick: Vec2,
     /// How far the pilot is looking round, yaw and pitch, radians (held Alt / B).
     pub look: Vec2,
+    /// The nose guns' trigger (`combat`).
+    pub fire: bool,
     /// The mouse as a stick, smoothed over a few ticks so uneven frames do not jolt the ship.
     mouse_stick: Vec2,
 }
@@ -264,10 +312,10 @@ struct ShipMeshes {
 }
 
 pub fn build(app: &mut App) {
-    app.init_resource::<ShipControls>()
-        .init_resource::<crate::hud::FlightHud>()
+    app.init_resource::<crate::hud::FlightHud>()
         .insert_resource(Ships::load())
         .add_systems(Startup, spawn_fleet.after(crate::planet::seed_ground))
+        .add_systems(PreUpdate, trigger.after(crate::input::gather))
         .add_systems(Update, (controls, glow, stream, swing))
         .add_systems(PostUpdate, ease.before(TransformSystems::Propagate))
         .add_systems(FixedUpdate, (board.before(VehicleSet), fly.after(board).before(ControllerSet)))
@@ -289,6 +337,32 @@ fn spawn_fleet(world: &mut World) {
         let at = origin.world(pad + frame * Vec3::new(x, deck + rest + 0.05, -2.0));
         spawn(world, spec, Transform::from_translation(at).with_rotation(frame));
     }
+    // One fighter parked on its own slab off the apron, nose west, to look at (and, with
+    // `combat`, to shoot at). `RUST_REGIME_FIGHTER=<id>` picks another; see `place_fighter`.
+    let wanted = std::env::var("RUST_REGIME_FIGHTER").ok().and_then(|v| v.split(',').next().map(|id| id.trim().to_string()));
+    let ships = world.resource::<Ships>();
+    let Some(spec) = ships.ship.iter().position(|s| s.kind == ShipKind::Fighter && s.id == wanted.as_deref().unwrap_or("jackal")) else { return };
+    let deck = super::fighter_deck(sphere, pad) + ships.ship[spec].rest + 0.05;
+    let at = origin.world(pad + frame * Vec3::new(FIGHTER_BERTH[0], deck, FIGHTER_BERTH[1]));
+    spawn(world, spec, Transform::from_translation(at).with_rotation(frame * Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)));
+}
+
+/// Dev aid: with `RUST_REGIME_FIGHTER=<id>[,<metres>]` the parked fighter waits in front of the
+/// player instead, broadside on and 80 m off unless told otherwise: ahead of the nose when flying
+/// (`RUST_REGIME_AT`), along the view on foot. It hangs where it is put, parked like any ship.
+pub fn place_fighter(world: &mut World) {
+    let dist: f32 = std::env::var("RUST_REGIME_FIGHTER").ok().and_then(|v| v.split(',').nth(1).and_then(|d| d.trim().parse().ok())).unwrap_or(80.0);
+    let Ok((player, ptf)) = world.query_filtered::<(Entity, &Transform), With<Player>>().single(world).map(|(e, t)| (e, *t)) else { return };
+    let flown = world.get::<Driving>(player).and_then(|d| world.get::<Transform>(d.0)).copied();
+    let (from, facing) = match flown {
+        Some(tf) => (tf.translation, tf.rotation),
+        None => (ptf.translation, world.resource::<ViewAngles>().rotation()),
+    };
+    let specs = world.resource::<Ships>().clone();
+    let Some(fighter) = world.query::<(Entity, &Ship)>().iter(world).find(|(_, s)| specs.ship[s.spec].kind == ShipKind::Fighter).map(|(e, _)| e) else { return };
+    let at = from + facing * Vec3::NEG_Z * dist;
+    let rotation = (facing * Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)).normalize();
+    world.entity_mut(fighter).insert((Transform::from_translation(at).with_rotation(rotation), Position(at), Rotation(rotation), LinearVelocity::ZERO));
 }
 
 /// Ship number `spec` at `transform`: its body and collider now, its hull streamed in from the
@@ -299,6 +373,7 @@ pub fn spawn(world: &mut World, spec: usize, transform: Transform) -> Entity {
         .spawn((
             Name::new(s.name.clone()),
             Ship { spec, ..default() },
+            ShipControls::default(),
             ChaseCam { dist: s.cam[0], height: s.cam[1], eye: Vec3::from(s.seat) + Vec3::Y * 0.72, ..default() },
             RigidBody::Dynamic,
             s.collider(),
@@ -373,7 +448,8 @@ fn dress(
     commands.entity(ready.entity).remove::<Pending>();
     let x90 = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
     // The nose glow scales with the hull: the Kestrel's 2.4 m fuselage had a 2 × 1.6 × 4 m glow.
-    let hull_scale = spec.collider.first().map_or(1.0, |b| b.size[0] / 2.4);
+    // A fighter's one box is round its wings too, so its length against the Kestrel's 9.5 m cabin.
+    let hull_scale = spec.collider.first().map_or(1.0, |b| if spec.boardable() { b.size[0] / 2.4 } else { b.size[2] / 9.5 });
     for e in children.iter_descendants(ready.entity) {
         let Ok(name) = names.get(e) else { continue };
         if name.starts_with("exhaust.") {
@@ -404,20 +480,22 @@ fn swing(time: Res<Time>, ships: Query<&Ship>, mut ramps: Query<(&Ramp, &mut Tra
     }
 }
 
-/// Fills the stick from the keyboard, the mouse and the pad while the player flies, and keeps
-/// the view angles at rest so the mouse (and right stick) is read afresh each frame.
+/// Fills the stick of the ship the player flies from the keyboard, the mouse and the pad, and
+/// keeps the view angles at rest so the mouse (and right stick) is read afresh each frame.
 fn controls(
     time: Res<Time>,
     input: Res<PlayerInput>,
-    mut controls: ResMut<ShipControls>,
     mut view: ResMut<ViewAngles>,
-    flying: Query<(), (With<Player>, With<Driving>)>,
-    mut ships: Query<(&Ship, &mut ChaseCam)>,
+    flying: Query<Entity, (With<Player>, With<Driving>)>,
+    mut ships: Query<(&Ship, &mut ShipControls, &mut ChaseCam)>,
 ) {
-    if flying.is_empty() || ships.iter().all(|(s, _)| s.pilot.is_none()) {
-        controls.look = Vec2::ZERO;
+    let player = flying.single().ok();
+    let Some((_, mut controls, mut chase)) = ships.iter_mut().find(|(s, ..)| s.pilot.is_some() && s.pilot == player) else {
+        for (_, mut controls, _) in &mut ships {
+            controls.look = Vec2::ZERO;
+        }
         return;
-    }
+    };
     let turned = Vec2::new(view.yaw, view.pitch);
     view.yaw = 0.0;
     view.pitch = 0.0;
@@ -428,11 +506,7 @@ fn controls(
         controls.mouse += turned;
         controls.look *= (-8.0 * time.delta_secs()).exp();
     }
-    for (ship, mut chase) in &mut ships {
-        if ship.pilot.is_some() {
-            chase.look = controls.look;
-        }
-    }
+    chase.look = controls.look;
     // The stick comes from the bindings (see `controls`): keys, triggers, the left stick and the
     // bumpers. The left stick gets a gentle curve so small lift corrections are easy.
     controls.thrust = input.thrust;
@@ -443,6 +517,16 @@ fn controls(
     controls.boost = input.boost;
     controls.stop = input.stop;
     controls.stick = input.ship_stick;
+}
+
+/// Flying, the fire button pulls the ship's trigger instead of the gun in the pilot's hands: it is
+/// taken off the input as soon as it is read, before any fixed tick could fire the hand gun with it.
+/// Dev aid: `RUST_REGIME_SCREENSHOT_FIRE` holds the trigger, for screenshots of the guns.
+fn trigger(mut input: ResMut<PlayerInput>, flying: Query<Entity, (With<Player>, With<Driving>)>, mut ships: Query<(&Ship, &mut ShipControls)>) {
+    let Ok(player) = flying.single() else { return };
+    let Some((_, mut controls)) = ships.iter_mut().find(|(s, _)| s.pilot == Some(player)) else { return };
+    controls.fire = std::mem::take(&mut input.fire_held) || std::env::var_os("RUST_REGIME_SCREENSHOT_FIRE").is_some();
+    input.fire_pressed = false;
 }
 
 /// E boards the nearest ship in reach, or leaves the one being flown: out at its exit point,
@@ -458,14 +542,14 @@ pub fn board(
     surface: Res<Surface>,
     origin: Res<Origin>,
     mut players: Query<(Entity, &mut Player, &mut Transform, Option<&Driving>)>,
-    mut ships: Query<(Entity, &mut Ship, &Transform, &LinearVelocity), Without<Player>>,
+    mut ships: Query<(Entity, &mut Ship, &mut ShipControls, &Transform, &LinearVelocity), Without<Player>>,
 ) {
     if !input.interact_pressed {
         return;
     }
     for (pe, mut p, mut ptf, driving) in &mut players {
         if let Some(d) = driving {
-            let Ok((se, mut ship, stf, vel)) = ships.get_mut(d.0) else { continue };
+            let Ok((se, mut ship, mut controls, stf, vel)) = ships.get_mut(d.0) else { continue };
             input.interact_pressed = false;
             // No stepping out of a ship at flying speed: a held X or E must not drop the pilot.
             // Speed is measured in the frame of the world below (it turns with the ground), so a
@@ -476,6 +560,8 @@ pub fn board(
             }
             ship.pilot = None;
             ship.landed_at = time.elapsed_secs_f64();
+            // The pilot lets go of the stick, trigger and all.
+            *controls = ShipControls::default();
             ptf.translation = stf.translation + stf.rotation * Vec3::from(specs.ship[ship.spec].exit);
             let up = surface.up(origin.body(ptf.translation));
             p.frame = carry(stf.rotation, up);
@@ -487,10 +573,11 @@ pub fn board(
             commands.entity(pe).remove::<(Driving, ColliderDisabled)>();
             commands.entity(se).remove::<KeepAwake>();
         } else {
+            // Fighters have no cabin to board.
             let near = ships
                 .iter()
-                .filter(|(_, s, _, _)| s.pilot.is_none())
-                .map(|(e, _, tf, _)| (e, tf.translation.distance(ptf.translation)))
+                .filter(|(_, s, _, _, _)| s.pilot.is_none() && specs.ship[s.spec].boardable())
+                .map(|(e, _, _, tf, _)| (e, tf.translation.distance(ptf.translation)))
                 .filter(|(_, d)| *d < BOARD_RADIUS)
                 .min_by(|a, b| a.1.total_cmp(&b.1));
             if let Some((se, _)) = near {
@@ -509,7 +596,7 @@ const CAP_BRAKE: f32 = 600.0;
 /// Past this deceleration needed to stop short of the ground, assist pulls the ship out of a dive.
 const PULL_OUT: f32 = 50.0;
 
-/// One tick of flight for the ship being flown, and the pilot carried in its seat.
+/// One tick of flight for each ship being flown, on its own stick, and the pilot carried in its seat.
 #[allow(clippy::too_many_arguments)]
 fn fly(
     time: Res<Time>,
@@ -520,27 +607,26 @@ fn fly(
     specs: Res<Ships>,
     save: Option<Res<crate::save::Save>>,
     spatial: Option<SpatialQuery>,
-    mut controls: ResMut<ShipControls>,
     mut input: ResMut<PlayerInput>,
     mut hud: ResMut<crate::hud::FlightHud>,
-    mut ships: Query<(Entity, &mut Ship, &mut ChaseCam, Forces)>,
+    mut ships: Query<(Entity, &mut Ship, &mut ShipControls, &mut ChaseCam, Forces)>,
     mut players: Query<(&mut Player, &mut Transform), With<Driving>>,
 ) {
     let dt = time.delta_secs();
     if dt <= 0.0 {
         return;
     }
-    // The mouse as a stick: how fast it moved against how fast makes full stick, eased over a few
-    // ticks, so the same flick turns the ship the same at any frame or tick rate.
-    let mouse = std::mem::take(&mut controls.mouse);
-    let raw = (Vec2::new(mouse.y, mouse.x) / (MOUSE_RATE * dt) * tuning.flight_mouse).clamp(Vec2::NEG_ONE, Vec2::ONE);
-    controls.mouse_stick = controls.mouse_stick.lerp(raw, 1.0 - (-30.0 * dt).exp());
     hud.too_fast = (hud.too_fast - dt).max(0.0);
     hud.active = false;
     // The Yard's tuning rig: more thrust and speed, a little sharper turning.
     let (power, agility) = super::station::tune(save.map_or(0, |s| s.ship_level));
     let mut flown = false;
-    for (entity, mut ship, mut chase, mut forces) in &mut ships {
+    for (entity, mut ship, mut controls, mut chase, mut forces) in &mut ships {
+        // The mouse as a stick: how fast it moved against how fast makes full stick, eased over a
+        // few ticks, so the same flick turns the ship the same at any frame or tick rate.
+        let mouse = std::mem::take(&mut controls.mouse);
+        let raw = (Vec2::new(mouse.y, mouse.x) / (MOUSE_RATE * dt) * tuning.flight_mouse).clamp(Vec2::NEG_ONE, Vec2::ONE);
+        controls.mouse_stick = controls.mouse_stick.lerp(raw, 1.0 - (-30.0 * dt).exp());
         let Some(pilot) = ship.pilot else {
             ship.burn = 0.0;
             ship.heat *= (-0.5 * dt).exp();
@@ -720,7 +806,7 @@ fn seat(specs: Res<Ships>, ships: Query<(&Ship, &Position, &Rotation)>, mut play
 /// A ship with no pilot that has come to rest turns static, so walking about inside it cannot
 /// nudge it and it never jitters on its gear; boarding wakes it. The ship the player last flew,
 /// once parked, is where they come back after a fall or a reset: on its cabin floor. Before any
-/// flight that is the first ship.
+/// flight that is the first ship. A fighter has no cabin floor, so it is never the respawn.
 fn park(mut commands: Commands, specs: Res<Ships>, ships: Query<(Entity, &Ship, &Transform, &LinearVelocity, &RigidBody)>, origin: Res<Origin>, mut bounds: ResMut<WorldBounds>) {
     for (e, ship, _, v, body) in &ships {
         if ship.pilot.is_none() && *body == RigidBody::Dynamic && v.0.length() < 0.5 {
@@ -729,7 +815,7 @@ fn park(mut commands: Commands, specs: Res<Ships>, ships: Query<(Entity, &Ship, 
     }
     let newest = ships
         .iter()
-        .filter(|(_, s, _, v, _)| s.pilot.is_none() && v.0.length() < 0.5)
+        .filter(|(_, s, _, v, _)| s.pilot.is_none() && v.0.length() < 0.5 && specs.ship[s.spec].boardable())
         .max_by(|a, b| a.1.landed_at.total_cmp(&b.1.landed_at).then(b.1.spec.cmp(&a.1.spec)));
     if let Some((_, ship, tf, _, _)) = newest {
         let spawn = origin.body(tf.translation + tf.rotation * Vec3::from(specs.ship[ship.spec].exit));
