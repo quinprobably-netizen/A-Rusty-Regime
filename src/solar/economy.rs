@@ -136,7 +136,12 @@ fn at_the_door(
         said.push(format!("Banked ${}", bank(&mut save)));
     }
     if arrived {
-        let landed = ships.iter_mut().filter(|(s, tf, _)| s.pilot.is_none() && tf.translation.distance(door) < e.repair_reach).max_by(|a, b| a.0.landed_at.total_cmp(&b.0.landed_at));
+        // The last landed; before any landing, your own Kestrel rather than whichever ship the
+        // query meets last.
+        let landed = ships
+            .iter_mut()
+            .filter(|(s, tf, _)| s.pilot.is_none() && tf.translation.distance(door) < e.repair_reach)
+            .max_by(|a, b| a.0.landed_at.total_cmp(&b.0.landed_at).then((a.0.spec == 0).cmp(&(b.0.spec == 0))));
         if let Some((_, _, mut hull)) = landed
             && let Some((points, cost)) = repair(&mut hull, faction, &mut save, e, t)
         {

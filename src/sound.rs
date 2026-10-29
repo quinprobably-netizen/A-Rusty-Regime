@@ -2,7 +2,9 @@
 //! gunshots with a crack, a thump and a tail; footsteps, landings and hits; looping engines
 //! pitched by rpm on each vehicle; wind that grows with height and speed; and the ship fight's
 //! nose guns, missile launches, wrecks, shield and hull hits, lock tone and missile warning,
-//! played as `solar::cockpit` cues them (it has already counted distance and the air).
+//! played as `solar::cockpit` cues them (it has already counted distance and the air); and the
+//! bases' ambient loops (generators, radios, fires, an organ and a bell, grinders, wind, hum and
+//! air handling) wherever a base's model puts them (`solar::life`).
 //! Drop CC0 samples in `assets/sounds/`
 //! later and `load` picks them over the synthesis.
 
@@ -17,6 +19,7 @@ use crate::controller::{MoveState, Player};
 use crate::health::{PlayerHealth, PlayerHit};
 use crate::hud::FlightHud;
 use crate::solar::cockpit::{Cue, Sfx};
+use crate::solar::life::{Ambient, Emitter};
 use crate::tuning::Tuning;
 use crate::weapon::{Arsenal, Bullet, Explosion, WeaponFired, WeaponKind, WEAPONS};
 
@@ -26,7 +29,7 @@ impl Plugin for SoundPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, load).add_systems(
             Update,
-            (listener, weapons, explosions, hits, steps, ambience, reload_foley, whizz_by, fight, lock_tone).run_if(resource_exists::<Sounds>),
+            (listener, weapons, explosions, hits, steps, ambience, reload_foley, whizz_by, fight, lock_tone, base_sounds).run_if(resource_exists::<Sounds>),
         );
     }
 }
@@ -62,6 +65,8 @@ pub struct Sounds {
     /// Salvage: scrap clinking aboard, and the chime of a module found.
     scrap: Handle<AudioSource>,
     module: Handle<AudioSource>,
+    /// The bases' ambient loops, in `Ambient::ALL` order.
+    ambient: Vec<Handle<AudioSource>>,
 }
 
 const RATE: u32 = 22050;
@@ -399,6 +404,175 @@ fn wind(seed: u64) -> Vec<f32> {
     looped(v, 0.5)
 }
 
+/// A base's ambient loop. The bell is the exception: three strokes and their ring, tolled now
+/// and then rather than looped.
+fn ambient(kind: Ambient) -> Vec<f32> {
+    let secs = |s: f32| (s * RATE as f32) as usize;
+    let time = |i: usize| i as f32 / RATE as f32;
+    match kind {
+        // A diesel at idle: firing pulses on a low drone, and a rattle of noise.
+        Ambient::Generator => {
+            let (mut rng, mut lp) = (Rng(501), LowPass::new(300.0));
+            let v = (0..secs(4.5)).map(|i| {
+                let t = time(i);
+                let fire = 0.6 + 0.4 * (TAU * 12.5 * t).sin().max(0.0);
+                let drone = (TAU * 25.0 * t).sin() * 0.5 + (TAU * 50.0 * t).sin() * 0.3 + (TAU * 75.0 * t).sin() * 0.15;
+                soft((drone + lp.run(rng.next()) * 1.4) * fire * 0.5)
+            }).collect();
+            looped(v, 0.5)
+        }
+        // Static, a squelch, and voices too far off to make out: band-passed noise in syllables.
+        Ambient::Radio => {
+            let (mut rng, mut lp, mut hp) = (Rng(511), LowPass::new(2600.0), LowPass::new(350.0));
+            let v = (0..secs(7.0)).map(|i| {
+                let t = time(i);
+                let n = rng.next();
+                let band = lp.run(n) - hp.run(n);
+                let talk = if (0.6..2.8).contains(&t) || (4.0..5.6).contains(&t) { (TAU * 4.5 * t).sin().abs().powf(0.6) * (0.7 + 0.3 * (TAU * 1.3 * t).sin()) } else { 0.0 };
+                let squelch = if (2.8..2.86).contains(&t) || (5.6..5.66).contains(&t) { 0.6 } else { 0.0 };
+                band * (0.12 + talk * 0.9 + squelch)
+            }).collect();
+            looped(v, 0.4)
+        }
+        // A roar under crackles: fast-decaying clicks at random.
+        Ambient::Fire => {
+            let (mut rng, mut lp, mut pop) = (Rng(521), LowPass::new(180.0), 0.0_f32);
+            let v = (0..secs(4.5)).map(|_| {
+                let n = rng.next();
+                if n > 0.9993 {
+                    pop = 0.9;
+                }
+                pop *= 0.992;
+                soft(lp.run(n) * 2.2 + rng.next() * pop * 0.8) * 0.6
+            }).collect();
+            looped(v, 0.5)
+        }
+        // A low minor chord on a reed organ, breathing slowly.
+        Ambient::Organ => {
+            let notes = [55.0, 65.4, 82.4, 110.0];
+            let v = (0..secs(9.0)).map(|i| {
+                let t = time(i);
+                let swell = 0.8 + 0.2 * (TAU * t / 4.5).sin();
+                let sum: f32 = notes.iter().map(|f| (1..5).map(|h| (TAU * f * h as f32 * t).sin() / h as f32).sum::<f32>()).sum();
+                soft(sum * 0.12 * swell)
+            }).collect();
+            looped(v, 1.0)
+        }
+        // A great bell's partials ringing down, struck three times.
+        Ambient::Bell => {
+            let stroke: Vec<f32> = (0..secs(5.0)).map(|i| {
+                let t = time(i);
+                let partials = [(1.0, 1.0, 3.5), (2.0, 0.6, 2.2), (2.4, 0.45, 1.8), (3.0, 0.35, 1.2), (4.2, 0.25, 0.8), (0.5, 0.4, 4.5)];
+                let ring: f32 = partials.iter().map(|(k, a, tau)| (TAU * 98.0 * k * t).sin() * a * (-t / tau).exp()).sum();
+                ring * 0.3 * (t / 0.003).min(1.0)
+            }).collect();
+            mix(&[(0.0, stroke.clone()), (2.6, stroke.clone()), (5.2, stroke)]).into_iter().map(|x| x.clamp(-1.0, 1.0)).collect()
+        }
+        // An angle grinder on and off: a wavering whine over a hiss, spinning down between cuts.
+        Ambient::Grinder => {
+            let (mut rng, mut lp, mut phase) = (Rng(531), LowPass::new(5000.0), 0.0_f32);
+            let v = (0..secs(6.0)).map(|i| {
+                let t = time(i);
+                let on = if (0.5..3.5).contains(&t) { 1.0 } else if t > 3.5 && t < 4.7 { 1.0 - (t - 3.5) / 1.2 } else { 0.0 };
+                phase += TAU * (900.0 + 1800.0 * on + 60.0 * (TAU * 6.0 * t).sin()) / RATE as f32;
+                let cut = if (0.5..3.5).contains(&t) { lp.run(rng.next()) * (0.6 + 0.4 * (TAU * 2.0 * t).sin().abs()) } else { 0.0 };
+                (phase.sin() * 0.25 * on + cut * 0.5) * 0.8
+            }).collect();
+            looped(v, 0.3)
+        }
+        Ambient::Wind => wind(541),
+        // Mains hum and a fan: the inside of a sealed module.
+        Ambient::Hum => {
+            let (mut rng, mut lp) = (Rng(551), LowPass::new(700.0));
+            let v = (0..secs(3.0)).map(|i| {
+                let t = time(i);
+                let hum = (TAU * 60.0 * t).sin() * 0.3 + (TAU * 120.0 * t).sin() * 0.2 + (TAU * 180.0 * t).sin() * 0.08;
+                (hum + lp.run(rng.next()) * 0.5) * 0.5
+            }).collect();
+            looped(v, 0.4)
+        }
+        // Air handling: a steady rush through a duct.
+        Ambient::Vent => {
+            let (mut rng, mut lp, mut lp2) = (Rng(561), LowPass::new(900.0), LowPass::new(140.0));
+            let v = (0..secs(3.5)).map(|i| {
+                let t = time(i);
+                let x = rng.next();
+                (lp.run(x) * 0.6 + lp2.run(x) * 1.6) * (0.85 + 0.15 * (TAU * t / 1.75).sin())
+            }).collect();
+            looped(v, 0.5)
+        }
+    }
+}
+
+/// How loud a base's sounds are, by kind, before distance.
+fn ambient_gain(kind: Ambient) -> f32 {
+    match kind {
+        Ambient::Bell => 1.6,
+        Ambient::Generator | Ambient::Grinder | Ambient::Fire => 0.9,
+        Ambient::Organ | Ambient::Wind => 0.8,
+        Ambient::Radio | Ambient::Hum | Ambient::Vent => 0.6,
+    }
+}
+
+/// A base's sounds start within this far of the camera and fade with distance from `NEAR`.
+const AMBIENT_REACH: f32 = 70.0;
+const AMBIENT_NEAR: f32 = 5.0;
+/// The bell tolls this often, seconds; it carries further.
+const BELL_EVERY: f32 = 150.0;
+
+pub fn ambient_falloff(d: f32, reach: f32) -> f32 {
+    let k = (d / AMBIENT_NEAR).max(0.0);
+    (1.0 / (1.0 + k * k)) * (1.0 - (d / reach).clamp(0.0, 1.0))
+}
+
+/// Each base's sounds play while the camera is near them, louder the closer it is; the bell
+/// tolls on its own clock.
+#[allow(clippy::type_complexity)]
+fn base_sounds(
+    mut commands: Commands,
+    s: Res<Sounds>,
+    tuning: Res<Tuning>,
+    time: Res<Time>,
+    camera: Query<&GlobalTransform, With<PlayerCamera>>,
+    mut emitters: Query<(Entity, &mut Emitter, &GlobalTransform)>,
+    mut sinks: Query<&mut AudioSink>,
+) {
+    let Some(eye) = camera.iter().next().map(|c| c.translation()) else { return };
+    let a = tuning.sound.ambience;
+    for (e, mut em, at) in &mut emitters {
+        let d = at.translation().distance(eye);
+        let clip = &s.ambient[Ambient::ALL.iter().position(|k| *k == em.kind).unwrap()];
+        if em.kind == Ambient::Bell {
+            em.next -= time.delta_secs();
+            if em.next <= 0.0 {
+                em.next = BELL_EVERY;
+                let v = a * ambient_gain(em.kind) * ambient_falloff(d / 4.0, AMBIENT_REACH * 2.0);
+                if v > 0.005 {
+                    oneshot(&mut commands, clip, v, 1.0);
+                }
+            }
+            continue;
+        }
+        match em.playing {
+            None if d < AMBIENT_REACH => {
+                let child = commands.spawn((AudioPlayer(clip.clone()), PlaybackSettings::LOOP.with_volume(Volume::Linear(0.0)))).id();
+                commands.entity(e).add_child(child);
+                em.playing = Some(child);
+            }
+            Some(child) if d > AMBIENT_REACH * 1.2 => {
+                commands.entity(child).despawn();
+                em.playing = None;
+            }
+            Some(child) => {
+                if let Ok(mut sink) = sinks.get_mut(child) {
+                    sink.set_volume(Volume::Linear(a * ambient_gain(em.kind) * ambient_falloff(d, AMBIENT_REACH)));
+                }
+            }
+            None => {}
+        }
+    }
+}
+
 fn load(mut commands: Commands, tuning: Res<Tuning>, server: Res<AssetServer>, mut sources: ResMut<Assets<AudioSource>>) {
     let start = std::time::Instant::now();
     let mut clip = |name: &str, synth: Vec<f32>| -> Handle<AudioSource> {
@@ -470,6 +644,7 @@ fn load(mut commands: Commands, tuning: Res<Tuning>, server: Res<AssetServer>, m
         warning: clip("missile_warning", chirp()),
         scrap: clip("salvage_scrap", clink(441)),
         module: clip("salvage_module", chime()),
+        ambient: Ambient::ALL.iter().map(|a| clip(&format!("base_{}", a.id()), ambient(*a))).collect(),
     };
     commands.insert_resource(GlobalVolume { volume: Volume::Linear(tuning.sound.master) });
     commands.insert_resource(sounds);
@@ -730,6 +905,18 @@ mod tests {
         let lock = tone(1.0, 1250.0, 0.4, 0.0);
         let next = (TAU * 1250.0 * lock.len() as f32 / RATE as f32).sin() * 0.8 + (TAU * 2500.0 * lock.len() as f32 / RATE as f32).sin() * 0.2;
         assert!((next * 0.4 - lock[0]).abs() < 0.01 && lock.iter().all(|x| x.abs() <= 0.4));
+    }
+
+    #[test]
+    fn base_ambience_is_bounded_and_fades_with_distance() {
+        for kind in Ambient::ALL {
+            let clip = ambient(kind);
+            assert!(clip.len() > RATE as usize && clip.iter().all(|x| x.is_finite() && x.abs() <= 1.0), "{kind:?} stays in range");
+            let rms = (clip.iter().map(|x| x * x).sum::<f32>() / clip.len() as f32).sqrt();
+            assert!(rms > 0.01, "{kind:?} is audible");
+        }
+        assert!(ambient_falloff(0.0, 70.0) > 0.99 && ambient_falloff(70.0, 70.0) == 0.0);
+        assert!(ambient_falloff(5.0, 70.0) > ambient_falloff(20.0, 70.0));
     }
 
     #[test]

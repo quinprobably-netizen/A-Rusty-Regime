@@ -15,9 +15,11 @@ pub mod economy;
 pub mod combat;
 pub mod contacts;
 pub mod enemy;
+pub mod life;
 pub mod missile;
 pub mod loss;
 pub mod orbit;
+pub mod post;
 pub mod salvage;
 pub mod ship;
 pub mod standing;
@@ -140,6 +142,8 @@ impl Plugin for SolarPlugin {
         economy::build(app);
         cockpit::build(app);
         base::build(app);
+        life::build(app);
+        post::build(app);
         standing::build(app);
         salvage::build(app);
         station::build(app);
@@ -230,6 +234,7 @@ fn tick_epoch(time: Res<Time>, mut solar: ResMut<Solar>) {
 /// base, and on Haven the pad, the berths and the course.
 fn spawn_fixtures(world: &mut World) {
     base::spawn_bases(world);
+    post::spawn_posts(world);
     let solar = world.resource::<Solar>();
     if solar.anchor != "home" {
         return;

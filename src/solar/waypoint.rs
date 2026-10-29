@@ -2,12 +2,14 @@
 //! parked ship, over the world and clamped to the screen edge when it is off-screen or behind
 //! you, so you can find them from anywhere in the system. A base on the world you are on is
 //! marked at the building; a base on another world is marked at that world's centre, which is
-//! where it is. Markers hide when you are standing at them and under the menus, with the HUD.
+//! where it is. A post you have found on the world you are on (`post`) gets a smaller one.
+//! Markers hide when you are standing at them and under the menus, with the HUD.
 
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use super::base::{Base, Bases};
+use super::post::{Post, Posts};
 use super::ship::Ship;
 use super::Solar;
 use crate::camera::PlayerCamera;
@@ -24,9 +26,12 @@ const FLIP_AT: f32 = 0.7;
 /// How high over a base the marker floats, metres.
 const HOVER: f32 = 14.0;
 const SIZE: f32 = 14.0;
+/// A post's marker: smaller, and lower over it.
+const POST_SIZE: f32 = 10.0;
+const POST_HOVER: f32 = 9.0;
 
 pub fn build(app: &mut App) {
-    app.init_resource::<crate::comic::ComicTheme>().add_systems(Startup, spawn_markers).add_systems(Update, update_markers);
+    app.init_resource::<crate::comic::ComicTheme>().add_systems(Startup, spawn_markers).add_systems(Update, (post_pins, update_markers).chain());
 }
 
 /// What a marker points at.
@@ -36,7 +41,13 @@ pub enum Target {
     Base(usize),
     /// The player's own ship, spec 0.
     Ship,
+    /// A post you have found, standing on the anchor world.
+    Post(Entity),
 }
+
+/// The node every marker hangs off.
+#[derive(Resource)]
+struct MarkerRoot(Entity);
 
 /// A marker's pieces: the diamond, and the label with its side.
 #[derive(Component)]
@@ -77,27 +88,62 @@ fn spawn_markers(mut commands: Commands, bases: Res<Bases>, theme: Res<crate::co
     let mut pins: Vec<(Target, Color, String)> = bases.base.iter().enumerate().map(|(i, b)| (Target::Base(i), Color::srgb(b.color[0], b.color[1], b.color[2]), b.name.to_uppercase())).collect();
     pins.push((Target::Ship, Color::WHITE, "KESTREL".into()));
     for (target, color, name) in pins {
-        let pin = commands
-            .spawn((target, Node { position_type: PositionType::Absolute, width: Val::Px(0.0), height: Val::Px(0.0), ..default() }, Visibility::Hidden))
-            .with_children(|p| {
-                p.spawn((
-                    Diamond,
-                    Node { position_type: PositionType::Absolute, left: Val::Px(-SIZE / 2.0), top: Val::Px(-SIZE / 2.0), width: Val::Px(SIZE), height: Val::Px(SIZE), border: UiRect::all(Val::Px(3.0)), ..default() },
-                    BackgroundColor(color),
-                    BorderColor::all(theme.ink),
-                    UiTransform::from_rotation(Rot2::degrees(45.0)),
-                ));
-                p.spawn((
-                    Label,
-                    // A black comic tag in the faction's colour.
-                    Node { position_type: PositionType::Absolute, left: Val::Px(SIZE), top: Val::Px(-SIZE), padding: UiRect::axes(Val::Px(6.0), Val::Px(1.0)), ..default() },
-                    crate::comic::body_text(name, 16.0, color, true, &theme),
-                    BackgroundColor(theme.ink),
-                    TextLayout::no_wrap(),
-                ));
-            })
-            .id();
+        let pin = pin(&mut commands, &theme, target, color, name, SIZE, 16.0);
         commands.entity(root).add_child(pin);
+    }
+    commands.insert_resource(MarkerRoot(root));
+}
+
+/// A marker: a diamond `size` pixels across in `color`, and its label.
+fn pin(commands: &mut Commands, theme: &crate::comic::ComicTheme, target: Target, color: Color, name: String, size: f32, text: f32) -> Entity {
+    commands
+        .spawn((target, Node { position_type: PositionType::Absolute, width: Val::Px(0.0), height: Val::Px(0.0), ..default() }, Visibility::Hidden))
+        .with_children(|p| {
+            p.spawn((
+                Diamond,
+                Node { position_type: PositionType::Absolute, left: Val::Px(-size / 2.0), top: Val::Px(-size / 2.0), width: Val::Px(size), height: Val::Px(size), border: UiRect::all(Val::Px(3.0)), ..default() },
+                BackgroundColor(color),
+                BorderColor::all(theme.ink),
+                UiTransform::from_rotation(Rot2::degrees(45.0)),
+            ));
+            p.spawn((
+                Label,
+                // A black comic tag in the faction's colour.
+                Node { position_type: PositionType::Absolute, left: Val::Px(size), top: Val::Px(-size), padding: UiRect::axes(Val::Px(6.0), Val::Px(1.0)), ..default() },
+                crate::comic::body_text(name, text, color, true, theme),
+                BackgroundColor(theme.ink),
+                TextLayout::no_wrap(),
+            ));
+        })
+        .id()
+}
+
+/// A marker for each found post standing on the anchor world; a post's marker goes with it.
+fn post_pins(
+    mut commands: Commands,
+    root: Option<Res<MarkerRoot>>,
+    theme: Res<crate::comic::ComicTheme>,
+    posts: Res<Posts>,
+    save: Option<Res<crate::save::Save>>,
+    placed: Query<(Entity, &Post)>,
+    pins: Query<(Entity, &Target)>,
+) {
+    let Some(root) = root else { return };
+    let pinned: Vec<Entity> = pins.iter().filter_map(|(_, t)| if let Target::Post(e) = t { Some(*e) } else { None }).collect();
+    for (pin, target) in &pins {
+        if let Target::Post(e) = target
+            && !placed.contains(*e)
+        {
+            commands.entity(pin).despawn();
+        }
+    }
+    let found = |key: &str| save.as_ref().is_some_and(|s| s.posts_found.iter().any(|k| k == key));
+    for (e, post) in &placed {
+        if !pinned.contains(&e) && found(&post.key) {
+            let spec = &posts.post[post.spec];
+            let p = pin(&mut commands, &theme, Target::Post(e), Color::srgb(spec.color[0], spec.color[1], spec.color[2]), spec.name.to_uppercase(), POST_SIZE, 13.0);
+            commands.entity(root.0).add_child(p);
+        }
     }
 }
 
@@ -113,6 +159,7 @@ fn update_markers(
     window: Query<&Window, With<PrimaryWindow>>,
     placed: Query<(&Transform, &Base)>,
     ships: Query<(&Transform, &Ship)>,
+    posts: (Res<Posts>, Query<(&Transform, &Post)>),
     mut pins: Query<(&Target, &mut Node, &mut Visibility, &Children), (Without<Diamond>, Without<Label>)>,
     mut labels: Query<(&mut Node, &mut Text), With<Label>>,
 ) {
@@ -143,6 +190,10 @@ fn update_markers(
                 };
                 (tf.translation + Vec3::Y * 6.0, String::new(), tf.translation.distance(cam.translation))
             }
+            Target::Post(e) => {
+                let Ok((tf, _)) = posts.1.get(*e) else { continue };
+                (tf.translation + tf.rotation * Vec3::Y * POST_HOVER, String::new(), tf.translation.distance(cam.translation))
+            }
         };
         let (point, _) = project(inverse * (at - cam.translation), tan_half, size, MARGIN);
         let shown = distance > ARRIVED && !(flying && matches!(target, Target::Ship));
@@ -154,6 +205,7 @@ fn update_markers(
             let name = match target {
                 Target::Base(i) => bases.base[*i].name.to_uppercase(),
                 Target::Ship => "KESTREL".to_string(),
+                Target::Post(e) => posts.1.get(*e).map_or(String::new(), |(_, p)| posts.0.post[p.spec].name.to_uppercase()),
             };
             // The base a parcel is bound for says so.
             let parcel = match (target, save.as_ref().and_then(|s| s.contract.as_ref())) {

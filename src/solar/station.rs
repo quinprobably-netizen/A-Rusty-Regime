@@ -8,7 +8,8 @@
 //!   capacitor and a missile rack (`salvage`);
 //! - Site Vantage's courier desk hands out contracts: carry the parcel to another base's door and
 //!   it pays out;
-//! - the Reliquary's shrine sells a blessing: more health for a while.
+//! - the Reliquary's shrine sells a blessing: more health for a while;
+//! - every post's supply cache (`post`) patches you up and refills your ammunition, free.
 //!
 //! Your standing with a base's faction (`standing`) sets its prices, in money or scrap: 15% off to a friend, 15% on
 //! below -40, and at -60 or below it will not serve you at all, but for the courier desk, which
@@ -53,6 +54,8 @@ pub enum StationKind {
     Parts,
     Contracts,
     Shrine,
+    /// A post's supply cache: the quartermaster's resupply without the counter.
+    Cache,
 }
 
 /// One station's place in the base frame, from `assets/bases.toml`.
@@ -66,7 +69,10 @@ pub struct StationSpec {
 /// A station standing in a base: a child of the base entity, so it goes with it.
 #[derive(Component)]
 pub struct Station {
+    /// The base it stands in (an index into `Bases`), or `usize::MAX` at a post.
     pub base: usize,
+    /// Whose it is: their standing sets its prices and whether it serves you.
+    pub faction: Faction,
     pub kind: StationKind,
     pub label: String,
 }
@@ -130,7 +136,7 @@ pub fn build(app: &mut App) {
 }
 
 /// The faction whose base `base` (an index into `Bases`) is.
-fn faction_of(bases: &Bases, base: usize) -> Faction {
+pub fn faction_of(bases: &Bases, base: usize) -> Faction {
     bases.base.get(base).and_then(|b| Faction::from_id(&b.faction)).unwrap_or_default()
 }
 
@@ -165,7 +171,7 @@ fn use_station(
     let Some(station) = nearest(tf.translation, &stations) else { return };
     input.interact_pressed = false;
     let t = &tuning.ship_combat;
-    let faction = faction_of(&bases, station.base);
+    let faction = station.faction;
     if standing::hunted(&save, faction, t) && station.kind != StationKind::Contracts {
         prompt.say(standing::refusal(faction));
         return;
@@ -217,6 +223,13 @@ fn use_station(
                 save.contract = Some(c);
                 file.write(&save);
             }
+        }
+        StationKind::Cache => {
+            let topped = health.hp >= health.max && health.bleeding <= 0.0 && arsenal.spent.iter().all(|s| *s == 0);
+            health.heal();
+            arsenal.spent = Default::default();
+            arsenal.reload = 0.0;
+            prompt.say(if topped { "Nothing needed: you are topped off" } else { "Patched up and rearmed from the cache" });
         }
         StationKind::Shrine => {
             let tithe = standing::price(tuning.economy.tithe, faction, &save, t);
@@ -293,12 +306,13 @@ fn nearby(
         None => String::new(),
         Some(s) => {
             let t = &tuning.ship_combat;
-            let faction = faction_of(&bases, s.base);
+            let faction = s.faction;
             let note = standing::price_note(faction, &save, t);
             let what = match s.kind {
                 kind if kind != StationKind::Contracts && standing::hunted(&save, faction, t) => format!("the {} will not serve you (Hostile)", faction.name()),
                 StationKind::Resupply => "resupply free, buy guns and attachments".to_string(),
                 StationKind::Locker => "change clothes".to_string(),
+                StationKind::Cache => "patch up and rearm, free".to_string(),
                 StationKind::Workshop => match tuning.economy.tune.get(save.ship_level as usize) {
                     Some(cost) => format!("tune the Kestrel to Mk{}, ${}{note}", save.ship_level + 1, standing::price(*cost, faction, &save, t)),
                     None => "the Kestrel is fully tuned".to_string(),
