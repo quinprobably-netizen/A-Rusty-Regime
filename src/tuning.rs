@@ -531,6 +531,34 @@ pub struct ShipCombat {
     /// seconds ahead along their sink rate.
     pub ai_floor: f32,
     pub ai_lookahead: f32,
+    /// Homing missiles (`solar::missile`): `missiles` carried, one more every `missile_reload`
+    /// seconds. A ship of another side held within `lock_cone` degrees of the nose and inside
+    /// `lock_range` (m) for `lock_time` seconds is locked.
+    pub missiles: u32,
+    pub missile_reload: f32,
+    pub lock_cone: f32,
+    pub lock_time: f32,
+    pub lock_range: f32,
+    /// A missile leaves at the launcher's speed plus `missile_kick` and gains `missile_accel`
+    /// (m/s²) until it is `missile_speed` faster than the launcher was. It steers by proportional
+    /// navigation with gain `missile_nav`, answering it `missile_lag` seconds behind and turning
+    /// at most `missile_turn` rad/s, and loses its target once that is more than
+    /// `missile_seeker` degrees off its nose.
+    pub missile_speed: f32,
+    pub missile_kick: f32,
+    pub missile_accel: f32,
+    pub missile_turn: f32,
+    pub missile_nav: f32,
+    pub missile_lag: f32,
+    pub missile_seeker: f32,
+    /// Seconds before it bursts on its own; it bursts on contact or within `missile_fuse` (m) of
+    /// its target, for `missile_damage`, shield first.
+    pub missile_life: f32,
+    pub missile_fuse: f32,
+    pub missile_damage: f32,
+    /// An enemy pilot that flies with missiles (`ai = { missiles = true }`) waits this long
+    /// between launches.
+    pub ai_missile_gap: f32,
 }
 
 impl Default for ShipCombat {
@@ -566,6 +594,22 @@ impl Default for ShipCombat {
             patrol_respawn: 600.0,
             ai_floor: 150.0,
             ai_lookahead: 4.0,
+            missiles: 4,
+            missile_reload: 10.0,
+            lock_cone: 6.0,
+            lock_time: 1.2,
+            lock_range: 3000.0,
+            missile_speed: 600.0,
+            missile_kick: 40.0,
+            missile_accel: 400.0,
+            missile_turn: 1.4,
+            missile_nav: 4.0,
+            missile_lag: 0.4,
+            missile_seeker: 60.0,
+            missile_life: 8.0,
+            missile_fuse: 8.0,
+            missile_damage: 80.0,
+            ai_missile_gap: 8.0,
         }
     }
 }

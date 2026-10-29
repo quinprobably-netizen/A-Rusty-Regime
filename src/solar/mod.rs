@@ -12,6 +12,7 @@ pub mod ai;
 pub mod base;
 pub mod combat;
 pub mod enemy;
+pub mod missile;
 pub mod orbit;
 pub mod ship;
 pub mod station;
@@ -126,6 +127,7 @@ impl Plugin for SolarPlugin {
         add_streaming(app);
         ship::build(app);
         combat::build(app);
+        missile::build(app);
         ai::build(app);
         enemy::build(app);
         base::build(app);
@@ -562,6 +564,7 @@ pub fn switch_anchor(world: &mut World) {
         let (translation, rotation) = (new_origin.world(p), (turn * tf.rotation).normalize());
         entity.insert((Transform { translation, rotation, ..tf }, Position(translation), Rotation(rotation), LinearVelocity(v), AngularVelocity(carry_spin(w))));
     }
+    missile::carry(world, &origin, &new_origin, turn, convert);
     {
         let translation = new_origin.world(player_new);
         let mut entity = world.entity_mut(player_entity);

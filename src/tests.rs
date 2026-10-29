@@ -2862,3 +2862,345 @@ fn a_dogfight_across_an_origin_rebase_keeps_every_ship_on_its_path() {
     }
     assert!(rebased > 0 && app.world().resource::<Origin>().offset != start, "the origin moved under the fight");
 }
+
+// --------------------------------------------------------------------------- homing missiles
+
+use solar::missile::{Missile, Missiles};
+
+/// The ship's missiles and lock.
+fn missiles(app: &App, ship: Entity) -> Missiles {
+    app.world().get::<Missiles>(ship).unwrap().clone()
+}
+
+/// Every missile in flight: its entity and the ship that fired it.
+fn in_flight(app: &mut App) -> Vec<(Entity, Entity)> {
+    app.world_mut().query::<(Entity, &Missile)>().iter(app.world()).map(|(e, m)| (e, m.owner)).collect()
+}
+
+/// One click of the right mouse button: held for a frame, then let go.
+fn click_missile(app: &mut App) {
+    input(app).aim_held = true;
+    app.update();
+    app.update();
+}
+
+/// The fighter of `gunnery_range` given a Welder's 60 shield and 200 hull, so one missile's 80
+/// shows where it went.
+fn tough(app: &mut App, target: Entity) {
+    app.world_mut().entity_mut(target).insert(Hull::new(200.0, 60.0));
+}
+
+/// Sets `target` flying on whatever velocity it is given, like an enemy pilot's ship: kept awake
+/// (a kilometre off is outside the physics bubble), and woken if the bubble froze it while it
+/// stood parked.
+fn under_way(app: &mut App, target: Entity, velocity: Vec3) {
+    app.world_mut().entity_mut(target).remove::<(RigidBodyDisabled, crate::planet::bubble::Frozen)>().insert((RigidBody::Kinematic, LinearVelocity(velocity), crate::planet::bubble::KeepAwake));
+}
+
+/// Moves `target` to `range` metres off the ship's nose, `degrees` to its right.
+fn off_nose(app: &mut App, target: Entity, range: f32, degrees: f32) {
+    let ship = ship_entity(app);
+    let tf = *app.world().get::<Transform>(ship).unwrap();
+    let at = tf.translation + tf.rotation * (Quat::from_rotation_y(-degrees.to_radians()) * Vec3::NEG_Z * range);
+    app.world_mut().entity_mut(target).insert((Transform::from_translation(at).with_rotation(tf.rotation), Position(at)));
+}
+
+#[test]
+fn a_lock_needs_a_ship_held_in_the_cone_for_1_2_s_and_drops_when_it_leaves() {
+    let (mut app, jackal) = gunnery_range(800.0);
+    let ship = ship_entity(&mut app);
+    run(&mut app, 2.0 / 66.0);
+    assert_eq!(missiles(&app, ship).target, Some(jackal), "dead ahead: the lock starts");
+    run(&mut app, 1.0);
+    let m = missiles(&app, ship);
+    assert!(m.locked().is_none() && m.lock > 0.75 && m.lock < 1.0, "a second in: not yet, {}", m.lock);
+    run(&mut app, 0.25);
+    assert_eq!(missiles(&app, ship).locked(), Some(jackal), "1.2 s: locked");
+    off_nose(&mut app, jackal, 800.0, 4.5);
+    run(&mut app, 0.5);
+    assert_eq!(missiles(&app, ship).locked(), Some(jackal), "4.5 degrees off the nose is inside the cone");
+    off_nose(&mut app, jackal, 800.0, 8.0);
+    run(&mut app, 2.0 / 66.0);
+    let m = missiles(&app, ship);
+    assert_eq!((m.target, m.lock), (None, 0.0), "8 degrees off: the lock is gone");
+    off_nose(&mut app, jackal, 800.0, 0.0);
+    run(&mut app, 0.5);
+    let m = missiles(&app, ship);
+    assert!(m.target == Some(jackal) && m.lock < 0.5, "back in the cone it starts from nothing: {}", m.lock);
+    // Its own side, or too far, is never locked.
+    app.world_mut().entity_mut(jackal).insert(Faction::Deserters);
+    run(&mut app, 2.0);
+    assert_eq!(missiles(&app, ship).target, None, "not the player's own side");
+    app.world_mut().entity_mut(jackal).insert(Faction::Raiders);
+    off_nose(&mut app, jackal, 3200.0, 0.0);
+    run(&mut app, 2.0);
+    assert_eq!(missiles(&app, ship).target, None, "not past 3 km");
+}
+
+#[test]
+fn a_locked_missile_hits_a_steady_target_for_80_damage_shield_first() {
+    let (mut app, jackal) = gunnery_range(1200.0);
+    tough(&mut app, jackal);
+    let ship = ship_entity(&mut app);
+    run(&mut app, 1.3);
+    assert_eq!(missiles(&app, ship).locked(), Some(jackal));
+    click_missile(&mut app);
+    let flying = in_flight(&mut app);
+    assert_eq!(flying.len(), 1, "one missile away");
+    assert_eq!(app.world().get::<Missile>(flying[0].0).unwrap().target, Some(jackal), "at the locked ship");
+    // It flies on across the nose at 100 m/s, steady.
+    let side = app.world().get::<Rotation>(ship).unwrap().0 * Vec3::X;
+    under_way(&mut app, jackal, side * 100.0);
+    let mut took = 0.0;
+    while !in_flight(&mut app).is_empty() && took < 6.0 {
+        app.update();
+        took += DT;
+    }
+    let h = *app.world().get::<Hull>(jackal).unwrap();
+    assert_eq!((h.shield, h.hp), (0.0, 180.0), "80 damage: the 60 shield, then 20 off the hull ({took:.1} s)");
+    assert!(took < 3.5, "hit in {took:.1} s");
+}
+
+/// A missile locked on the gunnery range's fighter 1 km ahead, which flies off across the nose at
+/// 250 m/s as it is fired, heading `phase` radians round from straight across, and once the
+/// missile is within `break_at` metres breaks into a turn at `rate` rad/s: how close the missile
+/// came, and the shield and hull left.
+fn chase(rate: f32, phase: f32, break_at: f32) -> (f32, f32) {
+    let (mut app, jackal) = gunnery_range(1000.0);
+    tough(&mut app, jackal);
+    let ship = ship_entity(&mut app);
+    run(&mut app, 1.3);
+    click_missile(&mut app);
+    let missile = in_flight(&mut app)[0].0;
+    let rot = app.world().get::<Rotation>(ship).unwrap().0;
+    let up = rot * Vec3::Y;
+    let mut heading = Quat::from_axis_angle(up, phase) * (rot * Vec3::X);
+    under_way(&mut app, jackal, heading * 250.0);
+    let mut closest = f32::MAX;
+    for _ in 0..(8.0 / DT) as usize {
+        let (Some(m), Some(j)) = (app.world().get::<Transform>(missile), app.world().get::<Position>(jackal)) else { break };
+        let d = m.translation.distance(j.0);
+        closest = closest.min(d);
+        if d < break_at || closest < break_at {
+            heading = Quat::from_axis_angle(up, rate * DT) * heading;
+        }
+        app.world_mut().get_mut::<LinearVelocity>(jackal).unwrap().0 = heading * 250.0;
+        app.update();
+    }
+    let h = *app.world().get::<Hull>(jackal).unwrap();
+    (closest, h.hp + h.shield)
+}
+
+#[test]
+fn a_missile_is_outturned_by_a_target_breaking_harder_than_it_can_turn() {
+    let t = Tuning::default().ship_combat;
+    // From five headings across and away, the target breaks into a turn once the missile is
+    // 600 m off. Steady, or a gentle 1 rad/s under the missile's 1.4: hit every time.
+    let headings = [0.0, 0.8, 1.6, 2.4, -0.8];
+    for rate in [0.0, 1.0] {
+        for phase in headings {
+            let (closest, left) = chase(rate, phase, 600.0);
+            assert_eq!(left, 180.0, "{rate} rad/s from {phase}: hit, closest {closest:.1} m");
+        }
+    }
+    // A hard 2.5 rad/s break, well over its 1.4: it gets away from most of them.
+    assert!(t.missile_turn < 2.5);
+    let missed: Vec<f32> = headings.iter().map(|&phase| chase(2.5, phase, 600.0)).filter(|(_, left)| *left == 260.0).map(|(c, _)| c).collect();
+    assert!(missed.len() >= 3, "a hard break gets away: missed {} of 5 ({missed:?} m)", missed.len());
+}
+
+#[test]
+fn a_missile_bursts_on_the_ground_and_after_eight_seconds() {
+    let t = Tuning::default().ship_combat;
+    let mut app = aloft(120.0);
+    let ship = ship_entity(&mut app);
+    let (p, _, _) = pose(&app, ship);
+    let up = app.world().resource::<Surface>().up(app.world().resource::<Origin>().body(p));
+    let side = up.any_orthonormal_vector();
+    // Straight down from 90 m over the ground, off to one side of the ship.
+    let at = |offset: Vec3, dir: Vec3| Transform::from_translation(p + offset).looking_to(dir, dir.any_orthonormal_vector());
+    let down = solar::missile::spawn(app.world_mut(), Missile::new(100.0, 600.0, ship, Faction::Deserters, None, &t), at(side * 20.0 - up * 30.0, -up));
+    let mut low = f32::MAX;
+    for _ in 0..(1.5 / DT) as usize {
+        let Some(tf) = app.world().get::<Transform>(down) else { break };
+        let solar = app.world().resource::<Solar>();
+        low = low.min(solar::ship::clearance(solar, app.world().resource::<Surface>(), app.world().resource::<Origin>().body(tf.translation)));
+        app.update();
+    }
+    assert!(app.world().get_entity(down).is_err(), "burst on the ground within 1.5 s");
+    assert!(low < 15.0, "at the ground: it got down to {low:.1} m");
+    // Straight up into an empty sky: it bursts on its own at 8 s.
+    let climb = solar::missile::spawn(app.world_mut(), Missile::new(600.0, 600.0, ship, Faction::Deserters, None, &t), at(up * 30.0, up));
+    run(&mut app, t.missile_life - 0.15);
+    assert!(app.world().get_entity(climb).is_ok(), "still flying at 7.85 s");
+    run(&mut app, 0.3);
+    assert!(app.world().get_entity(climb).is_err(), "gone at 8 s");
+}
+
+#[test]
+fn a_missile_never_hurts_its_own_side() {
+    let (mut app, jackal) = gunnery_range(500.0);
+    app.world_mut().entity_mut(jackal).insert(Faction::Deserters);
+    let ship = ship_entity(&mut app);
+    run(&mut app, 1.5);
+    assert_eq!(missiles(&app, ship).target, None, "no lock on its own side");
+    // Fired straight ahead with no lock, it flies into the fighter and bursts there, harmlessly.
+    click_missile(&mut app);
+    let missile = in_flight(&mut app)[0].0;
+    assert_eq!(app.world().get::<Missile>(missile).unwrap().target, None);
+    run(&mut app, 2.0);
+    assert!(app.world().get_entity(missile).is_err(), "burst on the hull");
+    let h = *app.world().get::<Hull>(jackal).unwrap();
+    assert_eq!((h.shield, h.hp), (30.0, 40.0), "no friendly fire");
+}
+
+#[test]
+fn four_missiles_and_one_back_every_ten_seconds() {
+    let t = Tuning::default().ship_combat;
+    let mut app = aloft(600.0);
+    let ship = ship_entity(&mut app);
+    assert_eq!(missiles(&app, ship).count, 4, "four aboard");
+    click_missile(&mut app);
+    assert_eq!(missiles(&app, ship).count, 3);
+    run(&mut app, t.missile_reload - 0.2);
+    assert_eq!(missiles(&app, ship).count, 3, "not back at 9.8 s");
+    run(&mut app, 0.3);
+    assert_eq!(missiles(&app, ship).count, 4, "back at 10 s");
+    run(&mut app, 15.0);
+    assert_eq!(missiles(&app, ship).count, 4, "never more than four");
+    // Five clicks: four go, the fifth finds the rails empty.
+    for _ in 0..5 {
+        click_missile(&mut app);
+    }
+    assert_eq!(missiles(&app, ship).count, 0);
+    assert_eq!(in_flight(&mut app).len(), 4, "four in the air");
+    run(&mut app, t.missile_reload + 0.1);
+    assert_eq!(missiles(&app, ship).count, 1, "one back after ten seconds");
+}
+
+#[test]
+fn right_mouse_fires_a_missile_not_the_hand_guns_sights() {
+    let mut app = system_app();
+    run(&mut app, 0.5);
+    // On foot it aims the gun in hand and fires no missile.
+    for _ in 0..10 {
+        input(&mut app).aim_held = true;
+        app.update();
+    }
+    assert!(app.world().resource::<crate::weapon::Aim>().level > 0.0, "on foot: down the sights");
+    assert!(in_flight(&mut app).is_empty(), "no missile on foot");
+    input(&mut app).aim_held = false;
+    run(&mut app, 0.5);
+    board(&mut app);
+    let shots = app.world().resource::<Arsenal>().shots;
+    let ship = ship_entity(&mut app);
+    input(&mut app).aim_held = true;
+    app.update();
+    // With no lock it goes straight off the nose.
+    let (missile, _) = in_flight(&mut app)[0];
+    let (nose, heading) = (app.world().get::<Rotation>(ship).unwrap().0 * Vec3::NEG_Z, app.world().get::<Transform>(missile).unwrap().rotation * Vec3::NEG_Z);
+    assert!(nose.angle_between(heading) < 0.01 && app.world().get::<Missile>(missile).unwrap().target.is_none(), "straight ahead");
+    // Held for a while: one missile, not one a tick.
+    for _ in 0..20 {
+        input(&mut app).aim_held = true;
+        app.update();
+    }
+    assert!(app.world().get::<ShipControls>(ship).unwrap().missile, "the missile trigger is held");
+    assert_eq!(missiles(&app, ship).count, 3, "one missile per press");
+    assert!(app.world().resource::<crate::weapon::Aim>().level < 0.01, "flying: no aiming down the sights");
+    assert_eq!(app.world().resource::<Arsenal>().shots, shots, "and the gun in hand stays quiet");
+    app.update();
+    assert!(!app.world().get::<ShipControls>(ship).unwrap().missile, "let go");
+}
+
+#[test]
+fn a_sentry_fires_a_missile_once_it_has_a_lock_and_a_jackal_never_does() {
+    let mut app = aloft(2000.0);
+    let ship = ship_entity(&mut app);
+    let rot = app.world().get::<Rotation>(ship).unwrap().0;
+    let sentry = enemy_near(&mut app, "sentry", rot * Vec3::new(0.0, 100.0, 700.0), Role::Raider);
+    let jackal = enemy_near(&mut app, "jackal", rot * Vec3::new(900.0, 100.0, 0.0), Role::Raider);
+    // One side, so neither is shot down by the other's stray fire.
+    app.world_mut().entity_mut(jackal).insert(Faction::Pmc);
+    let mut fired = None;
+    for tick in 0..(10.0 / DT) as usize {
+        let before = missiles(&app, sentry);
+        app.update();
+        assert!(in_flight(&mut app).iter().all(|(_, owner)| *owner != jackal), "a Jackal flies with guns only");
+        if let Some((m, _)) = in_flight(&mut app).into_iter().find(|(_, owner)| *owner == sentry) {
+            assert_eq!(before.locked(), Some(ship), "tick {tick}: fired with a lock on the Kestrel");
+            assert_eq!(app.world().get::<Missile>(m).unwrap().target, Some(ship), "and at it");
+            fired = Some(tick as f32 * DT);
+            break;
+        }
+    }
+    assert!(fired.is_some(), "the Sentry fired a missile within 10 s");
+    assert_eq!(missiles(&app, sentry).count, 3);
+}
+
+#[test]
+fn a_missile_flies_on_across_an_origin_rebase_and_hits() {
+    let (mut app, jackal) = gunnery_range(1500.0);
+    tough(&mut app, jackal);
+    let ship = ship_entity(&mut app);
+    run(&mut app, 1.3);
+    assert_eq!(missiles(&app, ship).locked(), Some(jackal));
+    // The Kestrel runs at the target at 150 m/s, the world re-centring on it every 100 m.
+    app.world_mut().resource_mut::<Tuning>().terrain.origin_step = 100.0;
+    let nose = app.world().get::<Rotation>(ship).unwrap().0 * Vec3::NEG_Z;
+    app.world_mut().get_mut::<LinearVelocity>(ship).unwrap().0 = nose * 150.0;
+    input(&mut app).thrust = 1.0;
+    click_missile(&mut app);
+    let start = app.world().resource::<Origin>().offset;
+    let mut rebased = 0;
+    for _ in 0..(5.0 / DT) as usize {
+        if in_flight(&mut app).is_empty() {
+            break;
+        }
+        let before = app.world().resource::<Origin>().offset;
+        app.update();
+        rebased += (app.world().resource::<Origin>().offset != before) as i32;
+    }
+    assert!(rebased > 1 && app.world().resource::<Origin>().offset != start, "the origin moved under it {rebased} times");
+    let h = *app.world().get::<Hull>(jackal).unwrap();
+    assert_eq!((h.shield, h.hp), (0.0, 180.0), "and it hit");
+}
+
+#[test]
+fn a_missile_is_carried_into_the_new_frame_at_a_handoff() {
+    let mut app = aloft(600.0);
+    click_missile(&mut app);
+    let (missile, _) = in_flight(&mut app)[0];
+    run(&mut app, 0.2);
+    // The Kestrel jumps to 9 km over the Reliquary, on Bastion; the missile stays where it is.
+    let (base, up) = reliquary(&app);
+    let p = {
+        let solar = app.world().resource::<Solar>();
+        solar.bodies.convert("bastion", &solar.anchor, solar.epoch, (base + up * 9000.0).as_dvec3(), bevy::math::DVec3::ZERO).0.as_vec3()
+    };
+    put_ship(&mut app, p, Vec3::ZERO);
+    for _ in 0..30 {
+        let (old, epoch, origin) = {
+            let solar = app.world().resource::<Solar>();
+            (solar.anchor.clone(), solar.epoch, *app.world().resource::<Origin>())
+        };
+        let (tf, m) = (*app.world().get::<Transform>(missile).unwrap(), app.world().get::<Missile>(missile).unwrap());
+        // As it flies this tick, burning on, before the handoff converts it.
+        let v = tf.rotation * Vec3::NEG_Z * (m.speed + Tuning::default().ship_combat.missile_accel * DT).min(m.top);
+        app.update();
+        let solar = app.world().resource::<Solar>();
+        if solar.anchor == old {
+            continue;
+        }
+        assert_eq!(solar.anchor, "bastion");
+        let (q, w) = solar.bodies.convert(&old, &solar.anchor, epoch, (origin.body(tf.translation) + v * DT).as_dvec3(), v.as_dvec3());
+        let (q, w) = (q.as_vec3(), w.as_vec3());
+        let now = app.world().resource::<Origin>().body(app.world().get::<Transform>(missile).expect("the missile survives the handoff").translation);
+        assert!(now.distance(q) < 100.0f32.max(q.length() * 1e-6), "where it was, in Bastion's frame: {:.0} m off", now.distance(q));
+        let m = app.world().get::<Missile>(missile).unwrap();
+        let heading = app.world().get::<Transform>(missile).unwrap().rotation * Vec3::NEG_Z;
+        assert!(heading.angle_between(w) < 1e-3 && (m.speed - w.length()).abs() < 10.0, "moving as it was: {} vs {}, {} rad off", m.speed, w.length(), heading.angle_between(w));
+        return;
+    }
+    panic!("no handoff");
+}

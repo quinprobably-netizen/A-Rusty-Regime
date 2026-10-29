@@ -243,7 +243,7 @@ fn fly_projectiles(
 
 /// A ship whose hull is gone blows apart. The player's own ship is left to the loss rule, which
 /// is still to come, so one being flown is never removed from under its pilot.
-fn wreck(mut commands: Commands, specs: Res<Ships>, fx: Option<Res<FxAssets>>, mut materials: Option<ResMut<Assets<StandardMaterial>>>, ships: Query<(Entity, &Ship, &Hull, &Transform)>) {
+pub(super) fn wreck(mut commands: Commands, specs: Res<Ships>, fx: Option<Res<FxAssets>>, mut materials: Option<ResMut<Assets<StandardMaterial>>>, ships: Query<(Entity, &Ship, &Hull, &Transform)>) {
     for (entity, ship, hull, tf) in &ships {
         if hull.hp > 0.0 || ship.pilot.is_some() {
             continue;

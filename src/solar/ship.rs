@@ -284,6 +284,8 @@ pub struct ShipControls {
     pub look: Vec2,
     /// The nose guns' trigger (`combat`).
     pub fire: bool,
+    /// The missile trigger (`missile`): one goes on each press.
+    pub missile: bool,
     /// The mouse as a stick, smoothed over a few ticks so uneven frames do not jolt the ship.
     mouse_stick: Vec2,
 }
@@ -552,14 +554,20 @@ fn controls(
     controls.stick = input.ship_stick;
 }
 
-/// Flying, the fire button pulls the ship's trigger instead of the gun in the pilot's hands: it is
-/// taken off the input as soon as it is read, before any fixed tick could fire the hand gun with it.
-/// Dev aid: `RUST_REGIME_SCREENSHOT_FIRE` holds the trigger, for screenshots of the guns.
-fn trigger(mut input: ResMut<PlayerInput>, flying: Query<Entity, (With<Player>, With<Driving>)>, mut ships: Query<(&Ship, &mut ShipControls)>) {
+/// Flying, the fire button pulls the ship's trigger instead of the gun in the pilot's hands, and
+/// the aim button (right mouse) the missile trigger: each is taken off the input as soon as it is
+/// read, before any fixed tick could fire or aim the hand gun with it.
+/// Dev aids: `RUST_REGIME_SCREENSHOT_FIRE` holds the gun trigger, and
+/// `RUST_REGIME_SCREENSHOT_MISSILE` presses the missile trigger once a lock is complete, for
+/// screenshots of the guns and missiles.
+#[allow(clippy::type_complexity)]
+fn trigger(mut input: ResMut<PlayerInput>, flying: Query<Entity, (With<Player>, With<Driving>)>, mut ships: Query<(&Ship, &mut ShipControls, Option<&super::missile::Missiles>)>) {
     let Ok(player) = flying.single() else { return };
-    let Some((_, mut controls)) = ships.iter_mut().find(|(s, _)| s.pilot == Some(player)) else { return };
+    let Some((_, mut controls, missiles)) = ships.iter_mut().find(|(s, ..)| s.pilot == Some(player)) else { return };
     controls.fire = std::mem::take(&mut input.fire_held) || std::env::var_os("RUST_REGIME_SCREENSHOT_FIRE").is_some();
     input.fire_pressed = false;
+    let dev = std::env::var_os("RUST_REGIME_SCREENSHOT_MISSILE").is_some() && missiles.is_some_and(|m| m.locked().is_some());
+    controls.missile = std::mem::take(&mut input.aim_held) || dev;
 }
 
 /// E boards the nearest ship in reach, or leaves the one being flown: out at its exit point,

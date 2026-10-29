@@ -17,6 +17,7 @@ use serde::Deserialize;
 
 use super::base::Base;
 use super::combat::{Faction, Hull};
+use super::missile::Missiles;
 use super::ship::{clearance, Ship, ShipControls, Ships};
 use super::Solar;
 use crate::surface::{Origin, Surface};
@@ -44,11 +45,14 @@ pub struct AiSpec {
     pub boost_range: f32,
     /// How far its aim wanders across the lead, degrees: a perfect shot every time is no fun.
     pub wobble: f32,
+    /// It flies with missiles: while it has one it points its nose at the target to lock it, and
+    /// fires once locked, `[ship_combat] ai_missile_gap` seconds apart.
+    pub missiles: bool,
 }
 
 impl Default for AiSpec {
     fn default() -> Self {
-        Self { attack_range: 1200.0, cone: 3.0, hold: 0.0, break_range: 150.0, break_time: 2.5, break_turn: 1.0, flee_hull: 0.0, boost_range: 1500.0, wobble: 1.0 }
+        Self { attack_range: 1200.0, cone: 3.0, hold: 0.0, break_range: 150.0, break_time: 2.5, break_turn: 1.0, flee_hull: 0.0, boost_range: 1500.0, wobble: 1.0, missiles: false }
     }
 }
 
@@ -204,6 +208,7 @@ const MAX_BANK: f32 = 1.45;
 /// The ship an enemy hunts: where it is and how it moves.
 #[derive(Clone, Copy)]
 struct Quarry {
+    entity: Entity,
     at: Vec3,
     velocity: Vec3,
     faction: Faction,
@@ -219,14 +224,14 @@ pub(super) fn think(
     surface: Res<Surface>,
     origin: Res<Origin>,
     bases: Query<(&Transform, &Base)>,
-    targets: Query<(&Ship, &Position, &LinearVelocity, &Faction), Without<Enemy>>,
-    mut enemies: Query<(&mut Enemy, &Ship, &Hull, &Faction, &Position, &Rotation, &LinearVelocity, &mut ShipControls)>,
+    targets: Query<(Entity, &Ship, &Position, &LinearVelocity, &Faction), Without<Enemy>>,
+    mut enemies: Query<(&mut Enemy, &Ship, &Hull, &Faction, &Position, &Rotation, &LinearVelocity, &mut ShipControls, Option<&Missiles>)>,
 ) {
     let t = &tuning.ship_combat;
     let dt = time.delta_secs();
     // Only a ship someone flies is hunted: on foot the player is left alone.
-    let quarry = targets.iter().find(|(s, ..)| s.pilot.is_some()).map(|(_, p, v, f)| Quarry { at: p.0, velocity: v.0, faction: *f });
-    for (mut enemy, ship, hull, faction, pos, rot, vel, mut controls) in &mut enemies {
+    let quarry = targets.iter().find(|(_, s, ..)| s.pilot.is_some()).map(|(e, _, p, v, f)| Quarry { entity: e, at: p.0, velocity: v.0, faction: *f });
+    for (mut enemy, ship, hull, faction, pos, rot, vel, mut controls, missiles) in &mut enemies {
         let spec = &specs.ship[ship.spec];
         let ai = &spec.ai;
         let (p, rot, v) = (pos.0, rot.0, vel.0);
@@ -270,6 +275,10 @@ pub(super) fn think(
         };
 
         let mut fire = false;
+        let mut missile = false;
+        // With a missile to hand, a hull that flies with them points straight at the target to
+        // lock it instead of at the guns' lead.
+        let homing = ai.missiles && missiles.is_some_and(|m| m.count > 0);
         let mut boost = false;
         let mut thrust = 1.0;
         let mut pull = 1.0;
@@ -314,7 +323,12 @@ pub(super) fn think(
                 }
                 // Well short of its range and not gaining, it boosts to catch up.
                 boost = closing < 30.0 && dist > ai.hold.max(ai.break_range) * 3.0 && ahead;
-                aim
+                if homing {
+                    missile = missiles.is_some_and(|m| m.locked() == Some(f.entity) && m.since >= t.ai_missile_gap);
+                    rel
+                } else {
+                    aim
+                }
             }
             (Mode::Break, f) => {
                 if enemy.fleeing {
@@ -344,6 +358,7 @@ pub(super) fn think(
         // Near the ground it keeps its speed down: a heavy hull cannot pull out of a fast dive.
         controls.boost = boost && room >= 1.0;
         controls.fire = fire;
+        controls.missile = missile;
     }
 }
 
