@@ -113,6 +113,9 @@ impl Bases {
     }
 }
 
+/// Where a base's job board stands from its doorway, in the base frame (the door faces +Z).
+pub const BOARD_IN: Vec3 = Vec3::new(0.0, 0.0, -1.5);
+
 /// A base standing on the anchor world: `spec` indexes `Bases`.
 #[derive(Component)]
 pub struct Base {
@@ -231,7 +234,10 @@ pub fn spawn_bases(world: &mut World) {
             let e = world.spawn((Name::new(format!("Station {}", st.label)), Station { base: i, faction: super::station::faction_of(&specs, i), kind: st.kind, label: st.label.clone() }, Transform::from_translation(Vec3::from(st.at)), Visibility::default())).id();
             world.entity_mut(base).add_child(e);
         }
-        let model = world.spawn((BaseModel, Transform::default(), Visibility::default())).id();
+        // Every base's job board, just inside its door.
+        let board = world.spawn((Name::new("Station Job board"), Station { base: i, faction: super::station::faction_of(&specs, i), kind: super::station::StationKind::Board, label: "Job board".into() }, Transform::from_translation(Vec3::from(spec.door) + BOARD_IN), Visibility::default())).id();
+        world.entity_mut(base).add_child(board);
+                let model = world.spawn((BaseModel, Transform::default(), Visibility::default())).id();
         world.entity_mut(base).add_child(model);
         let pad_top = spec.pad.map(|[x, z]| Vec3::new(x, deck.max(deck_over(&sphere, ground, frame, Vec3::new(x, 0.0, z), PAD_SIZE / 2.0, PAD_SIZE / 2.0)) - deck, z));
         life::spawn(world, base, &spec.crew, spec.traffic.as_deref(), pad_top, 37.0 * i as f32);

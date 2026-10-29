@@ -10,6 +10,7 @@
 
 pub mod ai;
 pub mod base;
+pub mod board;
 pub mod cockpit;
 pub mod economy;
 pub mod combat;
@@ -140,6 +141,7 @@ impl Plugin for SolarPlugin {
         enemy::build(app);
         loss::build(app);
         economy::build(app);
+        board::build(app);
         cockpit::build(app);
         base::build(app);
         life::build(app);
@@ -751,11 +753,11 @@ fn flight_text(
     for (d, name) in &others {
         line.push_str(&format!("\n{name}  {}", km(*d)));
     }
-    if let Some(save) = save.filter(|s| s.banked > 0 || s.pocket > 0 || s.scrap > 0 || s.contract.is_some()) {
+    if let Some(save) = save.filter(|s| s.banked > 0 || s.pocket > 0 || s.scrap > 0 || !s.contracts.is_empty()) {
         let pocket = if save.pocket > 0 { format!(" +${} unbanked", save.pocket) } else { String::new() };
         line.push_str(&format!("\nBANK ${}{pocket}   SCRAP {}/{}", save.banked, save.scrap, economy::hold_cap(&save, &tuning.economy)));
-        if let Some(c) = &save.contract {
-            line.push_str(&format!("   PARCEL for {} +${}", base_specs.base.iter().find(|b| b.id == c.to).map_or("?", |b| b.name.as_str()), c.pay));
+        for c in &save.contracts {
+            line.push_str(&format!("   {}", board::job_line(c, &base_specs)));
         }
     }
     line.push_str(&prompt.text());

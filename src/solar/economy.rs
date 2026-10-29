@@ -95,9 +95,10 @@ pub fn repair(hull: &mut Hull, faction: Faction, save: &mut Save, e: &Economy, t
     Some((points, cost))
 }
 
-/// Sells the whole hold to a base of `faction` into the bank; returns the money.
-pub fn sell_scrap(save: &mut Save, faction: Faction, e: &Economy, t: &ShipCombat) -> u32 {
-    let each = standing::buys(e.scrap_value, faction, save, t);
+/// Sells the whole hold to a base of `faction` that pays `share` of `scrap_value` into the bank;
+/// returns the money.
+pub fn sell_scrap(save: &mut Save, faction: Faction, share: f32, e: &Economy, t: &ShipCombat) -> u32 {
+    let each = standing::buys((e.scrap_value as f32 * share).round() as u32, faction, save, t);
     let money = std::mem::take(&mut save.scrap).saturating_mul(each);
     save.banked = save.banked.saturating_add(money);
     money
@@ -234,9 +235,9 @@ mod tests {
     fn selling_empties_the_hold_into_the_bank_and_a_friend_pays_more() {
         let (e, t) = tuned();
         let mut save = Save { scrap: 12, banked: 5, ..default() };
-        assert_eq!(sell_scrap(&mut save, Faction::Scrappers, &e, &t), 72);
+        assert_eq!(sell_scrap(&mut save, Faction::Scrappers, 1.0, &e, &t), 72);
         assert_eq!((save.scrap, save.banked), (0, 77));
-        assert_eq!(sell_scrap(&mut save, Faction::Scrappers, &e, &t), 0, "nothing left");
+        assert_eq!(sell_scrap(&mut save, Faction::Scrappers, 1.0, &e, &t), 0, "nothing left");
         for (v, each) in [(0, 6), (40, 7), (-41, 5)] {
             save.standing.insert("scrappers".into(), v);
             assert_eq!(standing::buys(6, Faction::Scrappers, &save, &t), each, "at {v}");

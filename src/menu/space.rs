@@ -194,23 +194,83 @@ fn ships(p: &mut ChildSpawnerCommands, t: &ComicTheme, space: &Space, save: Opti
 
 fn contracts(p: &mut ChildSpawnerCommands, t: &ComicTheme, space: &Space, save: Option<&Save>) {
     let money = crate::comic::widgets::money;
-    let job = save.and_then(|s| s.contract.as_ref());
-    let line = match job {
-        Some(c) => {
-            let to = space.bases.as_ref().and_then(|b| b.base.iter().find(|b| b.id == c.to)).map_or(c.to.to_uppercase(), |b| b.name.to_uppercase());
-            format!("DELIVER TO {to}  ·  PAYS {}", money(c.pay))
-        }
-        None => "No job. Contract desks at any base hand them out.".to_string(),
+    let jobs: Vec<String> = match (save, &space.bases) {
+        (Some(s), Some(bases)) => s.contracts.iter().map(|c| crate::solar::board::job_line(c, bases).to_uppercase()).collect(),
+        _ => Vec::new(),
     };
+    let line = if jobs.is_empty() { "No jobs. Every base has a job board inside its door.".to_string() } else { jobs.join("\n") };
     p.spawn(Node { position_type: PositionType::Absolute, left: Val::Px(LEFT + 380.0), top: Val::Px(130.0), width: Val::Px(520.0), flex_direction: FlexDirection::Column, row_gap: Val::Px(22.0), align_items: AlignItems::FlexStart, ..default() }).with_children(|col| {
         caption(col, t, &line);
-        let (t2, done, banked) = (t.clone(), save.map_or(0, |s| s.contracts_done), save.map_or(0, |s| s.banked));
+        let (t2, done, banked, day) = (t.clone(), save.map_or(0, |s| s.contracts_done), save.map_or(0, |s| s.banked), save.map_or(0, |s| s.day));
         panel(col, t, t.paper, 1.0, move |c| {
             c.spawn(display_text("COURIER LOG", 26.0, t2.ink, &t2));
-            c.spawn(body_text(format!("Contracts done  {done}"), 17.0, t2.ink, true, &t2));
+            c.spawn(body_text(format!("Parcels delivered  {done}"), 17.0, t2.ink, true, &t2));
             c.spawn(body_text(format!("Banked  {}", money(banked)), 17.0, t2.ink, true, &t2));
+            c.spawn(body_text(format!("Day  {}", day + 1), 17.0, t2.ink, true, &t2));
         });
     });
+}
+
+/// The job board's heading: the base's name.
+pub(super) fn board_title(base: &str, space: &Space) -> String {
+    space.bases.as_ref().map_or(base.to_uppercase(), |b| crate::solar::board::name_of(b, base).to_uppercase())
+}
+
+/// What a job asks, for a board row: its label, its pay, and a line of detail.
+fn job_text(c: &crate::solar::board::Contract, space: &Space, save: &Save) -> (String, String, String) {
+    use crate::solar::board::{name_of, Job};
+    let name = |id: &str| space.bases.as_ref().map_or(id.to_string(), |b| name_of(b, id).to_string());
+    let pay = format!("${}", c.pay);
+    match &c.job {
+        Job::Courier { to } => {
+            let body = space.bases.as_ref().and_then(|b| b.base.iter().find(|x| x.id == *to)).map(|b| b.body.clone()).unwrap_or_default();
+            let world = space.solar.as_ref().map_or(body.clone(), |s| s.bodies.get(&body).name.clone());
+            let danger = space.bases.as_ref().zip(space.tuning.as_ref()).is_some_and(|(b, t)| {
+                let f = crate::solar::board::faction_of(b, to);
+                crate::solar::standing::moves(f) && crate::solar::standing::hostile(save, f, &t.ship_combat)
+            });
+            (format!("COURIER TO {}", name(to).to_uppercase()), pay, format!("A parcel for its door on {world}.{}", if danger { " Danger pay: its patrols shoot on sight." } else { "" }))
+        }
+        Job::Cull { need, got } if *got > 0 => (format!("CULL {got}/{need} RAIDERS"), pay, "Raiders your ship shoots down. Bounties pay too.".to_string()),
+        Job::Cull { need, .. } => (format!("CULL {need} RAIDERS"), pay, "Raiders your ship shoots down. Bounties pay too.".to_string()),
+        Job::Supply { need } => (format!("SUPPLY {need} SCRAP"), pay, format!("Bring it to the board at {}.", name(&c.from))),
+    }
+}
+
+/// Offer `i` on base `base`'s board.
+pub(super) fn offer_row(i: usize, base: &str, space: &Space, save: Option<&Save>) -> (String, String, String) {
+    let blank = Save::default();
+    let save = save.unwrap_or(&blank);
+    match save.boards.get(base).and_then(|b| b.get(i)) {
+        Some(c) => {
+            let (label, pay, note) = job_text(c, space, save);
+            (label, pay, format!("{note} Due by the end of tomorrow."))
+        }
+        None => ("-".to_string(), String::new(), "Nothing more here today.".to_string()),
+    }
+}
+
+/// Your job `i`, seen from base `base`'s board.
+pub(super) fn job_row(i: usize, base: &str, space: &Space, save: Option<&Save>) -> (String, String, String) {
+    use crate::solar::board::Job;
+    let blank = Save::default();
+    let save = save.unwrap_or(&blank);
+    match save.contracts.get(i) {
+        Some(c) => {
+            let (label, pay, note) = job_text(c, space, save);
+            let due = match c.due {
+                Some(d) if d <= save.day => " Due today.",
+                Some(_) => " Due tomorrow.",
+                None => "",
+            };
+            let label = match c.job {
+                Job::Supply { need } if c.from == base && save.scrap >= need => format!("{label}  HAND IN"),
+                _ => label,
+            };
+            (label, pay, format!("{note}{due}"))
+        }
+        None => ("-".to_string(), String::new(), "A free hand for another job.".to_string()),
+    }
 }
 
 /// A parts rack row for part `i` at a base of `faction`: its label and level, how far up its three

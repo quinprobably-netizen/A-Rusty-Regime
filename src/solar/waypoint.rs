@@ -208,8 +208,8 @@ fn update_markers(
                 Target::Post(e) => posts.1.get(*e).map_or(String::new(), |(_, p)| posts.0.post[p.spec].name.to_uppercase()),
             };
             // The base a parcel is bound for says so.
-            let parcel = match (target, save.as_ref().and_then(|s| s.contract.as_ref())) {
-                (Target::Base(i), Some(c)) if bases.base[*i].id == c.to => format!("\nDELIVER HERE +${}", c.pay),
+            let parcel = match (target, save.as_ref()) {
+                (Target::Base(i), Some(s)) => super::board::marker(s, &bases.base[*i].id),
                 _ => String::new(),
             };
             let line = if world.is_empty() { format!("{name}\n{}", km(distance)) } else { format!("{name}\n{} - {}", world.to_uppercase(), km(distance)) } + &parcel;

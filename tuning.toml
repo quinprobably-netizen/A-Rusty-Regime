@@ -368,8 +368,18 @@ guns = { pistol = 300, revolver = 500, harpoon = 400, smg = 600, fist = 600, sho
 attachments = [[0, 200, 400], [0, 200, 350], [0, 150, 150], [0, 200, 250]]  # by gunsmith slot, then part; the bare part is free
 tune = [300, 700, 1400]     # the Yard's engine tune, a level each
 tithe = 150                 # the Reliquary's blessing
-courier_base = 250          # a courier parcel pays this
-courier_step = 150          # and this much more for each of the next two, then round again
+courier_base = 250          # job boards: a courier parcel pays this
+courier_per_km = 3          # and this a km between the two worlds when the board went up
+danger_pay = 1.5            # times that to a faction hostile to you
+cull_per_kill = 50          # a cull pays this a raider
+cull_kills = [4, 8]         # raiders a cull asks for, fewest and most
+supply_scrap = [20, 40]     # scrap a supply run asks for, fewest and most
+supply_markup = 1.3         # it pays this over what that scrap sells for at 70%
+supply_chance = 0.5         # a board has a supply run this share of days (never the Yard's)
+jobs = 2                    # jobs you can carry at once
+drop_standing = -5          # a parcel lost with your ship or let lapse, with whoever gave it
+day = 2880                  # s of game time to a day: boards change, jobs taken yesterday lapse
+scrap_buyers = { yard = 1.0, outpost = 0.7 }  # boards that buy scrap, at this share of scrap_value
 scrap_value = 6             # $ a scrap: what the Yard pays, and what parts count for in the ship's value
 hold_base = 60              # scrap the hold carries
 hold_per_plating = 20       # and this much more a level of hull plating

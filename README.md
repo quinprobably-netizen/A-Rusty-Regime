@@ -292,6 +292,18 @@ the bank holds. Reaching a base's door also **repairs** the hull of the ship you
 parked within 400 m, at $1 a point (priced by your standing there) as far as the bank goes. The
 Yard's parts rack **buys scrap** at $6 each ($7 to a friend, $5 below -40). Every price in the
 game is in `[economy]` in `tuning.toml`.
+**Job boards** (stage B, `solar::board`): every base has a board just inside its door, and Site
+Vantage's courier desk is one too. E opens it (W/S to pick, Enter to take). It holds three offers
+a game day (48 minutes), the same however often you look: a **courier** parcel for another base's
+door ($250 and $3 a km between the worlds, half again to a faction whose patrols shoot you), a
+**cull** of 4 to 8 raiders shot down by your ship ($50 each, into the pocket on the last one, on
+top of the bounties), and on some days a **supply run** of 20 to 40 scrap brought back to that
+board (never at the Yard). You carry two jobs at a time, each due by the end of the next day. A
+parcel let lapse or lost with your ship costs 5 standing with whoever gave it to you; culls and
+supply runs are not cargo and survive being shot down. Vantage's board buys scrap at $4. Your jobs
+show in the flight readout and Pause > Contracts, and a base's marker says DELIVER HERE or HAND IN
+when one is for it. `RUST_REGIME_MENU=board` (with `RUST_REGIME_BOARD=<base id>`) opens a board
+for screenshots.
 **Salvage** (stage 3, the same spec, `solar::salvage`): an enemy ship shot down, by you or by
 anyone else, drops **scrap** where it blew apart (Jackal 2, Sentry 4, Censer 5, Welder 8): a few
 glowing orange chunks that drift on with the wreck's velocity, slowing in air and coming to rest
@@ -359,9 +371,8 @@ from the banked money in `save.toml`): the Roost's quartermaster resupplies heal
 for free and its hangar locker opens the wardrobe; the Yard's tuning rig upgrades the Kestrel's
 engines (three levels, $300 / $700 / $1400: more thrust and top speed, a little sharper
 turning) and its parts rack sells the Kestrel's parts for scrap and buys your scrap (see Salvage
-and Money); Site Vantage's courier desk hands out parcels to the other bases (deliver by walking
-up to the destination's door, which is marked DELIVER HERE;
-$250 / $400 / $550); the Reliquary's shrine sells a blessing for a $150 tithe (+50 health for
+and Money); Site Vantage's courier desk opens its job board (see Job boards; deliver a parcel by walking
+up to the destination's door, which is marked DELIVER HERE); the Reliquary's shrine sells a blessing for a $150 tithe (+50 health for
 five minutes). Those prices move with your standing with the base's faction, which may also
 refuse you (see Faction standing). Every base's door banks your pocket and repairs your ship. The flight readout shows what is in reach, your bank and scrap, and the parcel you carry.
 

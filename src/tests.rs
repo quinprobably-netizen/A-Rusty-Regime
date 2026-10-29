@@ -2543,27 +2543,68 @@ fn a_tuned_ship_climbs_faster() {
     assert!(tuned > stock * 1.2, "Mk3 climbs {tuned} m, stock {stock} m in 2 s");
 }
 
+/// A courier job for base `to`, from Site Vantage, never due.
+fn parcel(to: &str, pay: u32) -> Contract {
+    Contract { job: solar::board::Job::Courier { to: to.into() }, from: "outpost".into(), pay, due: None }
+}
+
 #[test]
-fn a_parcel_is_taken_at_the_desk_and_pays_at_the_other_bases_door() {
+fn a_parcel_taken_from_the_board_pays_at_the_other_bases_door() {
     let mut app = system_app();
     run(&mut app, 1.0);
     let bases = app.world().resource::<solar::base::Bases>().clone();
-    let vantage = bases.base.iter().position(|b| b.id == "outpost").unwrap();
-    stand_at_station(&mut app, StationKind::Contracts, vantage);
-    press_use(&mut app);
-    let contract = app.world().resource::<Save>().contract.clone().expect("a contract was handed out");
-    assert_ne!(contract.to, "outpost");
-    // A second press while carrying one gives nothing new.
-    press_use(&mut app);
-    assert_eq!(app.world().resource::<Save>().contract, Some(contract.clone()));
-    // Carry it to the Roost, the only base on this world, and stand in its doorway.
-    app.world_mut().resource_mut::<Save>().contract = Some(Contract { to: "roost".into(), pay: 250 });
+    // The day's boards are up, one for each base, each with a courier first.
+    let save = app.world().resource::<Save>().clone();
+    assert_eq!((save.board_day, save.boards.len()), (Some(0), 4));
+    assert!(save.seed != 0, "the save got its seed");
+    let job = save.boards["outpost"][0].clone();
+    assert!(job.parcel_for().is_some_and(|to| to != "outpost"));
+    let e = Tuning::default().economy;
+    assert_eq!(solar::board::take(&mut app.world_mut().resource_mut::<Save>(), "outpost", 0, &e), Ok(job));
+    // Carry one to the Roost, the only base on this world, and stand in its doorway: it and any
+    // other parcel for the Roost pay; the rest stay aboard.
+    {
+        let mut save = app.world_mut().resource_mut::<Save>();
+        save.contracts = vec![parcel("roost", 250), parcel("yard", 400)];
+    }
     let (at, base) = app.world_mut().query::<(&GlobalTransform, &solar::base::Base)>().single(app.world()).map(|(g, b)| (*g, b.spec)).unwrap();
     let door = at.translation() + at.rotation() * Vec3::from(bases.base[base].door);
     set_player(&mut app, door, Vec3::ZERO);
     run(&mut app, 0.2);
     let save = app.world().resource::<Save>();
-    assert_eq!((save.banked, save.contracts_done, save.contract.clone()), (250, 1, None), "paid on arrival");
+    assert_eq!((save.banked, save.contracts_done, save.contracts.clone()), (250, 1, vec![parcel("yard", 400)]), "paid on arrival");
+}
+
+#[test]
+fn the_board_stands_inside_every_bases_door_and_a_day_puts_up_new_boards() {
+    let mut app = system_app();
+    run(&mut app, 1.0);
+    let bases = app.world().resource::<solar::base::Bases>().clone();
+    for (i, b) in bases.base.iter().enumerate() {
+        let at = Vec3::from(b.door) + solar::base::BOARD_IN;
+        assert!(at.distance(Vec3::from(b.door)) < 3.0, "{} board by its door", b.id);
+        let _ = i;
+    }
+    // The Roost is the base on this world: its board station is there.
+    let boards = app.world_mut().query::<&Station>().iter(app.world()).filter(|s| s.kind == StationKind::Board).count();
+    assert_eq!(boards, 1, "one board on Haven, at the Roost");
+    let e = Tuning::default().economy;
+    let before = app.world().resource::<Save>().boards.clone();
+    {
+        let mut save = app.world_mut().resource_mut::<Save>();
+        save.contracts = vec![Contract { job: solar::board::Job::Courier { to: "yard".into() }, from: "outpost".into(), pay: 500, due: Some(1) }];
+        save.day_clock = e.day - 0.5;
+    }
+    run(&mut app, 1.0);
+    let save = app.world().resource::<Save>().clone();
+    assert_eq!((save.day, save.board_day), (1, Some(1)), "a new day, new boards");
+    assert_ne!(save.boards, before);
+    assert_eq!(save.contracts.len(), 1, "due by the end of day 1, still in hand on it");
+    app.world_mut().resource_mut::<Save>().day_clock = e.day - 0.5;
+    run(&mut app, 1.0);
+    let save = app.world().resource::<Save>().clone();
+    assert!(save.contracts.is_empty(), "lapsed on day 2");
+    assert_eq!(standing_of(&app, Faction::Pmc), -25, "and the PMC, who gave it, think 5 worse of you");
 }
 
 /// The solar system with the menu and input devices, played from the title screen on.
@@ -2579,6 +2620,68 @@ fn counter_app() -> App {
     assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Playing);
     run(&mut app, 1.0);
     app
+}
+
+#[test]
+fn the_board_opens_from_its_station_takes_two_jobs_and_no_more() {
+    use crate::menu::{Menu, Panel, Screen};
+    let mut app = counter_app();
+    stand_at_station(&mut app, StationKind::Board, 0);
+    let offers = app.world().resource::<Save>().boards["roost"].clone();
+    assert!(offers.len() >= 2);
+    press_use(&mut app);
+    run(&mut app, 0.2);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Paused);
+    let menu = app.world().resource::<Menu>();
+    assert_eq!((menu.panel, menu.board.as_str(), menu.board_faction, menu.from_station), (Panel::Board, "roost", Faction::Deserters, true));
+    // Enter takes the first offer, then the next one up; a third is refused and stays.
+    tap(&mut app, KeyCode::Enter);
+    tap(&mut app, KeyCode::Enter);
+    let save = app.world().resource::<Save>().clone();
+    assert_eq!(save.contracts, offers[..2].to_vec());
+    assert_eq!(save.boards["roost"], offers[2..].to_vec());
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!(app.world().resource::<Save>().contracts.len(), 2);
+    assert!(app.world().resource::<Menu>().note.contains("2 jobs already"), "{}", app.world().resource::<Menu>().note);
+    // The Roost buys no scrap: three offers, two jobs, then the sell row.
+    app.world_mut().resource_mut::<Save>().scrap = 10;
+    for _ in 0..5 {
+        tap(&mut app, KeyCode::KeyS);
+    }
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!(app.world().resource::<Menu>().note, "This board buys no scrap");
+    assert_eq!(app.world().resource::<Save>().scrap, 10);
+    tap(&mut app, KeyCode::Escape);
+    assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Playing, "back to the game");
+    // Vantage's board buys it at 70%: $4 a scrap to a neutral.
+    set_standing(&mut app, Faction::Pmc, 0);
+    only_station(&mut app, StationKind::Contracts, 3);
+    press_use(&mut app);
+    run(&mut app, 0.2);
+    assert_eq!(app.world().resource::<Menu>().board, "outpost");
+    let banked = app.world().resource::<Save>().banked;
+    for _ in 0..5 {
+        tap(&mut app, KeyCode::KeyS);
+    }
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!((app.world().resource::<Save>().scrap, app.world().resource::<Save>().banked), (0, banked + 40));
+}
+
+#[test]
+fn a_raider_shot_down_by_your_ship_counts_toward_a_cull() {
+    let (mut app, jackal) = gunnery_range(300.0);
+    app.world_mut().resource_mut::<Save>().contracts = vec![
+        Contract { job: solar::board::Job::Cull { need: 2, got: 0 }, from: "roost".into(), pay: 100, due: None },
+        Contract { job: solar::board::Job::Cull { need: 1, got: 0 }, from: "yard".into(), pay: 50, due: None },
+    ];
+    hold_fire(&mut app, 4.0);
+    run(&mut app, 0.2);
+    assert!(app.world().get_entity(jackal).is_err(), "the Jackal is destroyed");
+    let save = app.world().resource::<Save>().clone();
+    assert_eq!(save.contracts.len(), 1, "the one-raider cull is done");
+    assert_eq!(save.contracts[0].job, solar::board::Job::Cull { need: 2, got: 1 });
+    assert_eq!(save.pocket, 60 + 50, "the bounty and the cull's pay, both unbanked");
+    assert_eq!(app.world().resource::<BountyLine>().text, "CULL DONE +$50");
 }
 
 #[test]
@@ -3393,7 +3496,7 @@ fn shot_down_you_lose_the_pocket_the_hold_and_the_parcel_and_pay_the_rebuy() {
         save.banked = 1003;
         save.pocket = 120;
         save.scrap = 30;
-        save.contract = Some(Contract { to: "reliquary".into(), pay: 400 });
+        save.contracts = vec![parcel("reliquary", 400), Contract { job: solar::board::Job::Cull { need: 4, got: 1 }, from: "roost".into(), pay: 200, due: Some(3) }];
         save.ship_level = 2;
         save.parts = [3, 1, 0, 2];
     }
@@ -3404,12 +3507,13 @@ fn shot_down_you_lose_the_pocket_the_hold_and_the_parcel_and_pay_the_rebuy() {
     // The camera hangs on the blast: the wreck is out of sight and out of the physics.
     let downed = app.world().resource::<Downed>();
     assert_eq!(downed.wreck, Some(wreck), "watching the wreck");
-    assert_eq!(downed.lost, Loss { pocket: 120, scrap: 30, parcel: before.contract.clone(), fee: 100 }, "a tenth of a $1000 tune is the $100 floor");
+    assert_eq!(downed.lost, Loss { pocket: 120, scrap: 30, parcels: vec![parcel("reliquary", 400)], fee: 100 }, "a tenth of a $1000 tune is the $100 floor");
     assert_eq!(*app.world().get::<Visibility>(wreck).unwrap(), Visibility::Hidden);
     let bases = app.world().resource::<solar::base::Bases>().clone();
     assert_eq!(solar::loss::card_text(&app.world().resource::<Downed>().lost, &bases), "Lost $120 unbanked, 30 scrap and the parcel for The Reliquary. Rebuy $100");
     let save = app.world().resource::<Save>().clone();
-    assert_eq!((save.banked, save.pocket, save.scrap, save.contract.clone(), save.deaths), (903, 0, 0, None, 1), "the bank only pays the rebuy");
+    assert_eq!((save.banked, save.pocket, save.scrap, save.contracts.len(), save.deaths), (903, 0, 0, 1, 1), "the bank only pays the rebuy; the cull is kept");
+    assert_eq!(standing_of(&app, Faction::Pmc), -25, "the parcel's issuer thinks 5 worse of you");
     assert_eq!((&save.weapons, save.parts, save.ship_level, &save.loadout), (&before.weapons, before.parts, before.ship_level, &before.loadout), "guns, parts and tune kept");
     back_at_the_roost(&mut app, wreck);
     assert_eq!(app.world().resource::<Save>().banked, 903, "paid once");
@@ -3504,7 +3608,9 @@ fn an_old_save_without_kills_or_deaths_still_loads() {
     std::fs::write(&path, "banked = 500\nweapons = [\"warden\", \"knife\"]\nparts = [1, 0, 0, 0]\nship_level = 2\ncontracts_done = 3\n\n[contract]\nto = \"yard\"\npay = 400\n").unwrap();
     let file = SaveFile(Some(path.clone()));
     let save = file.load();
-    assert_eq!((save.banked, save.ship_level, save.contracts_done, save.contract.as_ref().map(|c| c.pay)), (500, 2, 3, Some(400)), "the old fields are kept");
+    assert_eq!((save.banked, save.ship_level, save.contracts_done), (500, 2, 3), "the old fields are kept");
+    assert_eq!((save.contracts.clone(), save.contract.clone()), (vec![Contract { job: solar::board::Job::Courier { to: "yard".into() }, from: "outpost".into(), pay: 400, due: None }], None), "the old parcel is a courier job");
+    assert!(!toml::to_string(&save).unwrap().contains("[contract]"), "and is not written back the old way");
     assert_eq!((save.kills, save.deaths, save.faction_kills.len()), (0, 0, 0), "the new ones start at zero");
     // And the new fields round-trip.
     let tallied = Save { kills: 3, deaths: 1, faction_kills: [("raiders".to_string(), 2), ("pmc".to_string(), 1)].into_iter().collect(), ..save };
@@ -3925,13 +4031,13 @@ fn a_friendly_base_sells_for_less_a_wary_one_for_more_and_a_hostile_one_not_at_a
     press_use(&mut app);
     assert_eq!((app.world().resource::<Save>().ship_level, app.world().resource::<Save>().banked), (1, 10_000), "refused");
     assert!(prompt(&app).contains("The Scrappers will not serve you"), "{}", prompt(&app));
-    // Hated by the PMC, its courier desk still hands out a parcel, while any other station of
+    // Hated by the PMC, its courier desk still opens its board, while any other station of
     // Site Vantage's would refuse you.
     let vantage = 3;
     set_standing(&mut app, Faction::Pmc, -80);
     only_station(&mut app, StationKind::Contracts, vantage);
     press_use(&mut app);
-    assert!(app.world().resource::<Save>().contract.is_some(), "a parcel at -80: {}", prompt(&app));
+    assert!(!prompt(&app).contains("will not serve"), "the board at -80: {}", prompt(&app));
     only_station(&mut app, StationKind::Workshop, vantage);
     app.world_mut().resource_mut::<Save>().ship_level = 1;
     press_use(&mut app);
@@ -3951,7 +4057,7 @@ fn a_parcel_to_a_friends_base_pays_a_fifth_more_and_raises_your_standing_there()
         let mut app = system_app();
         run(&mut app, 1.0);
         set_standing(&mut app, Faction::Scrappers, standing);
-        app.world_mut().resource_mut::<Save>().contract = Some(Contract { to: "yard".into(), pay: 250 });
+        app.world_mut().resource_mut::<Save>().contracts = vec![parcel("yard", 250)];
         // A stand-in for the Yard (on Cinder) with its doorway where the player stands.
         let bases = app.world().resource::<solar::base::Bases>().clone();
         let yard = bases.base.iter().position(|b| b.id == "yard").unwrap();
@@ -3959,7 +4065,7 @@ fn a_parcel_to_a_friends_base_pays_a_fifth_more_and_raises_your_standing_there()
         app.world_mut().spawn((solar::base::Base { spec: yard }, GlobalTransform::from_translation(at)));
         run(&mut app, 0.2);
         let save = app.world().resource::<Save>();
-        assert!(save.contract.is_none(), "delivered");
+        assert!(save.contracts.is_empty(), "delivered");
         (save.banked, standing_of(&app, Faction::Scrappers), app.world().resource::<solar::station::Prompt>().text())
     };
     let (paid, after, _) = deliver(-20);

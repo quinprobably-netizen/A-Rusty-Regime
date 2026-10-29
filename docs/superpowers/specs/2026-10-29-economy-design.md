@@ -4,7 +4,9 @@ Follows `2026-10-29-ship-combat-stages-2-3-design.md` (standing and salvage, bot
 on 2026-10-29 for "a proper economy system" and approved it the same day with the pocket-at-risk
 death rule. **Stage A is built** (`docs/superpowers/plans/2026-10-29-economy-stage-a.md`, with two
 simplifications: the Roost charges list price, and selling scrap is at the Yard only until stage
-B gives Vantage a board screen). B, C and D are not built.
+B gives Vantage a board screen). **Stage B is built** (`docs/superpowers/plans/2026-10-29-economy-stage-b.md`,
+which records the choices it made: courier pay per km, supply runs raising standing like a
+delivery, the board spawned inside each door). C and D are not built.
 
 ## TL;DR
 

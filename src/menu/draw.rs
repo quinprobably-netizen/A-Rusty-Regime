@@ -44,6 +44,7 @@ pub(super) fn hints(panel: Panel, screen: Screen) -> &'static [(&'static str, &'
         Panel::Wardrobe => &[("UP DN", "W S", "SLOT"), ("L R", "A D", "CHANGE"), ("B", "ESC", "BACK")],
         Panel::Ship => &[("UP DN", "W S", "SLOT"), ("L R", "A D", "FIT MODULE"), ("B", "ESC", "BACK")],
         Panel::Controls | Panel::Starmap | Panel::Contracts | Panel::Standing => &[("B", "ESC", "BACK")],
+        Panel::Board => &[("UP DN", "W S", "JOB"), ("A", "ENTER", "TAKE / HAND IN"), ("B", "ESC", "BACK")],
         Panel::Maps => &[("A", "ENTER", "PLAY"), ("B", "ESC", "BACK")],
     }
 }
@@ -115,7 +116,7 @@ pub(super) fn rebuild(
     *was_pad = Some(pad);
     let wardrobe_changed = closet.wardrobe.as_ref().is_some_and(|w| w.is_changed());
     let gun_changed = menu.panel == Panel::Quartermaster && (arsenal.is_changed() || save.as_ref().is_some_and(|s| s.is_changed()));
-    let salvage_changed = matches!(menu.panel, Panel::Parts | Panel::Ship) && save.as_ref().is_some_and(|s| s.is_changed());
+    let salvage_changed = matches!(menu.panel, Panel::Parts | Panel::Ship | Panel::Board) && save.as_ref().is_some_and(|s| s.is_changed());
     if !(device_changed || menu.is_changed() || screen.is_changed() || settings.is_changed() || loadout.is_changed() || gun_changed || salvage_changed || wardrobe_changed) {
         return;
     }
@@ -190,6 +191,7 @@ pub(super) fn rebuild(
                 Panel::Ship => ("THE HANGAR".to_string(), "SHIPS"),
                 Panel::Contracts => ("COURIER WORK".to_string(), "CONTRACTS"),
                 Panel::Standing => ("THE FACTIONS".to_string(), "STANDING"),
+                Panel::Board => (super::space::board_title(&menu.board, &space), "JOB BOARD"),
             };
             h.spawn((display_text(big, 60.0, t.red, &t), TextShadow { offset: Vec2::splat(4.0), color: t.ink }, UiTransform::from_rotation(Rot2::degrees(-2.0))));
             h.spawn((body_text(small, 17.0, t.ink, true, &t), Node { margin: UiRect::top(Val::Px(4.0)), ..default() }));
@@ -234,9 +236,21 @@ pub(super) fn rebuild(
                         value_row(list, &t, &value.0, &value.1, Some(fill), Some(&note), index, index == menu.cursor, false);
                         index += 1;
                     }
+                    Row::Offer(i) => {
+                        let (label, value, note) = super::space::offer_row(i, &menu.board, &space, save.as_deref());
+                        value_row(list, &t, &label, &value, None, Some(&note), index, index == menu.cursor, false);
+                        index += 1;
+                    }
+                    Row::Job(i) => {
+                        let (label, value, note) = super::space::job_row(i, &menu.board, &space, save.as_deref());
+                        value_row(list, &t, &label, &value, None, Some(&note), index, index == menu.cursor, false);
+                        index += 1;
+                    }
                     Row::Sell => {
                         let scrap = save.as_ref().map_or(0, |s| s.scrap);
-                        let each = save.as_deref().map_or(tuning.economy.scrap_value, |s| crate::solar::standing::buys(tuning.economy.scrap_value, menu.rack, s, &tuning.ship_combat));
+                        let (faction, share) = if menu.panel == Panel::Board { (menu.board_faction, tuning.economy.scrap_buyers.get(&menu.board).copied().unwrap_or(0.0)) } else { (menu.rack, 1.0) };
+                        let value = (tuning.economy.scrap_value as f32 * share).round() as u32;
+                        let each = save.as_deref().map_or(value, |s| crate::solar::standing::buys(value, faction, s, &tuning.ship_combat));
                         let note = format!("${each} a scrap, into the bank");
                         value_row(list, &t, &format!("SELL {scrap} SCRAP"), &format!("${}", scrap * each), None, Some(&note), index, index == menu.cursor, false);
                         index += 1;
@@ -255,7 +269,7 @@ pub(super) fn rebuild(
             if menu.panel == Panel::Controls {
                 list.spawn((body_text(controls_sheet(), 16.0, t.ink, false, &t), Node { margin: UiRect::vertical(Val::Px(8.0)), ..default() }));
             }
-            if menu.panel == Panel::Parts && !menu.note.is_empty() {
+            if matches!(menu.panel, Panel::Parts | Panel::Board) && !menu.note.is_empty() {
                 list.spawn((body_text(menu.note.clone(), 18.0, t.red, true, &t), Node { margin: UiRect::top(Val::Px(10.0)), ..default() }));
             }
         });
@@ -302,8 +316,8 @@ pub(super) fn rebuild(
 
         // The hint strip along the bottom, with the bank on the main menu and at the counter, and
         // your scrap on the main menu, at the parts rack and on the Ship screen.
-        let money = matches!(menu.panel, Panel::Main | Panel::Quartermaster | Panel::Parts).then_some(banked);
-        let scrap = matches!(menu.panel, Panel::Main | Panel::Parts | Panel::Ship).then_some(scrap);
+        let money = matches!(menu.panel, Panel::Main | Panel::Quartermaster | Panel::Parts | Panel::Board).then_some(banked);
+        let scrap = matches!(menu.panel, Panel::Main | Panel::Parts | Panel::Ship | Panel::Board).then_some(scrap);
         let labels = hint_labels(menu.panel, screen, pad);
         let pairs: Vec<(&str, &str)> = labels.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
         p.spawn(Node { position_type: PositionType::Absolute, left: Val::Px(0.0), right: Val::Px(0.0), bottom: Val::Px(0.0), ..default() }).with_children(|b| {
@@ -722,7 +736,7 @@ mod tests {
 
     #[test]
     fn every_panel_has_hints_and_a_way_back() {
-        for panel in [Panel::Main, Panel::Maps, Panel::Settings, Panel::Controls, Panel::Quartermaster, Panel::Wardrobe, Panel::Starmap, Panel::Ship, Panel::Contracts, Panel::Standing] {
+        for panel in [Panel::Main, Panel::Maps, Panel::Settings, Panel::Controls, Panel::Quartermaster, Panel::Wardrobe, Panel::Starmap, Panel::Ship, Panel::Contracts, Panel::Standing, Panel::Board] {
             let h = hints(panel, Screen::Paused);
             assert!(!h.is_empty(), "{panel:?}");
             assert!(h.iter().all(|(pad, key, what)| !pad.is_empty() && !key.is_empty() && !what.is_empty()), "{panel:?}");
