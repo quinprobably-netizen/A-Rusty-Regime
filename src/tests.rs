@@ -2518,3 +2518,145 @@ fn the_shrine_sells_a_blessing_that_lengthens_the_health_bar_for_a_while() {
     assert!((health.max - plain).abs() < 0.01 && health.hp <= health.max, "back to normal: {} / {}", health.hp, health.max);
 }
 
+
+// ------------------------------------------------------------------- raiders, patrols and the AI
+
+use solar::ai::{Enemy, Role};
+use solar::enemy::spawn_enemy;
+
+/// The Kestrel boarded and hanging `height` metres straight over the pad, at rest.
+fn aloft(height: f32) -> App {
+    let mut app = system_app();
+    run(&mut app, 0.5);
+    board(&mut app);
+    let (p, _) = ship_state(&mut app);
+    put_ship(&mut app, p + p.normalize() * height, Vec3::ZERO);
+    run(&mut app, 0.1);
+    app
+}
+
+/// Where a ship is, its nose and its velocity, in the world frame.
+fn pose(app: &App, e: Entity) -> (Vec3, Vec3, Vec3) {
+    let (p, r, v) = (app.world().get::<Position>(e).unwrap().0, app.world().get::<Rotation>(e).unwrap().0, app.world().get::<LinearVelocity>(e).unwrap().0);
+    (p, r * Vec3::NEG_Z, v)
+}
+
+/// The ship spec index of `id`.
+fn spec_of(app: &App, id: &str) -> usize {
+    app.world().resource::<solar::ship::Ships>().ship.iter().position(|s| s.id == id).unwrap()
+}
+
+/// An enemy `id` at `offset` (world frame) from the Kestrel, nose toward it, at rest.
+fn enemy_near(app: &mut App, id: &str, offset: Vec3, role: Role) -> Entity {
+    let spec = spec_of(app, id);
+    let ship = ship_entity(app);
+    let (p, _, _) = pose(app, ship);
+    let at = p + offset;
+    let up = app.world().resource::<Surface>().up(app.world().resource::<Origin>().body(at));
+    let facing = Transform::from_translation(at).looking_at(p, up).rotation;
+    let e = spawn_enemy(app.world_mut(), spec, at, facing, Vec3::ZERO, role);
+    run(app, 1.0 / 66.0);
+    e
+}
+
+#[test]
+fn a_raider_past_six_km_is_gone() {
+    let mut app = aloft(3400.0);
+    let ship = ship_entity(&mut app);
+    let side = app.world().get::<Rotation>(ship).unwrap().0 * Vec3::X;
+    let near = enemy_near(&mut app, "jackal", side * 5500.0, Role::Raider);
+    let far = enemy_near(&mut app, "jackal", -side * 6300.0, Role::Raider);
+    run(&mut app, 0.1);
+    assert!(app.world().get_entity(far).is_err(), "6.3 km off: gone");
+    assert!(app.world().get_entity(near).is_ok(), "5.5 km off: still coming");
+}
+
+#[test]
+fn a_raider_closes_on_the_kestrel_and_fires_only_with_it_in_the_cone() {
+    let mut app = aloft(2000.0);
+    let t = Tuning::default().ship_combat;
+    let ship = ship_entity(&mut app);
+    let side = app.world().get::<Rotation>(ship).unwrap().0 * Vec3::X;
+    // A steady hand, so every pass that should land does.
+    let spec = spec_of(&app, "jackal");
+    app.world_mut().resource_mut::<solar::ship::Ships>().ship[spec].ai.wobble = 0.0;
+    let jackal = enemy_near(&mut app, "jackal", side * 2000.0, Role::Raider);
+    let ai = app.world().resource::<solar::ship::Ships>().ship[spec].ai.clone();
+    let (mut nearest, mut fired, mut modes) = (f32::MAX, 0, HashSet::new());
+    for _ in 0..(10.0 / DT) as usize {
+        let ((p, nose, v), (q, _, w)) = (pose(&app, jackal), pose(&app, ship));
+        nearest = nearest.min(p.distance(q));
+        app.update();
+        let Some(enemy) = app.world().get::<Enemy>(jackal) else { break };
+        modes.insert(format!("{:?}", enemy.mode));
+        if app.world().get::<ShipControls>(jackal).unwrap().fire {
+            fired += 1;
+            let aim = solar::ai::lead(q - p, w - v, t.gun_speed);
+            let off = nose.angle_between(aim).to_degrees();
+            assert!(off < ai.cone + 1.0, "fired {off:.1} degrees off the lead");
+        }
+    }
+    assert!(nearest < 800.0, "closed from 2 km to {nearest:.0} m");
+    assert!(fired > 0, "and fired: {modes:?}");
+    let hull = *app.world().get::<Hull>(ship).unwrap();
+    assert!(hull.shield < 60.0, "and hit: shield {} hull {}", hull.shield, hull.hp);
+    assert!(modes.contains("Break"), "and broke off after a pass: {modes:?}");
+}
+
+#[test]
+fn an_enemy_pilot_diving_on_a_low_target_never_flies_into_the_ground() {
+    let mut app = aloft(60.0);
+    let ship = ship_entity(&mut app);
+    let rot = app.world().get::<Rotation>(ship).unwrap().0;
+    let mut ships = Vec::new();
+    for id in ["jackal", "censer", "welder", "sentry"] {
+        let e = enemy_near(&mut app, id, rot * Vec3::new(400.0 * ships.len() as f32 - 600.0, 300.0, -1200.0), Role::Raider);
+        // One side, so none is shot down by another's stray fire.
+        app.world_mut().entity_mut(e).insert(Faction::Raiders);
+        app.world_mut().get_mut::<LinearVelocity>(e).unwrap().0 = (pose(&app, ship).0 - pose(&app, e).0).normalize() * 150.0;
+        ships.push((id, e, f32::MAX));
+    }
+    for _ in 0..(40.0 / DT) as usize {
+        app.update();
+        let solar = app.world().resource::<Solar>();
+        let (surface, origin) = (app.world().resource::<Surface>(), app.world().resource::<Origin>());
+        for (_, e, low) in &mut ships {
+            let Some(p) = app.world().get::<Position>(*e) else { continue };
+            *low = low.min(solar::ship::clearance(solar, surface, origin.body(p.0)));
+        }
+    }
+    for (id, e, low) in ships {
+        assert!(app.world().get_entity(e).is_ok(), "{id} still flying");
+        assert!(low > 25.0, "{id} came down to {low:.0} m over the ground");
+    }
+}
+
+#[test]
+fn a_dogfight_across_an_origin_rebase_keeps_every_ship_on_its_path() {
+    let mut app = aloft(2000.0);
+    let ship = ship_entity(&mut app);
+    let (_, nose, _) = pose(&app, ship);
+    let side = app.world().get::<Rotation>(ship).unwrap().0 * Vec3::X;
+    let raiders = [enemy_near(&mut app, "jackal", side * 900.0 - nose * 300.0, Role::Raider), enemy_near(&mut app, "jackal", -side * 1200.0, Role::Raider)];
+    // Full throttle, level: the Kestrel runs and the raiders chase it, the world re-centring on
+    // it every 400 m.
+    app.world_mut().resource_mut::<Tuning>().terrain.origin_step = 400.0;
+    input(&mut app).thrust = 1.0;
+    let start = app.world().resource::<Origin>().offset;
+    let mut rebased = 0;
+    for tick in 0..(10.0 / DT) as usize {
+        let origin = *app.world().resource::<Origin>();
+        let last: Vec<(Vec3, Vec3)> = raiders.iter().map(|&e| (origin.body(app.world().get::<Position>(e).unwrap().0), app.world().get::<LinearVelocity>(e).unwrap().0)).collect();
+        app.update();
+        let now = *app.world().resource::<Origin>();
+        rebased += (now.offset != origin.offset) as i32;
+        for (k, &e) in raiders.iter().enumerate() {
+            let (pos, tf, v) = (app.world().get::<Position>(e).unwrap().0, app.world().get::<Transform>(e).unwrap().translation, app.world().get::<LinearVelocity>(e).unwrap().0);
+            assert!(pos.distance(tf) < 0.01, "tick {tick}: transform and body agree");
+            let step = now.body(pos) - last[k].0;
+            let expected = (last[k].1 + v) / 2.0 * DT;
+            assert!(step.distance(expected) < 1.0, "tick {tick}: raider {k} jumped {:.2} m off its path", step.distance(expected));
+        }
+    }
+    assert!(rebased > 0 && app.world().resource::<Origin>().offset != start, "the origin moved under the fight");
+}

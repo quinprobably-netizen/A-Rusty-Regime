@@ -25,7 +25,7 @@ pub(super) struct Space<'w, 's> {
     solar: Option<Res<'w, Solar>>,
     bases: Option<Res<'w, Bases>>,
     ships: Option<Res<'w, Ships>>,
-    parked: Query<'w, 's, &'static Ship>,
+    parked: Query<'w, 's, &'static Ship, Without<crate::solar::ship::Autopilot>>,
 }
 
 /// A world's distance from the star on the map: a log scale, so moons-close and far worlds both fit.

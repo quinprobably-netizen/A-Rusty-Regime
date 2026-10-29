@@ -501,11 +501,72 @@ pub struct ShipCombat {
     /// Seconds with no hit before a shield comes back, and how fast it comes back (points a second).
     pub shield_delay: f32,
     pub shield_regen: f32,
+    /// Enemy ships (`solar::enemy`): at most `enemy_cap` alive, raiders coming in between
+    /// `spawn_near` and `spawn_far` (m) from you and gone past `despawn`.
+    pub enemy_cap: usize,
+    pub spawn_near: f32,
+    pub spawn_far: f32,
+    pub despawn: f32,
+    /// Raiders: packs of `raid_pack` (fewest, most) of the `raider` ship, `raid_delay` seconds
+    /// apart, the clock running twice as fast after `raid_hurry` seconds without a fight; none in
+    /// the first `raid_grace` seconds after boarding or within `raid_clear` metres of a base.
+    pub raider: String,
+    pub raid_pack: [usize; 2],
+    pub raid_delay: f32,
+    pub raid_hurry: f32,
+    pub raid_grace: f32,
+    pub raid_clear: f32,
+    /// Patrols: `patrols` per base while you are within `patrol_range` (m), circling
+    /// `patrol_radius` out at `patrol_altitude`; they take you on inside `patrol_engage` of the
+    /// base and let you go past `patrol_give_up`, and one shot down is back after
+    /// `patrol_respawn` seconds of game time.
+    pub patrols: usize,
+    pub patrol_range: f32,
+    pub patrol_radius: f32,
+    pub patrol_altitude: f32,
+    pub patrol_engage: f32,
+    pub patrol_give_up: f32,
+    pub patrol_respawn: f32,
+    /// Enemy pilots (`solar::ai`) keep `ai_floor` metres over the ground, looking `ai_lookahead`
+    /// seconds ahead along their sink rate.
+    pub ai_floor: f32,
+    pub ai_lookahead: f32,
 }
 
 impl Default for ShipCombat {
     fn default() -> Self {
-        Self { gun_rate: 2.0, gun_speed: 1200.0, gun_damage: 12.0, gun_range: 2000.0, converge: 400.0, heat_per_shot: 0.08, cool: 0.15, resume: 0.4, air_drag: 0.1, shield_delay: 5.0, shield_regen: 10.0 }
+        Self {
+            gun_rate: 2.0,
+            gun_speed: 1200.0,
+            gun_damage: 12.0,
+            gun_range: 2000.0,
+            converge: 400.0,
+            heat_per_shot: 0.08,
+            cool: 0.15,
+            resume: 0.4,
+            air_drag: 0.1,
+            shield_delay: 5.0,
+            shield_regen: 10.0,
+            enemy_cap: 8,
+            spawn_near: 1500.0,
+            spawn_far: 3000.0,
+            despawn: 6000.0,
+            raider: "jackal".into(),
+            raid_pack: [2, 4],
+            raid_delay: 90.0,
+            raid_hurry: 120.0,
+            raid_grace: 60.0,
+            raid_clear: 3000.0,
+            patrols: 2,
+            patrol_range: 8000.0,
+            patrol_radius: 900.0,
+            patrol_altitude: 300.0,
+            patrol_engage: 2500.0,
+            patrol_give_up: 4000.0,
+            patrol_respawn: 600.0,
+            ai_floor: 150.0,
+            ai_lookahead: 4.0,
+        }
     }
 }
 
