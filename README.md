@@ -74,10 +74,12 @@ The game boots to a title screen over the live world; Esc pauses (time stops, th
 back). Both lists lead to the same screens: **Wardrobe** (character, head, colours, camo, skin, gloves, boots, webbing, metal, lights, visor, wear and three presets, shown on a mannequin), **Settings** (mouse sensitivity, invert Y, FOV, five volumes, sky, bloom, ambient
 occlusion, anti-aliasing, shadow distance; saved to `settings.toml`, which lays over
 `tuning.toml` so F5 keeps your choices), **Maps** (the solar system) and **Controls**; paused in the
-solar system, also **Starmap**, **Ship**, **Contracts** and **Standing** (a bar per faction, the
-word for it and what it gets you). Navigate with W/S or arrows, adjust with
+solar system, also **Starmap**, **Ship** (your ships, the Kestrel's parts and modules, and its
+two module slots: A/D steps a slot through the modules you own), **Contracts** and **Standing**
+(a bar per faction, the word for it and what it gets you). The paused list's hint strip shows
+your bank and your scrap. Navigate with W/S or arrows, adjust with
 A/D, Enter picks, Esc backs out; the d-pad, A and B do the same on a pad; the mouse works too.
-`RUST_REGIME_MENU=title|pause|maps|settings|controls|quartermaster|wardrobe|starmap|ship|contracts|standing|play` opens straight into a screen
+`RUST_REGIME_MENU=title|pause|maps|settings|controls|quartermaster|wardrobe|starmap|ship|contracts|standing|parts|play` opens straight into a screen
 (with `RUST_REGIME_SCREENSHOT` it skips the title unless set). Design notes:
 `docs/superpowers/specs/2026-10-18-menus-design.md`.
 
@@ -105,7 +107,9 @@ the waypoints, hollow for a patrol that will not shoot you; the one in your nose
 comes on and close into a solid ring once it is locked. Four white ticks flash round the nose
 when your shots land, wider and red on a kill, and MISSILE LOCK / MISSILE! shows under the
 compass while a Sentry has you locked or its missile is in the air. When your standing with a
-faction changes, a short line under the bounty line says so (`REGIME -25  SCRAPPERS +5`).
+faction changes, a short line under the bounty line says so (`REGIME -25  SCRAPPERS +5`), and
+salvage taken aboard gets one under that (`+4 SCRAP`, `MODULE FOUND  AFTERBURNER`). Your scrap
+shows beside the bank top right (`BANK 750   SCRAP 12`) and in the flight readout.
 
 ## Movement
 - **Source/TF2 core** at 66 ticks/s: ground friction and acceleration, air strafing (30u air cap), bunny hopping (jump on the landing tick to skip friction), crouch-jumping (legs tuck up in the air), ramp sliding and surfing on steep slopes, stair stepping.
@@ -171,7 +175,7 @@ zooms in and tightens the spread.
 
 ## Survival and the world
 - **Health**: heavy hits make you bleed until a medkit. Health regenerates only up to 60% and not while bleeding.
-- **Save**: banked money, what you own, ships shot down (by faction), times you were shot down and your standing with each faction persist in `save.toml` next to the binary (`RUST_REGIME_SAVE` overrides the path).
+- **Save**: banked money, what you own, ships shot down (by faction), times you were shot down, your standing with each faction and your salvage (scrap, the Kestrel's part levels, the modules you own and the two fitted) persist in `save.toml` next to the binary (`RUST_REGIME_SAVE` overrides the path).
 - **Sound** is synthesized at startup. Put a CC0 `.ogg` with the same name in
   `assets/sounds/` (rifle, shotgun, pistol, rocket, explosion, hit, hurt, jump, land,
   wind, ship_gun_0..2, missile_launch, shield_hit, hull_hit, lock_beep, lock_tone,
@@ -277,6 +281,28 @@ pays 20% more. The Roost is never affected. Pause > **Standing** shows where you
 numbers and the grudges are in `[ship_combat]`. `RUST_REGIME_STANDING=regime:50,pmc:-70` sets
 standing at startup for screenshots (it is saved with the next save, so pair it with
 `RUST_REGIME_SAVE`).
+**Salvage** (stage 3, the same spec, `solar::salvage`): an enemy ship shot down, by you or by
+anyone else, drops **scrap** where it blew apart (Jackal 2, Sentry 4, Censer 5, Welder 8): a few
+glowing orange chunks that drift on with the wreck's velocity, slowing in air and coming to rest
+on the ground, for 90 s. Fly within 40 m and the ship pulls it in (never on foot), with a clink
+and a `+4 SCRAP` line. Your own side's wrecks, your own ship included, drop nothing, and salvage
+left behind when you cross into another world's sphere of influence is gone. Scrap is spent at
+the Yard's **parts rack**, beside the tuning rig: E opens the parts menu (W/S to pick, Enter to
+buy) with four permanent upgrades for the Kestrel, three levels each, on top of its own numbers
+and the engine tune: **hull plating** (+25 hull a level; 12 / 24 / 40 scrap), **shield cell** (+15
+shield and 20% faster back; 12 / 24 / 40), **gun capacitor** (the guns heat 20% slower and cool
+20% faster; 10 / 20 / 32) and **missile rack** (+1 missile, back 1.5 s sooner; 15 / 30 / 50). Its
+prices follow your standing with the Scrappers like the rest of the Yard's, and at -60 it will
+not sell. A quarter of the time a wreck also drops its hull's own **module**, a cyan box, picked
+up the same way and kept for good (a spare is 10 scrap); two fit at a time, from Pause > Ship,
+and each has a cost: the Jackal's **afterburner** refills the boost tank 40% faster for 10% less
+shield, the Sentry's **targeting array** locks in 0.8 s but in a cone 4 degrees tighter, the
+Censer's **spire coil** fires shots 25% faster and 15% harder but heats the guns 20% faster, and
+the Welder's **ram plate** hurts an enemy you fly into for 30 for 10% less thrust. Parts and
+modules are kept when you are shot down. The numbers are in `[ship_combat]`. For screenshots,
+`RUST_REGIME_SCRAP=<n>`, `RUST_REGIME_PARTS=1,2,0,3` (the four levels) and
+`RUST_REGIME_MODULES=afterburner,spire` (owned, the first two fitted) set the save at startup
+(pair them with `RUST_REGIME_SAVE`).
 
 Each faction has a base on its world, from `assets/bases.toml` and
 `assets/models/bases/<id>.glb` (built like the ships: `tools/bases/build.sh [ids]
@@ -304,11 +330,11 @@ world's centre. Markers hide within 30 m and under the menus. `RUST_REGIME_AT=<b
 from the banked money in `save.toml`): the Roost's quartermaster resupplies health and ammunition
 for free and its hangar locker opens the wardrobe; the Yard's tuning rig upgrades the Kestrel's
 engines (three levels, $300 / $700 / $1400: more thrust and top speed, a little sharper
-turning); Site Vantage's courier desk hands out parcels to the other bases (the only income in
+turning) and its parts rack sells the Kestrel's parts for scrap (see Salvage); Site Vantage's courier desk hands out parcels to the other bases (the only income in
 the system: deliver by walking up to the destination's door, which is marked DELIVER HERE;
 $250 / $400 / $550); the Reliquary's shrine sells a blessing for a $150 tithe (+50 health for
 five minutes). Those prices move with your standing with the base's faction, which may also
-refuse you (see Faction standing). The flight readout shows what is in reach, your bank and the parcel you carry.
+refuse you (see Faction standing). The flight readout shows what is in reach, your bank and scrap, and the parcel you carry.
 
 Everything is in `assets/system.toml`: a star, Haven and its low-gravity moon Ash, and
 the three faction worlds, Bastion (Regime: heavy, slate, thin pale air), Cinder

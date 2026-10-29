@@ -296,13 +296,15 @@ impl SalvageLine {
     }
 }
 
-/// The roll for module drops: seeded, so a run is repeatable, and a test can set it.
+/// The roll for module drops, seeded from the clock so each session's wrecks roll afresh; a test
+/// can put in its own seed.
 #[derive(Resource)]
 pub struct Luck(pub Rng);
 
 impl Default for Luck {
     fn default() -> Self {
-        Luck(Rng(0x9e37_79b9_7f4a_7c15))
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64);
+        Luck(Rng(now | 1))
     }
 }
 
@@ -466,7 +468,7 @@ fn load_look(mut commands: Commands, meshes: Option<ResMut<Assets<Mesh>>>, mater
     let (Some(mut meshes), Some(mut materials)) = (meshes, materials) else { return };
     commands.insert_resource(SalvageLook {
         chunk: meshes.add(Cuboid::from_length(1.0)),
-        scrap: materials.add(StandardMaterial { base_color: Color::srgb(0.55, 0.36, 0.2), emissive: LinearRgba::rgb(6.0, 2.6, 0.5), metallic: 0.7, perceptual_roughness: 0.5, ..default() }),
+        scrap: materials.add(StandardMaterial { base_color: Color::srgb(0.85, 0.42, 0.12), emissive: LinearRgba::rgb(3.0, 0.9, 0.1), metallic: 0.6, perceptual_roughness: 0.5, ..default() }),
         module: materials.add(StandardMaterial { base_color: Color::srgb(0.2, 0.8, 0.9), emissive: LinearRgba::rgb(1.0, 8.0, 10.0), metallic: 0.4, perceptual_roughness: 0.3, ..default() }),
     });
 }
@@ -496,6 +498,7 @@ fn dev_salvage(save: Option<ResMut<Save>>) {
 /// Keeps the Kestrel's `Refit` in step with the save: its hull and shield move by what changed
 /// (a part bought, a module fitted or taken out), and its missiles by the rack. A Kestrel fresh
 /// off the pad has none yet, so it gets everything at once.
+#[allow(clippy::type_complexity)]
 fn refit(mut commands: Commands, tuning: Res<Tuning>, specs: Res<Ships>, save: Option<Res<Save>>, mut ships: Query<(Entity, &Ship, &mut Hull, Option<&mut Missiles>, Option<&Refit>)>) {
     let t = &tuning.ship_combat;
     let want = save.as_deref().map_or_else(Refit::default, |s| Refit::of(s, t));
@@ -585,12 +588,12 @@ fn spawn(commands: &mut Commands, look: Option<&SalvageLook>, loot: Loot, at: Ve
         let piece = |material: &Handle<StandardMaterial>, at: Vec3, size: Vec3| (Mesh3d(look.chunk.clone()), MeshMaterial3d(material.clone()), Transform::from_translation(at).with_scale(size), bevy::light::NotShadowCaster);
         e.with_children(|c| match loot {
             Loot::Scrap(_) => {
-                c.spawn(piece(&look.scrap, Vec3::ZERO, Vec3::new(1.6, 0.7, 1.0)));
-                c.spawn(piece(&look.scrap, Vec3::new(0.9, 0.5, -0.4), Vec3::new(0.8, 0.8, 1.3)));
-                c.spawn(piece(&look.scrap, Vec3::new(-0.7, -0.4, 0.6), Vec3::new(1.1, 0.4, 0.6)));
+                c.spawn(piece(&look.scrap, Vec3::ZERO, Vec3::new(2.4, 1.0, 1.5)));
+                c.spawn(piece(&look.scrap, Vec3::new(1.3, 0.8, -0.6), Vec3::new(1.2, 1.2, 2.0)));
+                c.spawn(piece(&look.scrap, Vec3::new(-1.0, -0.6, 0.9), Vec3::new(1.6, 0.6, 0.9)));
             }
             Loot::Module(_) => {
-                c.spawn(piece(&look.module, Vec3::ZERO, Vec3::splat(1.3)));
+                c.spawn(piece(&look.module, Vec3::ZERO, Vec3::splat(1.8)));
             }
         });
     }
@@ -677,13 +680,13 @@ fn tick(time: Res<Time>, mut line: ResMut<SalvageLine>) {
     line.left = (line.left - time.delta_secs()).max(0.0);
 }
 
-/// The line, under the standing line over the crosshair. It hides with the rest of the HUD
-/// under the menus.
+/// The line, just under the crosshair (the bounty and standing lines are over it). It hides with
+/// the rest of the HUD under the menus.
 fn spawn_line(mut commands: Commands, theme: Res<ComicTheme>) {
     let t = theme.clone();
     let full = Node { position_type: PositionType::Absolute, left: Val::Px(0.0), top: Val::Px(0.0), width: Val::Percent(100.0), height: Val::Percent(100.0), justify_content: JustifyContent::Center, ..default() };
     commands.spawn((crate::hud::HudRoot, full, GlobalZIndex(5))).with_children(|p| {
-        p.spawn((SalvageText, display_text("", 26.0, t.paper, &t), TextShadow { offset: Vec2::splat(3.0), color: t.ink }, Node { position_type: PositionType::Absolute, top: Val::Percent(42.5), ..default() }, Visibility::Hidden));
+        p.spawn((SalvageText, display_text("", 26.0, t.paper, &t), TextShadow { offset: Vec2::splat(3.0), color: t.ink }, Node { position_type: PositionType::Absolute, top: Val::Percent(46.5), ..default() }, Visibility::Hidden));
     });
 }
 
@@ -714,7 +717,7 @@ mod tests {
         assert_eq!(loot("censer", 0.0, &t)[1], Loot::Module(Module::Spire));
         assert!(loot("kestrel", 0.0, &t).is_empty(), "your own ship drops nothing");
         // The seeded roll comes in under a quarter about a quarter of the time.
-        let mut luck = Luck::default();
+        let mut luck = Luck(Rng(0x9e37_79b9_7f4a_7c15));
         let n = 20_000;
         let modules = (0..n).filter(|_| loot("jackal", luck.0.next(), &t).len() == 2).count();
         let rate = modules as f32 / n as f32;

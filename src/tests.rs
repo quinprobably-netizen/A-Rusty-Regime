@@ -4203,3 +4203,8 @@ fn fitted_modules_are_kept_through_being_shot_down() {
     assert_eq!(*app.world().get::<salvage::Refit>(kestrel).unwrap(), salvage::Refit::of(&save, &Tuning::default().ship_combat), "on the fresh Kestrel");
     assert_eq!(app.world().get::<Hull>(kestrel).unwrap().max_shield, 54.0, "the afterburner's cost too");
 }
+
+#[test]
+fn the_hud_shows_your_scrap_beside_the_bank() {
+    assert_eq!(crate::hud::haul(&Save { banked: 750, scrap: 12, ..default() }), "BANK 750   SCRAP 12");
+}

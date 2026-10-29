@@ -743,8 +743,8 @@ fn flight_text(
     for (d, name) in &others {
         line.push_str(&format!("\n{name}  {}", km(*d)));
     }
-    if let Some(save) = save.filter(|s| s.banked > 0 || s.contract.is_some()) {
-        line.push_str(&format!("\nBANK ${}", save.banked));
+    if let Some(save) = save.filter(|s| s.banked > 0 || s.scrap > 0 || s.contract.is_some()) {
+        line.push_str(&format!("\nBANK ${}   SCRAP {}", save.banked, save.scrap));
         if let Some(c) = &save.contract {
             line.push_str(&format!("   PARCEL for {} +${}", base_specs.base.iter().find(|b| b.id == c.to).map_or("?", |b| b.name.as_str()), c.pay));
         }
