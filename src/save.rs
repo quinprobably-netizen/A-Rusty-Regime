@@ -112,6 +112,8 @@ pub struct Save {
     pub seed: u64,
     /// The Yard's scrap stockpile (`solar::economy`); `None` is full, at `[economy] yard_target`.
     pub yard_stock: Option<f32>,
+    /// Fighters bought from the factions, by ship id, in hangar order (`solar::hangar`).
+    pub hulls: Vec<String>,
     /// Enemy ships you have shot down, in all and by faction id (`combat::Faction::id`), and how
     /// often your own ship has been shot down.
     pub kills: u32,

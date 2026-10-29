@@ -204,6 +204,16 @@ impl ShipSpec {
         self.kind == ShipKind::Cabin
     }
 
+    /// Where the pilot steps out, in the ship's frame: the cabin's `exit`, or for a fighter
+    /// (which has none) on the ground beside its left wing.
+    pub fn exit_point(&self) -> Vec3 {
+        if self.kind == ShipKind::Cabin {
+            return Vec3::from(self.exit);
+        }
+        let half = self.collider.iter().map(|b| b.center[0].abs() + b.size[0] / 2.0).fold(0.0, f32::max);
+        Vec3::new(-(half + 1.5), -self.rest + 1.0, 0.0)
+    }
+
     /// How fast flight assist lets the ship go at `clearance` metres over the ground: with the
     /// boost on, one and a half times the clearance a second, from twice cruising speed up to the
     /// deep-space limit; off it, cruising speed near the ground, then growing smoothly with height
@@ -595,14 +605,14 @@ pub fn board(
     surface: Res<Surface>,
     origin: Res<Origin>,
     mut players: Query<(Entity, &mut Player, &mut Transform, Option<&Driving>)>,
-    mut ships: Query<(Entity, &mut Ship, &mut ShipControls, &Transform, &LinearVelocity), Without<Player>>,
+    mut ships: Query<(Entity, &mut Ship, &mut ShipControls, &Transform, &LinearVelocity, Has<super::hangar::Owned>), Without<Player>>,
 ) {
     if !input.interact_pressed {
         return;
     }
     for (pe, mut p, mut ptf, driving) in &mut players {
         if let Some(d) = driving {
-            let Ok((se, mut ship, mut controls, stf, vel)) = ships.get_mut(d.0) else { continue };
+            let Ok((se, mut ship, mut controls, stf, vel, _)) = ships.get_mut(d.0) else { continue };
             input.interact_pressed = false;
             // No stepping out of a ship at flying speed: a held X or E must not drop the pilot.
             // Speed is measured in the frame of the world below (it turns with the ground), so a
@@ -615,7 +625,7 @@ pub fn board(
             ship.landed_at = time.elapsed_secs_f64();
             // The pilot lets go of the stick, trigger and all.
             *controls = ShipControls::default();
-            ptf.translation = stf.translation + stf.rotation * Vec3::from(specs.ship[ship.spec].exit);
+            ptf.translation = stf.translation + stf.rotation * specs.ship[ship.spec].exit_point();
             let up = surface.up(origin.body(ptf.translation));
             p.frame = carry(stf.rotation, up);
             p.prev_pos = ptf.translation;
@@ -626,11 +636,11 @@ pub fn board(
             commands.entity(pe).remove::<(Driving, ColliderDisabled)>();
             commands.entity(se).remove::<KeepAwake>();
         } else {
-            // Fighters have no cabin to board.
+            // Fighters have no cabin to board, but one of your own you climb into from beside it.
             let near = ships
                 .iter()
-                .filter(|(_, s, _, _, _)| s.pilot.is_none() && specs.ship[s.spec].boardable())
-                .map(|(e, _, _, tf, _)| (e, tf.translation.distance(ptf.translation)))
+                .filter(|(_, s, _, _, _, owned)| s.pilot.is_none() && (specs.ship[s.spec].boardable() || *owned))
+                .map(|(e, _, _, tf, _, _)| (e, tf.translation.distance(ptf.translation)))
                 .filter(|(_, d)| *d < BOARD_RADIUS)
                 .min_by(|a, b| a.1.total_cmp(&b.1));
             if let Some((se, _)) = near {

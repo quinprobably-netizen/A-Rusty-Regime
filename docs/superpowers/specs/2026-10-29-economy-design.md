@@ -8,7 +8,9 @@ B gives Vantage a board screen). **Stage B is built** (`docs/superpowers/plans/2
 which records the choices it made: courier pay per km, supply runs raising standing like a
 delivery, the board spawned inside each door). **Stage C is built**
 (`docs/superpowers/plans/2026-10-29-economy-stage-c.md`; the stock recovers 5% of the gap a game
-minute, not 1%, so it is 90% back in a day as this spec intends). D is not built.
+minute, not 1%, so it is 90% back in a day as this spec intends). **Stage D is built**: owned
+fighters park in a hangar row at Haven (`solar::hangar`), are boarded from beside them, and come
+back to their slot whenever they are missing while you are on Haven.
 
 ## TL;DR
 

@@ -308,6 +308,14 @@ supply runs are not cargo and survive being shot down. Vantage's board buys scra
 show in the flight readout and Pause > Contracts, and a base's marker says DELIVER HERE or HAND IN
 when one is for it. `RUST_REGIME_MENU=board` (with `RUST_REGIME_BOARD=<base id>`) opens a board
 for screenshots.
+**Faction fighters** (stage D, `solar::hangar`): at Allied standing (80) a faction's board sells
+you its own patrol fighter: the PMC's Sentry ($6000), the Scrappers' Welder ($8000) and the
+Regime's Censer ($9000), less 15% as to any friend. A fighter you own parks in the hangar row
+south-west of Haven's pad, flies as your side (the factions treat you as they did), and carries
+your engine tune, ship parts and modules like the Kestrel. It has no cabin: E beside it climbs in,
+and stepping out puts you beside its wing. Shot down in it, you pay the same rebuy fee and it is
+back in its slot; one left on another world is back there next time you are on Haven. Pause >
+Ships lists your hangar. The fighters and prices are `hulls` in `[economy]`.
 **Salvage** (stage 3, the same spec, `solar::salvage`): an enemy ship shot down, by you or by
 anyone else, drops **scrap** where it blew apart (Jackal 2, Sentry 4, Censer 5, Welder 8): a few
 glowing orange chunks that drift on with the wreck's velocity, slowing in air and coming to rest

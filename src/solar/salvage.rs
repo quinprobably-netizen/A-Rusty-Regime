@@ -514,16 +514,17 @@ fn dev_salvage(save: Option<ResMut<Save>>) {
     }
 }
 
-/// Keeps the Kestrel's `Refit` in step with the save: its hull and shield move by what changed
+/// Keeps the `Refit` of the Kestrel and your fighters (`hangar::Owned`) in step with the save: its hull and shield move by what changed
 /// (a part bought, a module fitted or taken out), and its missiles by the rack. A Kestrel fresh
 /// off the pad has none yet, so it gets everything at once.
 #[allow(clippy::type_complexity)]
-fn refit(mut commands: Commands, tuning: Res<Tuning>, specs: Res<Ships>, save: Option<Res<Save>>, mut ships: Query<(Entity, &Ship, &mut Hull, Option<&mut Missiles>, Option<&Refit>)>) {
+fn refit(mut commands: Commands, tuning: Res<Tuning>, specs: Res<Ships>, save: Option<Res<Save>>, mut ships: Query<(Entity, &Ship, &mut Hull, Option<&mut Missiles>, Option<&Refit>, Has<super::hangar::Owned>)>) {
     let t = &tuning.ship_combat;
     let want = save.as_deref().map_or_else(Refit::default, |s| Refit::of(s, t));
-    for (e, ship, mut hull, missiles, had) in &mut ships {
+    for (e, ship, mut hull, missiles, had, owned) in &mut ships {
         let spec = &specs.ship[ship.spec];
-        if spec.id != KESTREL || had == Some(&want) {
+        // Your kit goes on whichever of your ships it is: the Kestrel or a fighter you bought.
+        if (spec.id != KESTREL && !owned) || had == Some(&want) {
             continue;
         }
         let was = had.copied().unwrap_or_default();

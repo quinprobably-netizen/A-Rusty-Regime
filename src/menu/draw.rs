@@ -246,6 +246,19 @@ pub(super) fn rebuild(
                         value_row(list, &t, &label, &value, None, Some(&note), index, index == menu.cursor, false);
                         index += 1;
                     }
+                    Row::Hull => {
+                        use crate::solar::hangar::{offer, title, Offer};
+                        let blank = Save::default();
+                        let s = save.as_deref().unwrap_or(&blank);
+                        let (label, value, note) = match offer(s, menu.board_faction, &tuning.economy, &tuning.ship_combat) {
+                            Offer::None => ("NO FIGHTERS".to_string(), String::new(), "This board sells none".to_string()),
+                            Offer::Price { ship, price } => (format!("BUY A {}", title(&ship).to_uppercase()), format!("${price}"), "Their own patrol fighter, flying as yours, with your parts and modules".to_string()),
+                            Offer::Allied { ship, price } => (format!("{} FIGHTER", title(&ship).to_uppercase()), format!("${price}"), format!("For sale once you are Allied with the {} (80)", menu.board_faction.name())),
+                            Offer::Owned { ship } => (format!("{} FIGHTER", title(&ship).to_uppercase()), "OWNED".to_string(), "In the hangar row at Haven".to_string()),
+                        };
+                        value_row(list, &t, &label, &value, None, Some(&note), index, index == menu.cursor, false);
+                        index += 1;
+                    }
                     Row::Sell => {
                         use crate::solar::economy::{sale, scrap_value_at, YARD};
                         let blank = Save::default();

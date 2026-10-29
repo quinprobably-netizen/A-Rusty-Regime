@@ -749,6 +749,13 @@ impl Default for ShipCombat {
     }
 }
 
+/// A fighter a faction sells: its ship id and list price.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+pub struct HullSale {
+    pub ship: String,
+    pub price: u32,
+}
+
 /// Money (table `[economy]`, `solar::economy`): every price in the game, what scrap is worth, the
 /// hold, the rebuy fee for a ship shot down, and repairs. Prices at a faction's base go through
 /// `solar::standing::price`; the Roost's are these.
@@ -795,6 +802,8 @@ pub struct Economy {
     pub scrap_lot: u32,
     pub yard_shortage: f32,
     pub shortage_pay: f32,
+    /// The fighter each faction's board sells you at Allied standing, by faction id.
+    pub hulls: std::collections::BTreeMap<String, HullSale>,
     /// What a scrap is worth in money: what the Yard pays for it, and what a part's scrap counts
     /// for in the ship's value.
     pub scrap_value: u32,
@@ -842,6 +851,7 @@ impl Default for Economy {
             scrap_lot: 10,
             yard_shortage: 0.5,
             shortage_pay: 1.6,
+            hulls: [("pmc", "sentry", 6000), ("scrappers", "welder", 8000), ("regime", "censer", 9000)].into_iter().map(|(f, ship, price)| (f.to_string(), HullSale { ship: ship.to_string(), price })).collect(),
             scrap_value: 6,
             hold_base: 60,
             hold_per_plating: 20,

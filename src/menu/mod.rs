@@ -378,6 +378,8 @@ enum Row {
     Offer(usize),
     /// One of the jobs you carry, on the job board.
     Job(usize),
+    /// The faction's fighter, for sale at Allied, on its job board.
+    Hull,
     /// One of the Kestrel's two module slots, on the Ship screen.
     Fit(usize),
     /// The wardrobe's preset picker.
@@ -471,6 +473,7 @@ fn rows(panel: Panel, screen: Screen, tuned: [bool; 4], fits: bool) -> Vec<Row> 
             rows.push(Row::Section("YOUR JOBS"));
             rows.extend((0..BOARD_JOBS).map(Row::Job));
             rows.push(Row::Sell);
+            rows.push(Row::Hull);
             rows.push(Row::Action("BACK", Action::Back));
         }
         Panel::Ship => {
@@ -971,6 +974,20 @@ fn act(
                     Ok(_) => "Taken. It is due by the end of tomorrow".to_string(),
                     Err(Refusal::Full) => format!("You carry {} jobs already: finish one first", tuning.economy.jobs),
                     Err(Refusal::Gone) => "Nothing there today".to_string(),
+                };
+                file.write(&save);
+            }
+        }
+        Row::Hull => {
+            if select && let (Some(mut save), Some(file)) = (save, file) {
+                use crate::solar::hangar::{buy, title, Refusal};
+                menu.note = match buy(&mut save, menu.board_faction, &tuning.economy, &tuning.ship_combat) {
+                    Ok((ship, price)) => format!("The {} is yours for ${price}: it waits in the hangar row at Haven", title(&ship)),
+                    Err(Refusal::NotForSale) => "This board sells no fighters".to_string(),
+                    Err(Refusal::NotAllied) => format!("The {} sell their fighter only to an ally", menu.board_faction.name()),
+                    Err(Refusal::Owned) => "You already own one".to_string(),
+                    Err(Refusal::Poor(short)) => format!("${short} short"),
+                    Err(Refusal::HangarFull) => "The hangar at Haven is full".to_string(),
                 };
                 file.write(&save);
             }

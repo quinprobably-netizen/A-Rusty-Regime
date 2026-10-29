@@ -2685,6 +2685,42 @@ fn a_raider_shot_down_by_your_ship_counts_toward_a_cull() {
 }
 
 #[test]
+fn a_fighter_you_own_parks_at_haven_flies_as_yours_with_your_kit_and_comes_back_when_lost() {
+    use solar::hangar::Owned;
+    let mut app = system_app();
+    {
+        let mut save = app.world_mut().resource_mut::<Save>();
+        save.hulls = vec!["sentry".into()];
+        save.ship_parts = [2, 0, 0, 0];
+    }
+    run(&mut app, 1.0);
+    let sentry = spec_of(&app, "sentry");
+    let owned: Vec<Entity> = app.world_mut().query_filtered::<(Entity, &Ship), With<Owned>>().iter(app.world()).filter(|(_, s)| s.spec == sentry).map(|(e, _)| e).collect();
+    assert_eq!(owned.len(), 1, "one Sentry in the hangar");
+    let ship = owned[0];
+    assert_eq!(*app.world().get::<Faction>(ship).unwrap(), Faction::Deserters, "flies as yours");
+    let spec = app.world().resource::<solar::ship::Ships>().ship[sentry].clone();
+    assert_eq!(app.world().get::<Hull>(ship).unwrap().max_hp, spec.hull + 50.0, "two levels of plating on it too");
+    // E beside it climbs in, and E again steps out beside its wing.
+    let at = app.world().get::<Transform>(ship).unwrap().translation;
+    let rot = app.world().get::<Transform>(ship).unwrap().rotation;
+    set_player(&mut app, at + rot * spec.exit_point(), Vec3::ZERO);
+    run(&mut app, 0.5);
+    press_use(&mut app);
+    let player_e = app.world_mut().query_filtered::<Entity, With<Player>>().single(app.world()).unwrap();
+    assert_eq!(app.world().get::<Driving>(player_e).map(|d| d.0), Some(ship), "aboard the Sentry");
+    // Shot down in it: back at the Roost in a Kestrel, and the Sentry back in its slot.
+    let wreck = shoot_down(&mut app);
+    assert_eq!(wreck, ship);
+    run(&mut app, 0.2);
+    back_at_the_roost(&mut app, wreck);
+    run(&mut app, 0.5);
+    let again: Vec<Entity> = app.world_mut().query_filtered::<(Entity, &Ship), With<Owned>>().iter(app.world()).filter(|(_, s)| s.spec == sentry).map(|(e, _)| e).collect();
+    assert_eq!(again.len(), 1, "a fresh Sentry in the hangar");
+    assert_ne!(again[0], ship);
+}
+
+#[test]
 fn the_space_screens_draw_with_and_without_the_solar_system() {
     use crate::menu::{Menu, MenuPlugin, Panel, Screen};
     let mut solar = counter_app();

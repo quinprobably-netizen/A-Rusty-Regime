@@ -388,6 +388,7 @@ scrap_markup = 1.5          # the Yard sells scrap at this over its price
 scrap_lot = 10              # scrap a purchase
 yard_shortage = 0.5         # below this share of target its board asks for supply runs
 shortage_pay = 1.6          # paying this much more
+hulls = { pmc = { ship = "sentry", price = 6000 }, scrappers = { ship = "welder", price = 8000 }, regime = { ship = "censer", price = 9000 } }  # the fighter each faction's board sells at Allied
 scrap_value = 6             # $ a scrap: what the Yard pays, and what parts count for in the ship's value
 hold_base = 60              # scrap the hold carries
 hold_per_plating = 20       # and this much more a level of hull plating
