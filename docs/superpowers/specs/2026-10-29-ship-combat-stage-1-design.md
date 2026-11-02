@@ -74,10 +74,12 @@ Components and what they hold:
 Fire input: left click is `input.fire_held`, right click is `input.aim_held`, which `ship.rs`
 currently clears while flying. Those two lines change to feed the ship instead. On a pad every
 button is already taken in flight (RT and LT are thrust, LB and RB yaw, A boost, Y stop, B look),
-so the pad mapping is an open question for Q: the likely answer is to move guns to RT and thrust
-to the left stick's click, but that changes how the pad flies today, so it is decided when we
-get there. Stage 1 ships the keyboard and mouse bindings in the controls table the README is
-generated from.
+so the pad mapping was an open question for Q. Decided 2026-11-02 after a survey of other games:
+Ace Combat's layout, which leaves every flight axis as it is and moves the face buttons (A guns,
+B missile, Y tap target and hold leave, X stop, L3 boost, R3 tap view and hold look). The same
+change added the target button (Tab, middle mouse, Y): it picks the hostile nearest the nose,
+then the next one round each press, and the lock follows the chosen ship. Stage 1 shipped the
+keyboard and mouse bindings in the controls table the README is generated from.
 
 ### 3. Weapons
 

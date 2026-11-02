@@ -5,7 +5,8 @@
 //! The mouse pitches and yaws, A and D roll, W and S thrust along the nose, Space and Ctrl
 //! lift and sink, Shift boosts from a tank, X stops, held Alt looks round. On a pad the left
 //! stick is a flight joystick (pull back for nose up, sideways to roll), the bumpers yaw, the
-//! right stick lifts, the triggers thrust, A boosts, Y stops and held B looks round. Flight assist bleeds off
+//! right stick lifts, the triggers thrust, L3 boosts, X stops and held R3 looks round (Ace
+//! Combat's layout, so A is the guns, B the missile and Y the target). Flight assist bleeds off
 //! sideways drift and, below a few kilometres, holds the ship against gravity and levels it over
 //! the ground (fading out between 2.5 and 3.5 km), and slows the last metres of a descent to a
 //! soft touchdown, so landing is a matter of sinking onto a flat spot. Speed is capped by height over the ground, low near it
@@ -296,6 +297,8 @@ pub struct ShipControls {
     pub fire: bool,
     /// The missile trigger (`missile`): one goes on each press.
     pub missile: bool,
+    /// The target button (`missile::lock` picks the next ship to lock and takes it).
+    pub target: bool,
     /// The mouse as a stick, smoothed over a few ticks so uneven frames do not jolt the ship.
     mouse_stick: Vec2,
 }
@@ -577,7 +580,8 @@ fn controls(
 
 /// Flying, the fire button pulls the ship's trigger instead of the gun in the pilot's hands, and
 /// the aim button (right mouse) the missile trigger: each is taken off the input as soon as it is
-/// read, before any fixed tick could fire or aim the hand gun with it.
+/// read, before any fixed tick could fire or aim the hand gun with it. The target button is
+/// latched on the ship until a fixed tick reads it.
 /// Dev aids: `RUST_REGIME_SCREENSHOT_FIRE` holds the gun trigger, and
 /// `RUST_REGIME_SCREENSHOT_MISSILE=<seconds>` presses the missile trigger once a lock is complete
 /// and that many seconds of the run have gone (0 if not given), for screenshots of the guns and
@@ -590,6 +594,7 @@ fn trigger(time: Res<Time>, mut input: ResMut<PlayerInput>, flying: Query<Entity
     input.fire_pressed = false;
     let dev = std::env::var("RUST_REGIME_SCREENSHOT_MISSILE").is_ok_and(|v| time.elapsed_secs() >= v.trim().parse().unwrap_or(0.0)) && missiles.is_some_and(|m| m.locked().is_some());
     controls.missile = std::mem::take(&mut input.aim_held) || dev;
+    controls.target |= std::mem::take(&mut input.target_pressed);
 }
 
 /// E boards the nearest ship in reach, or leaves the one being flown: out at its exit point,

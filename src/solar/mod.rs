@@ -791,13 +791,11 @@ fn flight_text(
             f(Action::ToggleView),
             f(Action::Use),
         ));
-        // The nose guns and missiles, on a ship that has them (the pad's buttons are still to be
-        // decided).
+        // The nose guns, missiles and target button, on a ship that has them.
         if let Some((_, _, ship)) = flying
             && !specs.ship[ship.spec].guns.is_empty()
-            && !pad
         {
-            line.push_str(&format!("  [{}] guns  [{}] missile", f(Action::Fire), f(Action::Missile)));
+            line.push_str(&format!("  [{}] guns  [{}] missile  [{}] target", f(Action::Fire), f(Action::Missile), f(Action::Target)));
         }
         if hud.as_ref().is_some_and(|h| h.too_fast > 0.0) {
             line.push_str(&format!("\nTOO FAST TO LEAVE: slow under {:.0} m/s, [{}] stops", ship::LEAVE_SPEED, f(Action::Stop)));
