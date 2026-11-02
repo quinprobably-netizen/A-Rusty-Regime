@@ -56,12 +56,13 @@ First build takes a while. Linux needs `libasound2-dev libudev-dev libwayland-de
 | Roll | A, D | Left stick left / right |
 | Pitch (pull back: nose up) |  | Left stick up / down |
 | Yaw |  | LB, RB |
-| Boost | Shift | A |
-| Fire | Left mouse |  |
-| Missile (hold a ship in the nose to lock) | Right mouse |  |
-| Stop (match ground speed) | X | Y |
-| Look around (hold) | Alt | B |
-| Enter / leave a vehicle or ship | E | X (hold) |
+| Boost | Shift | L3 |
+| Fire | Left mouse | A |
+| Missile (hold a ship in the nose to lock) | Right mouse | B |
+| Target (nearest hostile, then the next) | Tab, Middle mouse | Y (tap) |
+| Stop (match ground speed) | X | X |
+| Look around (hold) | Alt | R3 (hold) |
+| Enter / leave a vehicle or ship | E | Y (hold) |
 | First / third person | T | R3 (tap) |
 | Respawn | Backspace | View |
 | Menu | Escape | Start |

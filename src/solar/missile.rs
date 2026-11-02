@@ -2,7 +2,10 @@
 //! `docs/superpowers/specs/2026-10-29-ship-combat-stage-1-design.md`). Every ship with guns also
 //! carries `[ship_combat] missiles` of them and gets one back every `missile_reload` seconds.
 //! Hold a ship of another side within `lock_cone` degrees of the nose for `lock_time` and it is
-//! locked; let it leave the cone and the lock is gone. The missile trigger
+//! locked; let it leave the cone and the lock is gone. The target button (`ShipControls::target`)
+//! picks the hostile nearest the nose, then the next one round each press; the lock then follows
+//! that ship (and the contacts ring marks it) wherever it is, and grows only while it is in the
+//! cone, until it is lost or dead. The missile trigger
 //! (`ShipControls::missile`: the right mouse button for the player) fires one at the locked ship,
 //! or straight ahead with no lock, on each press.
 //!
@@ -38,9 +41,12 @@ pub struct Missiles {
     pub count: u32,
     /// Seconds toward the next one coming back.
     pub reload: f32,
-    /// The ship in the cone, and how far the lock on it has come, 0 to 1 (1: locked).
+    /// The ship being locked (the one the target button picked, else the nearest in the cone),
+    /// and how far the lock on it has come, 0 to 1 (1: locked).
     pub target: Option<Entity>,
     pub lock: f32,
+    /// The ship the target button picked, which `target` follows while it is in range and alive.
+    pub chosen: Option<Entity>,
     /// Seconds since the last launch.
     pub since: f32,
     /// The trigger as it was last tick: a missile goes on each press, not while held.
@@ -49,7 +55,7 @@ pub struct Missiles {
 
 impl Missiles {
     pub fn new(count: u32) -> Self {
-        Self { count, reload: 0.0, target: None, lock: 0.0, since: f32::MAX, held: false }
+        Self { count, reload: 0.0, target: None, lock: 0.0, chosen: None, since: f32::MAX, held: false }
     }
 
     /// The ship it is locked on, if the lock is complete.
@@ -136,19 +142,21 @@ fn arm(add: On<Add, Ship>, mut commands: Commands, ships: Query<&Ship>, specs: R
 
 /// Reloads each ship's missiles and keeps its lock: the ship of another side nearest its nose
 /// within the cone and range starts a lock, which grows while it stays there and is gone once it
-/// leaves. An enemy pilot locks only on a ship someone flies, the one it hunts. The Kestrel's
+/// leaves. A press of the target button picks a ship instead (`next_target`), and the lock stays
+/// on it while it is in range, growing only in the cone. An enemy pilot locks only on a ship
+/// someone flies, the one it hunts. The Kestrel's
 /// missile rack and targeting array (`salvage::Refit`) change how many it carries, how fast they
 /// come back, and the lock's cone and time.
 #[allow(clippy::type_complexity)]
 fn lock(
     time: Res<Time>,
     tuning: Res<Tuning>,
-    mut ships: Query<(Entity, &mut Missiles, &Faction, &Position, &Rotation, Has<Autopilot>, Option<&Refit>)>,
+    mut ships: Query<(Entity, &mut Missiles, &mut ShipControls, &Faction, &Position, &Rotation, Has<Autopilot>, Option<&Refit>)>,
     targets: Query<(Entity, &Ship, &Faction, &Position), With<Hull>>,
 ) {
     let t = &tuning.ship_combat;
     let dt = time.delta_secs();
-    for (me, mut m, faction, pos, rot, autopilot, refit) in &mut ships {
+    for (me, mut m, mut controls, faction, pos, rot, autopilot, refit) in &mut ships {
         let r = refit.copied().unwrap_or_default();
         let (carried, reload) = (r.missiles(t), r.reload(t));
         if m.count < carried {
@@ -164,20 +172,45 @@ fn lock(
         let (cone, lock_time) = (r.lock_cone(t), r.lock_time(t));
         m.since = (m.since + dt).min(1e6);
         let nose = rot.0 * Vec3::NEG_Z;
-        // How far off the nose each ship it could lock is, radians.
-        let off = |e: Entity| {
+        // How far off the nose each ship it could lock is, radians, if it is in range at all.
+        let hostile = |e: Entity| {
             let (_, ship, f, p) = targets.get(e).ok()?;
             let rel = p.0 - pos.0;
             let ok = e != me && f != faction && (!autopilot || ship.pilot.is_some()) && rel.length() < t.lock_range;
-            let angle = nose.angle_between(rel);
-            (ok && angle < cone.to_radians()).then_some(angle)
+            ok.then(|| nose.angle_between(rel))
         };
-        if m.target.and_then(off).is_some() {
+        let in_cone = |e: Entity| hostile(e).filter(|a| *a < cone.to_radians());
+        if std::mem::take(&mut controls.target) {
+            let mut round: Vec<(Entity, f32)> = targets.iter().filter_map(|(e, ..)| hostile(e).map(|a| (e, a))).collect();
+            round.sort_by(|a, b| a.1.total_cmp(&b.1));
+            m.chosen = next_target(m.chosen, round.iter().map(|(e, _)| *e));
+        }
+        if let Some(chosen) = m.chosen.filter(|c| hostile(*c).is_some()) {
+            if m.target != Some(chosen) {
+                m.target = Some(chosen);
+                m.lock = 0.0;
+            }
+            m.lock = if in_cone(chosen).is_some() { (m.lock + dt / lock_time).min(1.0) } else { 0.0 };
+            continue;
+        }
+        m.chosen = None;
+        if m.target.and_then(in_cone).is_some() {
             m.lock = (m.lock + dt / lock_time).min(1.0);
             continue;
         }
-        m.target = targets.iter().filter_map(|(e, ..)| off(e).map(|a| (e, a))).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(e, _)| e);
+        m.target = targets.iter().filter_map(|(e, ..)| in_cone(e).map(|a| (e, a))).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(e, _)| e);
         m.lock = 0.0;
+    }
+}
+
+/// The ship the target button picks: with nothing chosen, the first of `round` (the hostiles in
+/// range, nearest the nose first); otherwise the one after `chosen` in it, round to the start.
+pub fn next_target(chosen: Option<Entity>, round: impl Iterator<Item = Entity>) -> Option<Entity> {
+    let round: Vec<Entity> = round.collect();
+    let at = chosen.and_then(|c| round.iter().position(|e| *e == c));
+    match at {
+        Some(i) => round.get((i + 1) % round.len()).copied(),
+        None => round.first().copied(),
     }
 }
 
@@ -405,5 +438,16 @@ mod tests {
         assert!(heading.x > 0.0, "turns toward the target's way: {heading}");
         // Four times the sight line's swing, 200/1000 rad/s, as a turn of the nose.
         assert!((turn.length() - 4.0 * 0.2).abs() < 1e-4, "{}", turn.length());
+    }
+
+    #[test]
+    fn the_target_button_takes_the_nearest_the_nose_then_goes_round() {
+        let e = |n: u32| Entity::from_raw_u32(n).unwrap();
+        let round = || [e(1), e(2), e(3)].into_iter();
+        assert_eq!(next_target(None, round()), Some(e(1)), "nothing chosen: the one under the nose");
+        assert_eq!(next_target(Some(e(1)), round()), Some(e(2)));
+        assert_eq!(next_target(Some(e(3)), round()), Some(e(1)), "round to the start");
+        assert_eq!(next_target(Some(e(9)), round()), Some(e(1)), "the chosen one is gone: start again");
+        assert_eq!(next_target(Some(e(1)), std::iter::empty()), None, "no one in range");
     }
 }

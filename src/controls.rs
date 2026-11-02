@@ -73,6 +73,8 @@ pub enum Action {
     FreeLook,
     /// Fire a homing missile at the locked ship (`solar::missile`), or straight ahead.
     Missile,
+    /// Pick the hostile nearest the nose as the ship to lock, then the next one each press.
+    Target,
     // Menus
     Up,
     Down,
@@ -114,6 +116,7 @@ impl Action {
             Action::Stop => "Stop (match ground speed)",
             Action::FreeLook => "Look around (hold)",
             Action::Missile => "Missile (hold a ship in the nose to lock)",
+            Action::Target => "Target (nearest hostile, then the next)",
             Action::Up => "Up",
             Action::Down => "Down",
             Action::Left => "Left / decrease",
@@ -150,6 +153,8 @@ pub enum Mode {
     Tap,
     /// Once, when it has been down `HOLD_SECONDS`.
     Hold,
+    /// While it is down, from `HOLD_SECONDS` on (a tap on the same button does something else).
+    HeldPast,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -195,7 +200,9 @@ use GamepadButton as P;
 use KeyCode as K;
 
 /// Every binding. Titanfall 2 style on a pad: A jump, B or L3 crouch, X reload (hold to use),
-/// Y last weapon, LT aim, RT fire, LB grapple, RB next weapon, R3 view.
+/// Y last weapon, LT aim, RT fire, LB grapple, RB next weapon, R3 view. Flying, Ace Combat
+/// style: the left stick pitches and rolls, the bumpers yaw, the triggers thrust, the right stick
+/// lifts, A guns, B missile, Y target (hold to leave), X stop, L3 boost, R3 view (hold to look).
 pub const BINDINGS: &[Bind] = &[
     // ---- On foot
     moves(Foot, K::KeyW, 0.0, 1.0),
@@ -266,15 +273,20 @@ pub const BINDINGS: &[Bind] = &[
     pad(Fly, Yaw, P::LeftTrigger),
     scaled(pad(Fly, Yaw, P::RightTrigger), -1.0),
     key(Fly, Boost, K::ShiftLeft),
+    pad(Fly, Boost, P::LeftThumb),
     bind(Fly, Fire, Source::Mouse(MouseButton::Left)),
+    pad(Fly, Fire, P::South),
     bind(Fly, Missile, Source::Mouse(MouseButton::Right)),
-    pad(Fly, Boost, P::South),
+    pad(Fly, Missile, P::East),
+    key(Fly, Target, K::Tab),
+    bind(Fly, Target, Source::Mouse(MouseButton::Middle)),
+    mode(pad(Fly, Target, P::North), Mode::Tap),
     key(Fly, Stop, K::KeyX),
-    pad(Fly, Stop, P::North),
+    pad(Fly, Stop, P::West),
     key(Fly, FreeLook, K::AltLeft),
-    pad(Fly, FreeLook, P::East),
+    mode(pad(Fly, FreeLook, P::RightThumb), Mode::HeldPast),
     key(Fly, Use, K::KeyE),
-    mode(pad(Fly, Use, P::West), Mode::Hold),
+    mode(pad(Fly, Use, P::North), Mode::Hold),
     key(Fly, ToggleView, K::KeyT),
     mode(pad(Fly, ToggleView, P::RightThumb), Mode::Tap),
     key(Fly, Respawn, K::Backspace),
@@ -414,12 +426,15 @@ pub fn read(state: &mut ActionState, timers: &mut Timers, ctx: Ctx, d: &Devices)
         }
         let value = match b.mode {
             Mode::Held => raw,
-            Mode::Tap | Mode::Hold => {
+            Mode::Tap | Mode::Hold | Mode::HeldPast => {
                 let held = timers.0.entry(i).or_insert(0.0);
                 let mut fire = 0.0;
                 if raw > 0.5 {
                     if b.mode == Mode::Hold && *held < HOLD_SECONDS && *held + d.dt >= HOLD_SECONDS {
                         fire = 1.0;
+                    }
+                    if b.mode == Mode::HeldPast && *held >= HOLD_SECONDS {
+                        fire = raw;
                     }
                     *held += d.dt;
                 } else {
@@ -502,6 +517,7 @@ impl Bind {
             Source::Key(k) => key_name(k),
             Source::Mouse(MouseButton::Left) => "Left mouse".into(),
             Source::Mouse(MouseButton::Right) => "Right mouse".into(),
+            Source::Mouse(MouseButton::Middle) => "Middle mouse".into(),
             Source::Mouse(MouseButton::Back) => "Mouse 4".into(),
             Source::Mouse(_) => "Mouse".into(),
             Source::WheelUp => "Wheel up".into(),
@@ -517,7 +533,7 @@ impl Bind {
         match self.mode {
             Mode::Held => base,
             Mode::Tap => base + " (tap)",
-            Mode::Hold => base + " (hold)",
+            Mode::Hold | Mode::HeldPast => base + " (hold)",
         }
     }
 
@@ -639,6 +655,46 @@ mod tests {
         assert_eq!(hint(Fly, Thrust, true), "RT/LT");
         assert_eq!(hint(Fly, Yaw, true), "LB/RB");
         assert_eq!(hint(Fly, FreeLook, false), "Alt");
+        assert_eq!(hint(Fly, Fire, true), "A");
+        assert_eq!(hint(Fly, Missile, true), "B");
+        assert_eq!(hint(Fly, Target, true), "Y (tap)");
+        assert_eq!(hint(Fly, Use, true), "Y (hold)");
+        assert_eq!(hint(Fly, FreeLook, true), "R3 (hold)");
+        assert_eq!(hint(Fly, ToggleView, true), "R3 (tap)");
+    }
+
+    #[test]
+    fn flying_the_pad_has_every_fight_button() {
+        for action in [Fire, Missile, Target, Boost, Stop, FreeLook, ToggleView] {
+            assert!(BINDINGS.iter().any(|b| b.ctx == Fly && b.action == action && b.on_pad()), "{} has no pad button in flight", action.label());
+        }
+    }
+
+    /// R3: a tap swaps the view, and from the hold threshold on it looks round, as long as it is down.
+    #[test]
+    fn a_held_past_binding_is_off_until_the_threshold_and_then_on_while_down() {
+        let mut pad = Gamepad::default();
+        let mut state = ActionState::default();
+        let mut timers = Timers::default();
+        let keys = ButtonInput::<KeyCode>::default();
+        let mouse = ButtonInput::<MouseButton>::default();
+        let scroll = AccumulatedMouseScroll::default();
+        let frame = |pad: &Gamepad, state: &mut ActionState, timers: &mut Timers| {
+            let pads = [pad];
+            read(state, timers, Fly, &Devices { keys: &keys, mouse: &mouse, scroll: &scroll, mouse_live: false, pads: &pads, dead_zone: 0.15, dt: 1.0 / 60.0 });
+        };
+        frame(&pad, &mut state, &mut timers);
+        pad.digital_mut().press(GamepadButton::RightThumb);
+        let mut looked = 0;
+        for _ in 0..60 {
+            frame(&pad, &mut state, &mut timers);
+            looked += state.held(FreeLook) as u32;
+            assert!(!state.held(ToggleView), "a long hold is not a tap");
+        }
+        assert!((40..=43).contains(&looked), "looks round from 0.3 s on while down: {looked} of 60 frames");
+        pad.digital_mut().release(GamepadButton::RightThumb);
+        frame(&pad, &mut state, &mut timers);
+        assert!(!state.held(FreeLook) && !state.held(ToggleView));
     }
 
     #[test]

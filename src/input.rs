@@ -50,10 +50,12 @@ pub struct PlayerInput {
     /// The pad's flight stick, -1..1: pitch up (x, left stick) and yaw left (y, bumpers). It does
     /// not pass through the view, so it is a true stick rather than a mouse imitation.
     pub ship_stick: Vec2,
-    /// Held: kill the ship's speed (X / Y).
+    /// Held: kill the ship's speed (X on both).
     pub stop: bool,
-    /// Held: look around instead of steering (Alt / B).
+    /// Held: look around instead of steering (Alt / hold R3).
     pub free_look: bool,
+    /// Pick the next ship to lock (Tab / middle mouse / Y), latched like `jump_pressed`.
+    pub target_pressed: bool,
     /// How far the pad's right stick turned the view this frame (yaw, pitch; radians, view-space sign as applied), for aim assist. Zero without a pad.
     pub pad_look: Vec2,
 }
@@ -259,6 +261,7 @@ pub(crate) fn gather(
     input.boost = held(Action::Boost);
     input.stop = held(Action::Stop);
     input.free_look = held(Action::FreeLook);
+    input.target_pressed |= pressed(Action::Target);
 }
 
 fn grab_cursor(
