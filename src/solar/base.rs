@@ -154,6 +154,16 @@ pub fn site(spec: &BaseSpec, sphere: &Arc<Sphere>, pad: Vec3) -> (Vec3, Quat, f3
     (ground, frame, deck)
 }
 
+/// The top of a base's own landing pad, if it has one: its centre in body coordinates, and the
+/// base's frame. `pad` is Haven's pad, as for `site`.
+pub fn pad_top(spec: &BaseSpec, sphere: &Arc<Sphere>, pad: Vec3) -> Option<(Vec3, Quat)> {
+    let [x, z] = spec.pad?;
+    let (ground, frame, deck) = site(spec, sphere, pad);
+    let at = Vec3::new(x, 0.0, z);
+    let top = deck.max(deck_over(sphere, ground, frame, at, PAD_SIZE / 2.0, PAD_SIZE / 2.0));
+    Some((ground + frame * at.with_y(top), frame))
+}
+
 /// A deck over the ground around `ground + frame * at`, half `hx` by `hz`: `CLEARANCE` over the
 /// highest of nine samples, measured from `ground`'s height.
 pub(super) fn deck_over(sphere: &Sphere, ground: Vec3, frame: Quat, at: Vec3, hx: f32, hz: f32) -> f32 {
