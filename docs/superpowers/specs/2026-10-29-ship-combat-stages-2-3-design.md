@@ -2,7 +2,7 @@
 
 Follows `2026-10-29-ship-combat-stage-1-design.md`, which is built and merged (guns, missile,
 shields and hulls, raiders, patrols, loss rule, bounty, HUD). Q asked on 2026-10-29 to start on
-both remaining stages. This is a spec for review; nothing is built from it yet.
+both remaining stages. Status: built and merged (faction standing in `solar/standing.rs`, salvage in `solar/salvage.rs`).
 
 ## TL;DR
 
