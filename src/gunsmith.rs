@@ -85,10 +85,10 @@ pub const PARTS: [[Part; 3]; 4] = [
 /// Which part sits in each slot of each weapon (`WEAPONS` order). Lists grow as weapons are
 /// added, so a save from before the new guns still loads.
 #[derive(Resource, Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(default)]
 pub struct Loadout {
     pub parts: Vec<[u8; 4]>,
     /// Per-slot tuning, -4..4, trading the slot's two stats (see `TUNES`); only a fitted part tunes.
-    #[serde(default)]
     pub tune: Vec<[i8; 4]>,
 }
 
