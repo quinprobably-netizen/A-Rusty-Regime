@@ -3643,6 +3643,138 @@ fn a_kill_by_another_ship_pays_nothing() {
     assert_eq!(app.world().resource::<BountyLine>().left, 0.0);
 }
 
+/// The player's own ships, wherever they are: their entities and specs.
+fn own_ships(app: &mut App) -> Vec<(Entity, usize)> {
+    app.world_mut().query::<(Entity, &Ship, &Faction)>().iter(app.world()).filter(|(_, _, f)| **f == Faction::Deserters).map(|(e, s, _)| (e, s.spec)).collect()
+}
+
+/// Steps out of the ship being flown, which must be slow enough.
+fn step_out(app: &mut App) {
+    press_use(app);
+    let player = app.world_mut().query_filtered::<Entity, With<Player>>().single(app.world()).unwrap();
+    assert!(app.world().get::<Driving>(player).is_none(), "on foot");
+}
+
+#[test]
+fn your_empty_ship_shot_down_costs_the_rebuy_and_the_hold_and_a_fresh_one_stands_on_its_berth() {
+    let t = Tuning::default().ship_combat;
+    let mut app = system_app();
+    run(&mut app, 0.5);
+    let (start, _, _) = player(&mut app);
+    board(&mut app);
+    run(&mut app, 0.3);
+    step_out(&mut app);
+    let kestrel = ship_entity(&mut app);
+    {
+        let mut save = app.world_mut().resource_mut::<Save>();
+        save.banked = 1003;
+        save.pocket = 120;
+        save.scrap = 30;
+        save.contracts = vec![parcel("reliquary", 400)];
+    }
+    // Walked back off it onto the pad, a raider's missile comes down on the empty Kestrel.
+    set_player(&mut app, start, Vec3::ZERO);
+    run(&mut app, 0.3);
+    let specs = app.world().resource::<solar::ship::Ships>().clone();
+    let jackal = app.world_mut().query::<(Entity, &Ship)>().iter(app.world()).find(|(_, s)| !specs.ship[s.spec].boardable()).map(|(e, _)| e).unwrap();
+    let mut hull = app.world_mut().get_mut::<Hull>(kestrel).unwrap();
+    (hull.shield, hull.hp) = (0.0, 10.0);
+    let tf = *app.world().get::<Transform>(kestrel).unwrap();
+    let from = Transform::from_translation(tf.translation + tf.rotation * Vec3::Y * 150.0).looking_at(tf.translation, tf.rotation * Vec3::Z);
+    solar::missile::spawn(app.world_mut(), Missile::new(300.0, 600.0, jackal, Faction::Raiders, Some(kestrel), &t), from);
+    let mut took = 0.0;
+    while app.world().get_entity(kestrel).is_ok() && took < 3.0 {
+        app.update();
+        took += DT;
+    }
+    assert!(app.world().get_entity(kestrel).is_err(), "the missile blew the empty Kestrel apart");
+    run(&mut app, 0.2);
+    let save = app.world().resource::<Save>().clone();
+    assert_eq!((save.banked, save.pocket, save.scrap, save.contracts.len(), save.deaths), (903, 120, 0, 1, 0), "the rebuy and the hold go; the pocket and the parcel were with you, and it is no death");
+    assert_eq!(app.world().resource::<BountyLine>().text, "KESTREL LOST  -30 SCRAP  REBUY $100");
+    assert!(!app.world().resource::<Downed>().showing(), "no SHOT DOWN card: you were not aboard");
+    // A fresh Kestrel stands on its berth, and you are where you were.
+    let kestrels: Vec<Entity> = own_ships(&mut app).into_iter().filter(|(_, s)| *s == 0).map(|(e, _)| e).collect();
+    assert_eq!(kestrels.len(), 1, "one Kestrel, never none");
+    assert_ne!(kestrels[0], kestrel);
+    let (berth, _) = solar::ship::berth(app.world(), 0).unwrap();
+    let origin = *app.world().resource::<Origin>();
+    let at = app.world().get::<Transform>(kestrels[0]).unwrap().translation;
+    assert!(origin.body(at).distance(berth) < 0.5, "on the pad, {} m off its berth", origin.body(at).distance(berth));
+    assert!(player(&mut app).0.distance(start) < 2.0, "not moved");
+    assert_eq!(own_ships(&mut app).len(), 4, "and the rest of the apron as it was");
+    // It flies.
+    board(&mut app);
+}
+
+#[test]
+fn your_empty_ship_lost_on_bastion_is_replaced_on_the_reliquarys_pad() {
+    let mut app = aloft(600.0);
+    let (pad, frame) = {
+        let solar = app.world().resource::<Solar>();
+        let bases = app.world().resource::<solar::base::Bases>();
+        let spec = bases.base.iter().find(|b| b.id == "reliquary").unwrap();
+        solar::base::pad_top(spec, &solar.spheres["bastion"], solar.pad).unwrap()
+    };
+    let up = frame * Vec3::Y;
+    fly_to(&mut app, "bastion", pad + up * 6.0);
+    run(&mut app, 1.0);
+    step_out(&mut app);
+    let kestrel = ship_entity(&mut app);
+    let (start, _, _) = player(&mut app);
+    let mut hull = app.world_mut().get_mut::<Hull>(kestrel).unwrap();
+    (hull.shield, hull.hp) = (0.0, 0.0);
+    run(&mut app, 0.2);
+    assert!(app.world().get_entity(kestrel).is_err(), "the empty Kestrel is gone");
+    assert_eq!(app.world().resource::<Solar>().anchor, "bastion", "and you are still on Bastion");
+    let kestrels: Vec<Entity> = own_ships(&mut app).into_iter().filter(|(_, s)| *s == 0).map(|(e, _)| e).collect();
+    assert_eq!(kestrels.len(), 1, "one Kestrel, never none");
+    let rest = app.world().resource::<solar::ship::Ships>().ship[0].rest;
+    let origin = *app.world().resource::<Origin>();
+    let at = origin.body(app.world().get::<Transform>(kestrels[0]).unwrap().translation);
+    assert!(at.distance(pad + up * (rest + 0.05)) < 1.0, "on the Reliquary's pad, {} m off", at.distance(pad + up * (rest + 0.05)));
+    assert!(player(&mut app).0.distance(start) < 5.0, "you were not moved");
+}
+
+#[test]
+fn a_kill_made_as_your_ship_blows_up_is_lost_with_it() {
+    let (mut app, jackal) = gunnery_range(300.0);
+    let ship = ship_entity(&mut app);
+    app.world_mut().resource_mut::<Save>().contracts = vec![Contract { job: solar::board::Job::Cull { need: 1, got: 0 }, from: "yard".into(), pay: 50, due: None }];
+    // The Kestrel's last burst and the Jackal's empty each other's hulls in the same tick.
+    let mut hull = app.world_mut().get_mut::<Hull>(jackal).unwrap();
+    (hull.shield, hull.hp, hull.last_hit_by) = (0.0, 0.0, Some(ship));
+    assert_eq!(shoot_down(&mut app), ship);
+    run(&mut app, 0.2);
+    assert!(app.world().get_entity(jackal).is_err(), "the Jackal is destroyed");
+    let save = app.world().resource::<Save>().clone();
+    assert_eq!((save.kills, save.contracts.len()), (1, 0), "the kill counts and the cull is done");
+    assert_eq!(app.world().resource::<Downed>().lost.pocket, 60 + 50, "the bounty and the cull's pay went down with the ship");
+    back_at_the_roost(&mut app, ship);
+    assert_eq!(app.world().resource::<Save>().pocket, 0, "nothing rode over into the fresh Kestrel");
+}
+
+#[test]
+fn with_no_ship_of_yours_left_a_fresh_kestrel_stands_on_its_berth_and_only_one() {
+    let mut app = system_app();
+    run(&mut app, 2.0);
+    assert_eq!(own_ships(&mut app).len(), 4, "the apron's four, and nothing more at startup");
+    for (e, _) in own_ships(&mut app) {
+        app.world_mut().despawn(e);
+    }
+    run(&mut app, 0.5);
+    assert!(own_ships(&mut app).is_empty(), "not at once");
+    run(&mut app, 1.0);
+    let fresh = own_ships(&mut app);
+    assert_eq!(fresh.iter().map(|(_, s)| *s).collect::<Vec<_>>(), vec![0], "a Kestrel");
+    let (berth, _) = solar::ship::berth(app.world(), 0).unwrap();
+    let origin = *app.world().resource::<Origin>();
+    let at = app.world().get::<Transform>(fresh[0].0).unwrap().translation;
+    assert!(origin.body(at).distance(berth) < 0.5, "on the pad, {} m off its berth", origin.body(at).distance(berth));
+    run(&mut app, 3.0);
+    assert_eq!(own_ships(&mut app), fresh, "and no more after it");
+}
+
 #[test]
 fn an_old_save_without_kills_or_deaths_still_loads() {
     let path = std::env::temp_dir().join(format!("rust-regime-old-save-{}.toml", std::process::id()));

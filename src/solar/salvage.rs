@@ -479,7 +479,7 @@ pub fn build(app: &mut App) {
         .add_systems(Update, show)
         .add_systems(
             FixedUpdate,
-            (refit.before(super::ship::fly), ram.after(ControllerSet).before(wreck), (drop_salvage, gather).chain().after(wreck), tick),
+            (refit.before(super::ship::fly), ram.after(ControllerSet).before(wreck), (drop_salvage, gather.in_set(super::loss::Rewards)).chain().after(wreck), tick),
         );
 }
 

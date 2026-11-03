@@ -305,8 +305,9 @@ fn fly_projectiles(
     }
 }
 
-/// A ship whose hull is gone blows apart, and says so in a `ShipDestroyed`. The one the player
-/// flies is not removed from under its pilot here: `loss` takes it through the loss rule.
+/// A ship whose hull is gone blows apart, and says so in a `ShipDestroyed`. The player's own
+/// ships (their side's) are not removed here: `loss` takes the one they fly through the loss
+/// rule, and one of theirs lost with nobody aboard as a ship lost.
 #[allow(clippy::type_complexity)]
 pub(super) fn wreck(
     mut commands: Commands,
@@ -329,7 +330,7 @@ pub(super) fn wreck(
                 spawn_blast(&mut commands, fx, materials, tf.translation + tf.rotation * (corner * size), size.max_element() * 0.45);
             }
         }
-        if ship.pilot.is_none() {
+        if ship.pilot.is_none() && *faction != Faction::Deserters {
             commands.entity(entity).despawn();
         }
     }

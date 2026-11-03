@@ -15,12 +15,26 @@
 //! system, on the cabin floor of a fresh Kestrel on the pad (and a fresh copy of the ship lost, on
 //! its own berth, if it was another of the apron's). Guns, parts, modules and the Yard's engine
 //! tune are in the save and are not touched.
+//!
+//! **A ship lost with nobody aboard:** one of the player's own ships (the apron's, or a fighter
+//! from the hangar) blown apart while they are out of it is not a death: the pocket and the
+//! parcels were with them and stay. The ship is still gone, so the rebuy fee is paid, the hold
+//! goes with it if it was the ship they last stepped out of, a `KESTREL LOST` line says so, and
+//! a fresh one stands where they can reach it (`replace`): on Haven on its own berth, anywhere
+//! else on the nearest base pad of their world, so a lost ship never strands them.
+//!
+//! **Never without a ship:** if somehow none of the player's ships is left while they are on
+//! foot, a fresh Kestrel stands for them the same way (`never_stranded`).
+//!
+//! Kill rewards (`Rewards`: the bounty, a cull's pay, salvage taken aboard) are settled before
+//! the player's own loss in the same tick, so what a dying ship earned is lost with it.
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-use super::base::Bases;
+use super::base::{pad_top, Bases};
 use super::combat::{wreck, Faction, Hull, ShipDestroyed};
+use super::hangar::Owned;
 use super::ship::{berth, spawn, Ship, Ships};
 use super::Solar;
 use crate::camera::ChaseCam;
@@ -36,6 +50,14 @@ use crate::vehicle::Driving;
 /// Shot down further than this from the pad, even on Haven, the respawn restarts the origin and
 /// the ground there instead of carrying the far-off world across (m).
 const FAR: f32 = 20_000.0;
+/// Seconds on foot with no ship of yours anywhere before a fresh Kestrel stands for you.
+const STRANDED: f32 = 1.0;
+
+/// What a kill pays into the pocket or the hold (`bounty`, `board::cull`, `salvage::gather`):
+/// settled before the player's own ship is taken through the loss rule in the same tick, so a
+/// kill made as it blew up is lost with it instead of riding over into the fresh one.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Rewards;
 
 /// What being shot down cost.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -100,7 +122,9 @@ pub fn build(app: &mut App) {
             (
                 respawn.before(ControllerSet),
                 die_on_cue.run_if(|| std::env::var_os("RUST_REGIME_DIE").is_some()).before(wreck),
-                (shot_down, bounty).after(wreck),
+                bounty.after(wreck).in_set(Rewards),
+                (shot_down, empty_lost).after(wreck).after(Rewards),
+                never_stranded.after(shot_down).after(empty_lost),
             ),
         );
 }
@@ -109,12 +133,34 @@ pub fn build(app: &mut App) {
 /// rebuy fee from the bank (as much of it as is there). The guns, parts, modules and engine tune
 /// stay. Counts the death.
 pub fn lose(save: &mut Save, e: &Economy, t: &ShipCombat) -> Loss {
-    let fee = super::economy::rebuy_fee(save, e, t).min(save.banked);
-    save.banked -= fee;
+    let fee = rebuy(save, e, t);
     save.deaths += 1;
     let (parcels, kept) = std::mem::take(&mut save.contracts).into_iter().partition(|c| c.parcel_for().is_some());
     save.contracts = kept;
     Loss { pocket: std::mem::take(&mut save.pocket), scrap: std::mem::take(&mut save.scrap), parcels, fee }
+}
+
+/// Takes what losing a ship with nobody aboard costs from `save`: the rebuy fee from the bank (as
+/// much of it as is there), and the hold if it was in that ship (`hold`). The pocket and the
+/// parcels were with the player and are kept, and it is not a death.
+pub fn lose_empty(save: &mut Save, hold: bool, e: &Economy, t: &ShipCombat) -> Loss {
+    let fee = rebuy(save, e, t);
+    let scrap = if hold { std::mem::take(&mut save.scrap) } else { 0 };
+    Loss { scrap, fee, ..default() }
+}
+
+/// Takes the rebuy fee from the bank, never more than is there; returns what was taken.
+fn rebuy(save: &mut Save, e: &Economy, t: &ShipCombat) -> u32 {
+    let fee = super::economy::rebuy_fee(save, e, t).min(save.banked);
+    save.banked -= fee;
+    fee
+}
+
+/// The line over the HUD for ship `name` lost with nobody aboard.
+pub fn lost_line(name: &str, lost: &Loss) -> String {
+    let scrap = if lost.scrap > 0 { format!("  -{} SCRAP", lost.scrap) } else { String::new() };
+    let rebuy = if lost.fee > 0 { format!("REBUY ${}", lost.fee) } else { "REBUY FREE".into() };
+    format!("{} LOST{scrap}  {rebuy}", name.to_uppercase())
 }
 
 /// Pays the bounty on ship `id` of `faction` into the pocket in `save`, counting the kill; returns
@@ -191,6 +237,107 @@ fn shot_down(
         (v.0, w.0) = (Vec3::ZERO, Vec3::ZERO);
         commands.entity(kill.ship).remove::<(Ship, KeepAwake)>().insert((RigidBodyDisabled, ColliderDisabled, Visibility::Hidden));
     }
+}
+
+/// One of the player's own ships blown apart with nobody aboard: the ship lost (`lose_empty`;
+/// the hold with it if it was the one they last stepped out of and they fly no other), the line
+/// over the HUD, and a fresh one where they can reach it (`replace`).
+#[allow(clippy::too_many_arguments)]
+fn empty_lost(
+    mut commands: Commands,
+    mut destroyed: MessageReader<ShipDestroyed>,
+    tuning: Res<Tuning>,
+    specs: Res<Ships>,
+    file: Res<SaveFile>,
+    mut save: Option<ResMut<Save>>,
+    mut line: ResMut<BountyLine>,
+    ships: Query<(Entity, &Ship, &Faction)>,
+    flying: Query<(), (With<Player>, With<Driving>)>,
+) {
+    for kill in destroyed.read() {
+        let Ok((_, ship, _)) = ships.get(kill.ship) else { continue };
+        if kill.faction != Faction::Deserters || ship.pilot.is_some() {
+            continue;
+        }
+        // The newest parked of the player's ships is the one they last stepped out of, as for the respawn.
+        let newest = |s: &Ship| (s.landed_at, std::cmp::Reverse(s.spec));
+        let last = flying.is_empty() && !ships.iter().any(|(e, s, f)| e != kill.ship && *f == Faction::Deserters && newest(s) > newest(ship));
+        let lost = save.as_mut().map_or_else(Loss::default, |s| lose_empty(s, last, &tuning.economy, &tuning.ship_combat));
+        if let Some(s) = &save {
+            file.write(s);
+        }
+        let name = &specs.ship[kill.spec].name;
+        info!("{name} lost with nobody aboard: {lost:?}");
+        line.text = lost_line(name, &lost);
+        line.left = tuning.ship_combat.loss_card;
+        let spec = kill.spec;
+        commands.entity(kill.ship).despawn();
+        commands.queue(move |world: &mut World| replace(world, spec));
+    }
+}
+
+/// Where a fresh ship `spec` for the player stands, from body point `near` on the anchor: on
+/// Haven its own berth on the apron (`None` for a fighter, which parks in the hangar by itself),
+/// elsewhere the nearest base pad on that world, if it has one. Body coordinates and turn.
+fn stand(world: &World, spec: usize, near: Vec3) -> Option<(Vec3, Quat)> {
+    let solar = world.resource::<Solar>();
+    if solar.anchor == "home" {
+        return berth(world, spec);
+    }
+    let sphere = solar.spheres.get(&solar.anchor)?;
+    let rest = world.resource::<Ships>().ship.get(spec)?.rest;
+    world
+        .resource::<Bases>()
+        .base
+        .iter()
+        .filter(|b| b.body == solar.anchor)
+        .filter_map(|b| pad_top(b, sphere, solar.pad))
+        .map(|(top, frame)| (top + frame * Vec3::Y * (rest + 0.05), frame))
+        .min_by(|a, b| a.0.distance(near).total_cmp(&b.0.distance(near)))
+}
+
+/// A fresh ship `spec` for the player in place of one of theirs that is gone, where they can
+/// reach it (`stand`); a fighter of theirs on Haven parks in its hangar slot by itself
+/// (`hangar::park_owned`). On a world with no pad, on foot, there is no getting off it: they are
+/// taken back to the Roost as after being shot down (`back_at_the_roost`), without the loss.
+pub fn replace(world: &mut World, spec: usize) {
+    let Ok((player, tf, flying)) = world.query_filtered::<(Entity, &Transform, Has<Driving>), With<Player>>().single(world).map(|(e, tf, d)| (e, *tf, d)) else { return };
+    let near = world.resource::<Origin>().body(tf.translation);
+    let home = world.resource::<Solar>().anchor == "home";
+    match stand(world, spec, near) {
+        Some((at, rotation)) => {
+            let at = world.resource::<Origin>().world(at);
+            let now = world.resource::<Time>().elapsed_secs_f64();
+            let ship = spawn(world, spec, Transform::from_translation(at).with_rotation(rotation));
+            // The newest parked ship, so it is where a fall or a reset comes back to.
+            world.get_mut::<Ship>(ship).unwrap().landed_at = now;
+            if !world.resource::<Ships>().ship[spec].boardable() {
+                // After the spawn's own faction from its spec: it flies as yours.
+                world.commands().entity(ship).insert((Owned, Faction::Deserters));
+                world.flush();
+            }
+            info!("a fresh {} stands for you", world.resource::<Ships>().ship[spec].name);
+        }
+        None if home || flying => {}
+        None => back_at_the_roost(world, player, spec),
+    }
+}
+
+/// The safety net: on foot with no ship of theirs anywhere (not aboard one, not watching a wreck
+/// burn) for `STRANDED` seconds, the player gets a fresh Kestrel (`replace`). The fleet stands
+/// from startup and every ship is carried through a handoff, so this only catches a ship gone in
+/// some way nothing else answered for.
+fn never_stranded(world: &mut World, mut alone: Local<f32>) {
+    let dt = world.resource::<Time>().delta_secs();
+    let on_foot = world.query_filtered::<(), (With<Player>, Without<Driving>)>().iter(world).next().is_some();
+    let stranded = on_foot && world.resource::<Downed>().wreck.is_none() && !world.query_filtered::<&Faction, With<Ship>>().iter(world).any(|f| *f == Faction::Deserters);
+    *alone = if stranded { *alone + dt } else { 0.0 };
+    if *alone < STRANDED {
+        return;
+    }
+    *alone = 0.0;
+    warn!("no ship of yours anywhere: a fresh Kestrel");
+    replace(world, 0);
 }
 
 /// Counts the card and the bounty line down, and once the wreck has burnt for `downed` seconds,
