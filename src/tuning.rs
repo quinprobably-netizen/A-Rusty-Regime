@@ -974,7 +974,7 @@ impl Default for Sound {
     }
 }
 
-const PATH: &str = "tuning.toml";
+const NAME: &str = "tuning.toml";
 
 pub struct TuningPlugin;
 
@@ -986,9 +986,10 @@ impl Plugin for TuningPlugin {
 }
 
 pub fn load() -> Tuning {
-    let mut tuning = match std::fs::read_to_string(PATH) {
+    let path = crate::paths::file(NAME);
+    let mut tuning = match std::fs::read_to_string(&path) {
         Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
-            warn!("{PATH} is invalid, using defaults: {e}");
+            warn!("{} is invalid, using defaults: {e}", path.display());
             Tuning::default()
         }),
         Err(_) => Tuning::default(),
@@ -1019,7 +1020,7 @@ impl Tuning {
 fn reload(keys: Res<ButtonInput<KeyCode>>, mut tuning: ResMut<Tuning>) {
     if keys.just_pressed(KeyCode::F5) {
         *tuning = load();
-        info!("Reloaded {PATH}");
+        info!("Reloaded {NAME}");
     }
 }
 

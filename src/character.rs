@@ -365,7 +365,7 @@ impl Characters {
     /// `assets/characters.toml` if it is there and valid, else the copy baked into the binary.
     pub fn load() -> Self {
         let baked = Self::parse(DEFAULT_DATA).expect("baked characters.toml parses");
-        match std::fs::read_to_string(DATA_PATH) {
+        match std::fs::read_to_string(crate::paths::file(DATA_PATH)) {
             Ok(text) => match Self::parse(&text) {
                 Ok(c) => {
                     for p in c.problems() {

@@ -31,6 +31,7 @@ mod surface;
 mod planet;
 mod solar;
 mod comic;
+mod paths;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -40,14 +41,18 @@ fn main() {
     let tuning = tuning::load();
     App::new()
         .add_plugins((
-            DefaultPlugins.set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "Rust Regime".into(),
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "Rust Regime".into(),
+                        ..default()
+                    }),
                     ..default()
-                }),
-                ..default()
-            }),
+                })
+                // Absolute, so assets load whatever directory the game was started from.
+                .set(AssetPlugin { file_path: paths::file("assets").to_string_lossy().into_owned(), ..default() }),
             PhysicsPlugins::default(),
+            paths::PathsPlugin,
         ))
         // TF2 simulates at 66 ticks per second.
         .insert_resource(Time::<Fixed>::from_hz(66.0))

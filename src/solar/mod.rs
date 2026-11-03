@@ -118,6 +118,10 @@ impl Plugin for SolarPlugin {
     fn build(&self, app: &mut App) {
         let system = System::load();
         let bodies = Bodies::new(&system);
+        if let Err(why) = bodies.check() {
+            error!("cannot build the solar system from {}: {why}. Game folder searched: {}. Set RUST_REGIME_ROOT to the folder holding assets/.", crate::paths::file("assets/system.toml").display(), crate::paths::searched());
+            std::process::exit(1);
+        }
         let spheres: HashMap<String, Arc<Sphere>> = bodies.ids().into_iter().map(|id| (id.clone(), Arc::new(Sphere::new(bodies.get(&id).clone())))).collect();
         let home = spheres["home"].clone();
         let surface = Surface::Sphere(home.clone());

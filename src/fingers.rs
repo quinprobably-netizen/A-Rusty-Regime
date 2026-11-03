@@ -61,13 +61,13 @@ impl Solved {
     fn load() -> Self {
         let mut all = HashMap::new();
         for id in CHARACTERS {
-            let path = format!("assets/models/character/{id}.grips.toml");
+            let path = crate::paths::file(&format!("assets/models/character/{id}.grips.toml"));
             let Ok(text) = std::fs::read_to_string(&path) else { continue };
             match parse(&text) {
                 Ok(poses) => {
                     all.insert(id.to_string(), poses);
                 }
-                Err(e) => warn!("{path}: {e}"),
+                Err(e) => warn!("{}: {e}", path.display()),
             }
         }
         Solved(all)

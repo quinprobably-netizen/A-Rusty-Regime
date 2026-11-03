@@ -576,8 +576,7 @@ fn base_sounds(
 fn load(mut commands: Commands, tuning: Res<Tuning>, server: Res<AssetServer>, mut sources: ResMut<Assets<AudioSource>>) {
     let start = std::time::Instant::now();
     let mut clip = |name: &str, synth: Vec<f32>| -> Handle<AudioSource> {
-        let path = format!("assets/sounds/{name}.ogg");
-        if std::fs::metadata(&path).is_ok() {
+        if crate::paths::file(&format!("assets/sounds/{name}.ogg")).is_file() {
             server.load(format!("sounds/{name}.ogg"))
         } else {
             sources.add(wav(&synth))
