@@ -53,6 +53,28 @@ impl Bodies {
         Bodies { bodies }
     }
 
+    /// Why the level can't be built on these bodies: no home world, or an orbit whose parent is
+    /// missing or that circles back on itself.
+    pub fn check(&self) -> Result<(), String> {
+        if !self.bodies.contains_key("home") {
+            return Err("there is no body \"home\" with an orbit".into());
+        }
+        for id in self.ids() {
+            let mut at = &id;
+            for _ in 0..=self.bodies.len() {
+                let Some(orbit) = &self.bodies[at].orbit else { break };
+                if !self.bodies.contains_key(&orbit.parent) {
+                    return Err(format!("\"{at}\" orbits \"{}\", which is not in the system", orbit.parent));
+                }
+                at = &orbit.parent;
+            }
+            if self.bodies[at].orbit.is_some() {
+                return Err(format!("the orbit of \"{id}\" circles back on itself"));
+            }
+        }
+        Ok(())
+    }
+
     pub fn get(&self, id: &str) -> &Body {
         self.bodies.get(id).unwrap_or_else(|| panic!("no body {id} in the system"))
     }
@@ -115,6 +137,18 @@ mod tests {
 
     fn bodies() -> Bodies {
         Bodies::new(&System::load())
+    }
+
+    #[test]
+    fn a_broken_system_is_caught_before_it_panics() {
+        assert_eq!(bodies().check(), Ok(()));
+        assert!(Bodies::new(&System::default()).check().unwrap_err().contains("home"), "no bodies at all");
+        let orbiting = |parent: &str| Body { orbit: Some(crate::system::Orbit { parent: parent.into(), ..Default::default() }), ..Body::default() };
+        let mut b = bodies();
+        b.bodies.insert("home".into(), orbiting("nowhere"));
+        assert!(b.check().unwrap_err().contains("nowhere"));
+        b.bodies.insert("home".into(), orbiting("ash"));
+        assert!(b.check().unwrap_err().contains("circles back"), "home and ash circle each other");
     }
 
     #[test]

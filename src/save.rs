@@ -24,7 +24,7 @@ pub struct SaveFile(pub Option<PathBuf>);
 
 impl Default for SaveFile {
     fn default() -> Self {
-        SaveFile(Some(std::env::var_os("RUST_REGIME_SAVE").map_or_else(|| PathBuf::from("save.toml"), PathBuf::from)))
+        SaveFile(Some(std::env::var_os("RUST_REGIME_SAVE").map_or_else(|| crate::paths::file("save.toml"), PathBuf::from)))
     }
 }
 

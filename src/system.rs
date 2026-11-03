@@ -192,17 +192,18 @@ pub struct System {
     pub star: Star,
 }
 
-const PATH: &str = "assets/system.toml";
+const NAME: &str = "assets/system.toml";
 
 impl System {
     pub fn load() -> System {
-        match std::fs::read_to_string(PATH) {
+        let path = crate::paths::file(NAME);
+        match std::fs::read_to_string(&path) {
             Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
-                warn!("{PATH} is invalid, using defaults: {e}");
+                warn!("{} is invalid, using defaults: {e}", path.display());
                 System::default()
             }),
             Err(e) => {
-                warn!("{PATH} unreadable, using defaults: {e}");
+                warn!("{} unreadable, using defaults: {e}", path.display());
                 System::default()
             }
         }

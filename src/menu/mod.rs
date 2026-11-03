@@ -207,8 +207,9 @@ impl Settings {
 
     /// The saved settings, if the player changed any.
     pub fn load() -> Option<Self> {
-        let text = std::fs::read_to_string(SETTINGS_PATH).ok()?;
-        toml::from_str(&text).map_err(|e| warn!("{SETTINGS_PATH} is invalid, ignoring it: {e}")).ok()
+        let path = crate::paths::file(SETTINGS_PATH);
+        let text = std::fs::read_to_string(&path).ok()?;
+        toml::from_str(&text).map_err(|e| warn!("{} is invalid, ignoring it: {e}", path.display())).ok()
     }
 
     pub fn save(&self) {
@@ -217,9 +218,9 @@ impl Settings {
             return;
         }
         if let Ok(text) = toml::to_string(self)
-            && let Err(e) = std::fs::write(SETTINGS_PATH, text)
+            && let Err(e) = std::fs::write(crate::paths::file(SETTINGS_PATH), text)
         {
-            warn!("could not write {SETTINGS_PATH}: {e}");
+            warn!("could not write {}: {e}", crate::paths::file(SETTINGS_PATH).display());
         }
     }
 }
