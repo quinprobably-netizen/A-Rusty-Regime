@@ -217,7 +217,7 @@ impl Settings {
             return;
         }
         if let Ok(text) = toml::to_string(self)
-            && let Err(e) = std::fs::write(SETTINGS_PATH, text)
+            && let Err(e) = crate::save::write_atomic(std::path::Path::new(SETTINGS_PATH), &text)
         {
             warn!("could not write {SETTINGS_PATH}: {e}");
         }

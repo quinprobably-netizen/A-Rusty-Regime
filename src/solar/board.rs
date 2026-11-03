@@ -36,19 +36,28 @@ pub enum Job {
     /// Carry a parcel to base `to`'s door.
     Courier { to: String },
     /// Shoot down `need` raiders; `got` so far.
-    Cull { need: u32, got: u32 },
+    Cull {
+        need: u32,
+        #[serde(default)]
+        got: u32,
+    },
     /// Bring `need` scrap to the board that gave it.
     Supply { need: u32 },
 }
 
-/// A job on a board or in your hands, saved.
+/// A job on a board or in your hands, saved. Every field but the job has a default, so a job
+/// saved before a field existed still loads; one whose job will not parse is dropped from its
+/// list (`save::tolerant`) rather than failing the save.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Contract {
     pub job: Job,
     /// The base id whose board gave it.
+    #[serde(default)]
     pub from: String,
+    #[serde(default)]
     pub pay: u32,
     /// The last game day it can be done on; `None`, never due.
+    #[serde(default)]
     pub due: Option<u32>,
 }
 
