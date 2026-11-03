@@ -210,7 +210,7 @@ knockback = 16.0
 launch = 11.0
 cooldown = 0.7
 
-[knife]                     # V: the starter knife, a quick slash with short reach
+[knife]                     # X: the starter knife, a quick slash with short reach
 range = 2.1
 knockback = 3.0
 cooldown = 0.42

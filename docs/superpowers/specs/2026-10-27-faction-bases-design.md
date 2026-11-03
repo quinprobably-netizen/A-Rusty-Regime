@@ -86,4 +86,4 @@ label; emitted to `bases.toml`, spawned as children of the base so they follow h
 Contracts are the only income in the solar system (extraction is island-only), so they pay for the
 tune and the blessing. The destination's waypoint says DELIVER HERE and the flight readout lists the
 parcel and the bank. Save gained `ship_level`, `contract` (destination base id, pay) and
-`contracts_done`. Not built: faction standing, contracts from other bases, more upgrade tracks.
+`contracts_done`. Faction standing and contracts from other bases came later (ship combat stages 2-3, economy stage B); more upgrade tracks are still not built.

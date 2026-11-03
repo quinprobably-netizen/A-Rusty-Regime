@@ -7,3 +7,4 @@ __pycache__/
 /tools/character/vendor/
 .worktrees/
 /save.toml
+/settings.toml

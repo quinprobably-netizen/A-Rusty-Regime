@@ -2,7 +2,7 @@
 
 Agreed with Q on 2026-10-28 in the "what is missing" brainstorm. Since PR #52 removed the island,
 soldiers and vehicles, nothing in the solar system can be shot and nothing shoots back. This is
-the first of three stages that fix that. It is a spec for review: nothing is built from it yet.
+the first of three stages that fix that. Status: built and merged (guns, missile, shields and hulls, raiders, patrols, loss rule, bounty, HUD).
 
 ## TL;DR
 
