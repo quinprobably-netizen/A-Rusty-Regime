@@ -20,6 +20,7 @@ cargo run --release
 ```
 First build takes a while. Linux needs `libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev`.
 `cargo test` runs headless physics tests of the movement and weapons.
+CI (`.github/workflows/test.yml`) runs `cargo test` on every push to main and every pull request.
 `RUST_REGIME_SCREENSHOT=shot.png cargo run --release` saves a frame and quits (handy with Xvfb + lavapipe on a box with no GPU).
 
 ## Controls
