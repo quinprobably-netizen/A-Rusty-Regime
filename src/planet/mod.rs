@@ -110,6 +110,13 @@ impl Chunks {
     }
 }
 
+/// While present, `apply` spawns nothing: finished builds stay in `Chunks::pending`, so the
+/// ground stays unbuilt however fast the workers are. Tests insert it to keep a player held
+/// for as long as they need without racing the builds.
+#[derive(Resource)]
+#[allow(dead_code)] // only the tests insert it so far
+pub struct HoldBuilds;
+
 /// A spawned terrain chunk.
 #[derive(Component)]
 pub struct Chunk {
@@ -162,7 +169,7 @@ pub fn add_streaming(app: &mut App) {
     app.insert_resource(planet)
         .init_resource::<Chunks>()
         .init_resource::<ChunkLook>()
-        .add_systems(Update, (plan, apply, bubble::solidify).chain().run_if(streaming))
+        .add_systems(Update, (plan, apply.run_if(not(resource_exists::<HoldBuilds>)), bubble::solidify).chain().run_if(streaming))
         .add_systems(FixedUpdate, (bubble::freeze.before(gravitate), bubble::hold_player).before(ControllerSet).run_if(streaming));
 }
 

@@ -935,6 +935,10 @@ fn the_player_hovers_until_the_ground_under_them_is_built() {
 #[test]
 fn a_held_player_still_resets_and_respawns_after_a_fall() {
     let (mut app, sphere, origin) = streaming_app(4);
+    // No chunk is ever spawned, so the player is held throughout. Without this the four builds
+    // around the spawn, started on the first update, land whenever their workers finish, and
+    // the one under the spawn could already be solid by the second.
+    app.insert_resource(planet::HoldBuilds);
     let spawn = app.world().resource::<controller::WorldBounds>().spawn;
     app.update();
     assert!(is_held(&mut app), "no ground under the spawn yet");
@@ -951,6 +955,7 @@ fn a_held_player_still_resets_and_respawns_after_a_fall() {
     set_player(&mut app, origin.world(sphere.point(aside, -60.0)), Vec3::ZERO);
     app.update();
     assert!(origin.body(player(&mut app).0).distance(spawn) < 0.01, "a fall while held respawns");
+    assert!(is_held(&mut app) && app.world().resource::<planet::Chunks>().built.is_empty(), "held to the end, nothing built");
 }
 
 #[test]
