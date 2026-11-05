@@ -106,8 +106,10 @@ red and OVERHEATED while they cool, and the missiles on the rails with the next 
 take the health and weapon plates' places, which stay hidden until you are on foot again, the
 SHOT DOWN pause and card included. Each enemy ship within 4 km (the nearest eight) carries a
 diamond in its faction's colour with its type and distance, clamped to the screen edge like
-the waypoints, hollow for a patrol that will not shoot you; the one in your nose gets a ring of ticks that light up as the missile lock
-comes on and close into a solid ring once it is locked. Four white ticks flash round the nose
+the waypoints, hollow for a patrol that will not shoot you, with its own health bar under it (a
+blue shield row over a red hull row, draining as your shots land); the one in your nose gets a
+ring of ticks that light up as the missile lock comes on and close into a solid ring once it is
+locked. Four white ticks flash round the nose
 when your shots land, wider and red on a kill, and MISSILE LOCK / MISSILE! shows under the
 compass while a Sentry has you locked or its missile is in the air. When your standing with a
 faction changes, a short line under the bounty line says so (`REGIME -25  SCRAPPERS +5`), and
