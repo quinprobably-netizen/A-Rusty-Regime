@@ -100,7 +100,7 @@ fn dev_screenshot(
     mut exit: MessageWriter<AppExit>,
     mut arsenal: ResMut<weapon::Arsenal>,
     mut view: ResMut<input::ViewAngles>,
-    mut player: Query<(&mut controller::Player, &mut Transform)>,
+    mut player: Single<(&mut controller::Player, &mut Transform)>,
     surface: Res<surface::Surface>,
     origin: Option<Res<surface::Origin>>,
 ) {
@@ -126,10 +126,8 @@ fn dev_screenshot(
             view.yaw = yaw.to_radians();
         }
         // On a round body the spot is an offset east and south of where the player stands.
-        if let (Some(x), Some(z)) = (parts.next(), parts.next())
-            && let Ok((mut p, mut tf)) = player.single_mut()
-        {
-            let (p, tf) = (&mut *p, &mut *tf);
+        if let (Some(x), Some(z)) = (parts.next(), parts.next()) {
+            let (p, tf) = &mut *player;
             if matches!(*surface, surface::Surface::Sphere(_)) {
                 let frame = surface.frame(origin.map_or(tf.translation, |o| o.body(tf.translation)));
                 tf.translation += frame * Vec3::new(x, 0.0, z);

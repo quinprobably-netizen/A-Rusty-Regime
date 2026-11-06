@@ -4,10 +4,11 @@
 //! ship your missiles are locking on gets a ring of ticks round its diamond that light up as the
 //! lock comes on, and a solid ring once it is locked. A patrol that will not shoot you (your
 //! standing with its faction is 0 or more, and you have not shot it) is a hollow diamond, its
-//! outline in the faction's colour. Under each diamond hangs the ship's own health bar: a blue
-//! shield row over a red hull row, ink-bordered on paper like the cards, so you can see what your
-//! shots do to each ship (`bar_fill`; a ship with no shield has no shield row). They hide on foot
-//! and under the menus.
+//! outline in the faction's colour. Under the diamond of each ship that will shoot you hangs its
+//! own health bar: a blue shield row over a red hull row, ink-bordered on paper like the cards, so
+//! you can see what your shots do to it (`bar_fill`; a ship with no shield has no shield row). A
+//! hollow patrol carries none until you shoot it: a bar on a ship you are not fighting is clutter
+//! and an invitation. They hide on foot and under the menus.
 
 use std::f32::consts::TAU;
 
@@ -33,10 +34,12 @@ pub const MOST: usize = 8;
 pub const TICKS: usize = 12;
 const SIZE: f32 = 12.0;
 const RING: f32 = 19.0;
-/// The health bar under the diamond: its width, and the heights of its shield and hull rows.
+/// The health bar under the diamond: its width, where its top sits (clear of the lock ring's
+/// ticks, whose outlines reach `RING + 6`), and the heights of its shield and hull rows.
 const BAR: f32 = 44.0;
-const SHIELD_ROW: f32 = 6.0;
-const HULL_ROW: f32 = 8.0;
+const BAR_TOP: f32 = RING + 8.0;
+const SHIELD_ROW: f32 = 7.0;
+const HULL_ROW: f32 = 9.0;
 /// The raiders have no base, so no colour in `bases.toml`: theirs is a rust orange.
 const RAIDERS: Color = Color::srgb(1.0, 0.45, 0.12);
 
@@ -56,7 +59,10 @@ struct Label(usize);
 pub struct Tick(pub usize, pub usize);
 #[derive(Component)]
 struct Solid(usize);
-/// Contact slot `n`'s shield row (hidden for a ship with no shield) and the fills of its rows.
+/// Contact slot `n`'s health bar (hidden on a hollow contact), its shield row (hidden for a ship
+/// with no shield) and the fills of its rows. Public for the tests in `crate::tests`.
+#[derive(Component)]
+pub struct Bar(pub usize);
 #[derive(Component)]
 pub struct ShieldRow(pub usize);
 #[derive(Component)]
@@ -91,7 +97,8 @@ pub fn bar_fill(hull: &Hull) -> (f32, Option<f32>) {
     (share(hull.hp, hull.max_hp), (hull.max_shield > 0.0).then(|| share(hull.shield, hull.max_shield)))
 }
 
-/// One ink-bordered row of the health bar, with its fill.
+/// One ink-bordered row of the health bar, with its fill. Like the cards' `hud::ink_bar`, but
+/// with the diamond's 1.5 px line rather than the cards' 2 px, since the bar is only 44 px wide.
 fn bar_row(p: &mut ChildSpawnerCommands, theme: &crate::comic::ComicTheme, height: f32, fill: Color, row: impl Bundle, tag: impl Bundle) {
     p.spawn((row, Node { width: Val::Percent(100.0), height: Val::Px(height), border: UiRect::all(Val::Px(1.5)), ..default() }, BorderColor::all(theme.ink), BackgroundColor(theme.paper.with_alpha(0.85))))
         .with_child((tag, Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() }, BackgroundColor(fill)));
@@ -140,7 +147,7 @@ fn spawn_contacts(mut commands: Commands, theme: Res<crate::comic::ComicTheme>) 
                     TextLayout::no_wrap(),
                 ));
                 // The health bar under the ring: the shield row over the hull row.
-                p.spawn(Node { position_type: PositionType::Absolute, left: Val::Px(-BAR / 2.0), top: Val::Px(RING + 6.0), width: Val::Px(BAR), flex_direction: FlexDirection::Column, row_gap: Val::Px(1.0), ..default() })
+                p.spawn((Bar(n), Node { position_type: PositionType::Absolute, left: Val::Px(-BAR / 2.0), top: Val::Px(BAR_TOP), width: Val::Px(BAR), flex_direction: FlexDirection::Column, row_gap: Val::Px(1.0), ..default() }))
                     .with_children(|b| {
                         bar_row(b, &theme, SHIELD_ROW, theme.blue, ShieldRow(n), ShieldFill(n));
                         bar_row(b, &theme, HULL_ROW, theme.red, (), HullFill(n));
@@ -170,6 +177,7 @@ fn update_contacts(
     mut ticks: Query<(&Tick, &mut Visibility, &mut BackgroundColor), (Without<Pin>, Without<Solid>, Without<Diamond>)>,
     mut solids: Query<(&Solid, &mut Visibility), (Without<Pin>, Without<Tick>)>,
     mut bars: ParamSet<(
+        Query<(&Bar, &mut Node), (Without<Pin>, Without<Label>)>,
         Query<(&ShieldRow, &mut Node), (Without<Pin>, Without<Label>)>,
         Query<(&ShieldFill, &mut Node), (Without<Pin>, Without<Label>)>,
         Query<(&HullFill, &mut Node), (Without<Pin>, Without<Label>)>,
@@ -244,16 +252,37 @@ fn update_contacts(
         let shown = locks(solid.0).is_some_and(|l| l >= 1.0);
         v.set_if_neq(if shown { Visibility::Inherited } else { Visibility::Hidden });
     }
-    // The health bar: the shield row only on a ship with a shield, each fill as full as its stat.
-    let fill = |n: usize| slots.get(n).map(|s| s.5);
-    for (row, mut node) in &mut bars.p0() {
-        node.display = if fill(row.0).is_some_and(|(_, shield)| shield.is_some()) { Display::Flex } else { Display::None };
+    // The health bar: only on a ship that will shoot you, its shield row only when it has a
+    // shield, each fill as full as its stat. Written only on change, so an idle slot's nodes do
+    // not dirty the layout every frame.
+    let fill = |n: usize| slots.get(n).filter(|s| s.4).map(|s| s.5);
+    for (bar, node) in &mut bars.p0() {
+        show(node, fill(bar.0).is_some());
     }
-    for (f, mut node) in &mut bars.p1() {
-        node.width = Val::Percent(fill(f.0).and_then(|(_, shield)| shield).unwrap_or(0.0) * 100.0);
+    for (row, node) in &mut bars.p1() {
+        show(node, fill(row.0).is_some_and(|(_, shield)| shield.is_some()));
     }
-    for (f, mut node) in &mut bars.p2() {
-        node.width = Val::Percent(fill(f.0).map_or(0.0, |(hull, _)| hull) * 100.0);
+    for (f, node) in &mut bars.p2() {
+        fill_to(node, fill(f.0).and_then(|(_, shield)| shield).unwrap_or(0.0));
+    }
+    for (f, node) in &mut bars.p3() {
+        fill_to(node, fill(f.0).map_or(0.0, |(hull, _)| hull));
+    }
+}
+
+/// Shows or hides a node, touching it only when that changes.
+fn show(mut node: Mut<Node>, shown: bool) {
+    let display = if shown { Display::Flex } else { Display::None };
+    if node.display != display {
+        node.display = display;
+    }
+}
+
+/// Sets a fill's width to `share` (0 to 1) of its row, touching it only when that changes.
+fn fill_to(mut node: Mut<Node>, share: f32) {
+    let width = Val::Percent(share * 100.0);
+    if node.width != width {
+        node.width = width;
     }
 }
 
@@ -306,6 +335,7 @@ mod tests {
         app.add_plugins(MinimalPlugins).init_resource::<crate::comic::ComicTheme>().add_systems(Startup, spawn_contacts);
         app.update();
         let w = app.world_mut();
+        assert_eq!(w.query::<&Bar>().iter(w).count(), MOST);
         assert_eq!(w.query::<&HullFill>().iter(w).count(), MOST);
         assert_eq!(w.query::<&ShieldFill>().iter(w).count(), MOST);
         assert_eq!(w.query::<&ShieldRow>().iter(w).count(), MOST);
