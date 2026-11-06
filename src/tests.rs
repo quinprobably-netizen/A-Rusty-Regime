@@ -3887,6 +3887,49 @@ fn the_lock_ring_fills_as_the_lock_comes_on() {
     assert_eq!(*seen.last().unwrap(), TICKS, "and whole once locked");
 }
 
+#[test]
+fn each_contacts_health_bar_follows_its_hull_and_shield() {
+    use bevy::window::PrimaryWindow;
+    use solar::contacts::{Bar, HullFill, ShieldFill, ShieldRow};
+    let (mut app, jackal) = gunnery_range(800.0);
+    // The contacts need a window to be placed on and a camera to be seen from; the headless app
+    // has neither, so give it a window and a camera sat in the ship, looking down its nose.
+    let ship = ship_entity(&mut app);
+    let tf = *app.world().get::<Transform>(ship).unwrap();
+    app.world_mut().spawn((Window::default(), PrimaryWindow));
+    app.world_mut().spawn((crate::camera::PlayerCamera::default(), tf, Projection::Perspective(PerspectiveProjection::default())));
+    app.update();
+    // Every shown contact's bar: whether its shield row shows, and its shield and hull widths.
+    let bars = |app: &mut App| -> Vec<(bool, Val, Val)> {
+        let w = app.world_mut();
+        let shown = |n: &Node| n.display != Display::None;
+        let slots: Vec<usize> = w.query::<(&Bar, &Node)>().iter(w).filter(|(_, n)| shown(n)).map(|(b, _)| b.0).collect();
+        let find = |w: &mut World, n: usize| -> (bool, Val, Val) {
+            let row = w.query::<(&ShieldRow, &Node)>().iter(w).find(|(r, _)| r.0 == n).map(|(_, node)| shown(node)).unwrap();
+            let shield = w.query::<(&ShieldFill, &Node)>().iter(w).find(|(f, _)| f.0 == n).map(|(_, node)| node.width).unwrap();
+            let hull = w.query::<(&HullFill, &Node)>().iter(w).find(|(f, _)| f.0 == n).map(|(_, node)| node.width).unwrap();
+            (row, shield, hull)
+        };
+        slots.into_iter().map(|n| find(w, n)).collect()
+    };
+    let whole = (true, Val::Percent(100.0), Val::Percent(100.0));
+    let seen = bars(&mut app);
+    assert!(!seen.is_empty() && seen.iter().all(|b| *b == whole), "the raiders in the nose, untouched: {seen:?}");
+    // A hit on the Jackal (shield 30, hull 40) takes its whole shield and a quarter of its hull.
+    let t = Tuning::default().ship_combat;
+    app.world_mut().get_mut::<Hull>(jackal).unwrap().hit(40.0, &t);
+    app.update();
+    let seen = bars(&mut app);
+    assert_eq!(seen.iter().filter(|b| **b == (true, Val::Percent(0.0), Val::Percent(75.0))).count(), 1, "one bar drained: {seen:?}");
+    // Strip its shield altogether: the shield row goes, the hull row stays.
+    let mut hull = app.world_mut().get_mut::<Hull>(jackal).unwrap();
+    hull.max_shield = 0.0;
+    hull.shield = 0.0;
+    app.update();
+    let seen = bars(&mut app);
+    assert_eq!(seen.iter().filter(|b| **b == (false, Val::Percent(0.0), Val::Percent(75.0))).count(), 1, "no shield, no shield row: {seen:?}");
+}
+
 /// Runs `seconds`, doing `each` before every frame, and gathers every cue for the fight's sounds.
 fn listen(app: &mut App, seconds: f32, mut each: impl FnMut(&mut App)) -> Vec<Cue> {
     let mut cursor = app.world().resource::<Messages<Cue>>().get_cursor_current();
